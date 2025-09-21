@@ -1,3 +1,13 @@
+"""
+This algorithm mainly refers to RAP, RAP++. See their papers in the following link:
+    - https://proceedings.mlr.press/v139/aydore21a/aydore21a.pdf
+    - https://proceedings.neurips.cc/paper_files/paper/2022/file/7428310c0f97f1c6bb2ef1be99c1ec2a-Paper-Conference.pdf
+
+Their code repo is: 
+    - https://github.com/amazon-science/relaxed-adaptive-projection
+"""
+
+
 import numpy as np
 import pandas as pd
 import itertools
@@ -41,8 +51,17 @@ class ProjectableData():
             s = e
         return map_dict
 
-    def datavector(self):
-        """ This will return a flattened vector of PROBABILITY distribution """
+    def datavector(self, count=False, flatten=True):
+        """ 
+            This will return a vector/matrix of PROBABILITY distribution 
+            or frequency COUNT 
+
+            Args:
+                count: bool value indicating whether return a frequency, 
+                        default to False
+                flatten: bool value indicating whether return a flattened 
+                        vector, default to True
+        """
         splits = [self.D_prime[:, self.feature_indices_map[attr]] for attr in self.domain.attrs]
 
         letters = "bcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -54,25 +73,12 @@ class ProjectableData():
         output_dims = ''.join(f'{letters[i]}' for i in range(len(splits)))
         einsum_str = f'{input_dims}->a{output_dims}'
 
-        joint = jnp.einsum(einsum_str, *splits).mean(axis=0)
-        return joint.flatten()
-
-
-    def datamatrix(self):
-        """ This will return a matrix of frequency COUNT """
-        splits = [self.D_prime[:, self.feature_indices_map[attr]] for attr in self.domain.attrs]
-
-        letters = "bcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        assert(
-            len(letters) >= len(self.domain)
-        ), 'High dim domain'
-
-        input_dims = ','.join(f'a{letters[i]}' for i in range(len(splits)))
-        output_dims = ''.join(f'{letters[i]}' for i in range(len(splits)))
-        einsum_str = f'{input_dims}->a{output_dims}'
-
-        joint = jnp.einsum(einsum_str, *splits).sum(axis=0)
-        return joint
+        if not count:
+            joint = jnp.einsum(einsum_str, *splits).mean(axis=0) # Probability
+        else:
+            joint = jnp.einsum(einsum_str, *splits).sum(axis=0) # Frequency count
+        
+        return joint if not flatten else joint.flatten()
 
 
     def project(self, cl: tuple):
@@ -108,9 +114,8 @@ def relaxed_projection_estimation(
     **kwargs
 ) -> ProjectableData:
     """
-    API function for relaxed projection mechanism, return a 
-    ProjectableData class, which can further be used to conduct 
-    projection and synthesize data.
+    API function for relaxed projection mechanism, return a ProjectableData 
+    class, which can further be used to conduct projection and synthesize data.
 
     Args:
         domain: a Domain class.
@@ -124,6 +129,15 @@ def relaxed_projection_estimation(
                          which can be regarded as the `batch size`.
             optimizer: an optax optimizer, default to adam with lr=0.01.
             seed: random seed, default to 0.
+            log: whether return optimization log (start loss and end loss), default 
+                 to False (no log)
+    
+    NOTICE: Here we provide two implementations for loss function. One is based 
+        on a parallel computation for multiple marginals, which will be used when 
+        loss_fn is a list of LinearMeasurement. The other one is the same as PGM, 
+        which receives a MarginalLossFn to calculate loss.
+        The reason is that we find that parallel computation is more efficient 
+        after running them on some toy examples. 
     """
     key = jax.random.PRNGKey(kwargs.get('seed', 0))
 
@@ -176,10 +190,10 @@ def relaxed_projection_estimation(
             iters
         )
         progress_loss_final = loss_fn(D_prime)
-        print(
-            f'marginal fitting results: start loss = {progress_loss_start}, end loss = {progress_loss_final}'
-        )
-
+        if kwargs.get('log', False):
+            print(
+                f'marginal fitting results: start loss = {progress_loss_start}, end loss = {progress_loss_final}'
+            )
         return ProjectableData(D_prime = D_prime, domain = domain)
     
     else:
@@ -198,7 +212,7 @@ def relaxed_projection_estimation(
             ProjectableD = ProjectableData(D_prime = D, domain = domain)
             cliques = [tuple(cl) for cl in loss_fn.cliques]
             arrays = {
-                cl: Factor(domain.project(cl), ProjectableD.project(cl).datamatrix()) 
+                cl: Factor(domain.project(cl), ProjectableD.project(cl).datavector(count = True, flatten=False)) 
                 for cl in cliques
             }
             return loss_fn(CliqueVector(domain, cliques, arrays))
@@ -225,9 +239,10 @@ def relaxed_projection_estimation(
             iters
         )
         progress_loss_final = loss_fn_wrap(D_prime)
-        print(
-            f'marginal fitting results: start loss = {progress_loss_start}, end loss = {progress_loss_final}'
-        )
+        if kwargs.get('log', False):
+            print(
+                f'marginal fitting results: start loss = {progress_loss_start}, end loss = {progress_loss_final}'
+            )
         return ProjectableData(D_prime = D_prime, domain = domain)
 
 
@@ -285,32 +300,31 @@ def _initialize_synthetic_dataset(
 
 
 @jax.jit
-def _sparsemax(logits):
-    """forward pass for _sparsemax
-    this will process a 2d-array $logits, where axis 1 (each row) is assumed to be
-    the logits-vector.
+def _sparsemax(input):
     """
-
+    forward pass for _sparsemax to transform the input to a probability 
+    vector, which sums to 1.
+    """
     # sort logits
-    z_sorted = jnp.sort(logits, axis=1)[:, ::-1]
+    z_sorted = jnp.sort(input, axis=1)[:, ::-1]
 
     # calculate k(z)
     z_cumsum = jnp.cumsum(z_sorted, axis=1)
-    k = jnp.arange(1, logits.shape[1] + 1)
+    k = jnp.arange(1, input.shape[1] + 1)
     z_check = 1 + k * z_sorted > z_cumsum
-    k_z = logits.shape[1] - jnp.argmax(z_check[:, ::-1], axis=1)
+    k_z = input.shape[1] - jnp.argmax(z_check[:, ::-1], axis=1)
 
     # calculate tau(logits)
-    tau_sum = z_cumsum[jnp.arange(0, logits.shape[0]), k_z - 1]
+    tau_sum = z_cumsum[jnp.arange(0, input.shape[0]), k_z - 1]
     tau_z = ((tau_sum - 1) / k_z).reshape(-1, 1)
 
-    return jnp.maximum(0, logits - tau_z)
+    return jnp.maximum(0, input - tau_z)
 
 
 @jax.jit
 def _sparsemax_project(D, feats_idx):
     return jnp.hstack(
-        [_sparsemax(D[:, q]) if len(q) > 1 else D[:, q] for q in feats_idx]  # after
+        [_sparsemax(D[:, q]) if len(q) > 1 else D[:, q] for q in feats_idx]
     )
 
 
@@ -332,7 +346,7 @@ def _optimize_D(
         # track best solution
         improved = loss < best_loss
         best_loss = jnp.where(improved, loss, best_loss)
-        D_best = jnp.where(improved[..., None], D_new, D_best)
+        D_best = jnp.where(improved, D_new, D_best)
         return (D_new, opt_state_new, D_best, best_loss, loss), None
 
     init_carry = (D_init, opt_state, D_best, best_loss, best_loss)
@@ -345,6 +359,10 @@ _optimize_D = jax.jit(_optimize_D, static_argnums=(1, 2, 3, 4))
 
 
 class MarginalStatistics():
+    """
+    This class is used to manage all marginals and to allow us to perform 
+    parallel queries on measurements, improving efficiency.
+    """
     def __init__(self, domain, k, max_number_rows=5000):
         self.domain = domain
         self.K = min(k, len(self.domain.attrs))
