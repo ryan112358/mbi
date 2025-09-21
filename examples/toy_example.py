@@ -1,5 +1,5 @@
 from mbi import Dataset, Domain
-from mbi import marginal_loss, estimation, relaxed_projection_estimation
+from mbi import marginal_loss, estimation, relaxed_projection_estimation, test_loss
 import numpy as np
 
 # discrete domain with attributes A, B, C and corresponding size 4 x 5 x 6
