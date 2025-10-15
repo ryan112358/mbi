@@ -1,5 +1,5 @@
 from mbi import Dataset, Domain
-from mbi import marginal_loss, estimation, relaxed_projection_estimation, test_loss
+from mbi import marginal_loss, estimation, relaxed_projection
 import numpy as np
 
 # discrete domain with attributes A, B, C and corresponding size 4 x 5 x 6
@@ -30,7 +30,8 @@ loss_fn = marginal_loss.from_linear_measurements(measurements)
 # estimate the data distribution
 # model = estimation.mirror_descent(domain, loss_fn, known_total=1000)
 
-model = relaxed_projection_estimation(domain, loss_fn, known_total=1000)
+# estimation via RP
+model = relaxed_projection.relaxed_projection_estimation(domain, loss_fn, known_total=1000)
 
 # recover consistent estimates of measurements
 ab2 = model.project(['A', 'B']).datavector()

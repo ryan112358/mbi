@@ -2,7 +2,7 @@ import unittest
 from mbi.domain import Domain
 from mbi.factor import Factor
 from mbi.clique_vector import CliqueVector
-from mbi import marginal_loss, estimation
+from mbi import marginal_loss, estimation, relaxed_projection
 import numpy as np
 from parameterized import parameterized
 import itertools
@@ -135,3 +135,15 @@ class TestEstimation(unittest.TestCase):
             expected = mu.project(cl).datavector()
             actual = model.project(cl).datavector()
             np.testing.assert_allclose(actual, expected, atol=100 / total)
+
+    @parameterized.expand(itertools.product(_CLIQUE_SETS))
+    def test_relaxed_projection(self, cliques):
+        measurements = fake_measurements(cliques)
+
+        # For RP, we often require higher known_total to increase the model representativeness
+        # Therefore, we set known_total=1000, which further requires optimization on measurements
+        model = relaxed_projection.relaxed_projection_estimation(_DOMAIN, measurements, known_total=1000, iters=1000)
+        for M in measurements:
+            expected = M.noisy_measurement
+            actual = model.project(M.clique).datavector()
+            np.testing.assert_allclose(actual, expected, atol=1e-2)

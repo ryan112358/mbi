@@ -17,13 +17,12 @@ import jax.numpy as jnp
 import optax
 from dataclasses import dataclass, field
 
-from typing import Callable, List
+from typing import Callable, List, Optional
 from . import marginal_loss
 from .dataset import Dataset
 from .domain import Domain
 from .marginal_loss import LinearMeasurement
 from .clique_vector import CliqueVector
-from .estimation import mirror_descent
 from .factor import Factor
 
 
@@ -111,6 +110,10 @@ def relaxed_projection_estimation(
     domain: Domain,
     loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
     iters: int = 1000,
+    optimizer = optax.adam(learning_rate=0.01),
+    D_start: Optional[jnp.ndarray] = None,
+    known_total: Optional[int] = None,
+    seed: int = 0,
     **kwargs
 ) -> ProjectableData:
     """
@@ -121,14 +124,14 @@ def relaxed_projection_estimation(
         domain: a Domain class.
         loss_fn: a list of LinearMeasurement, or a callable MarginalLossFn.
         iters: number of iterations in training.
+        D_start: initial data on which we start the optimization. If 
+                    None, the optimization will start from a randomly 
+                    initialized data.
+        known_total: number of records in optimizable data (``D_prime.shape[0]``), 
+                        which can be regarded as the `batch size`.
+        optimizer: an optax optimizer, default to adam with lr=0.01.
+        seed: random seed, default to 0.
         kwargs: args that may be used for extra config:
-            D_start: initial data on which we start the optimization. If 
-                     None, the optimization will start from a randomly 
-                     initialized data.
-            known_total: number of records in optimizable data (``D_prime.shape[0]``), 
-                         which can be regarded as the `batch size`.
-            optimizer: an optax optimizer, default to adam with lr=0.01.
-            seed: random seed, default to 0.
             log: whether return optimization log (start loss and end loss), default 
                  to False (no log)
     
@@ -139,13 +142,15 @@ def relaxed_projection_estimation(
         The reason is that we find that parallel computation is more efficient 
         after running them on some toy examples. 
     """
-    key = jax.random.PRNGKey(kwargs.get('seed', 0))
+    if known_total is not None and known_total < 100:
+        raise ValueError('You are using a too small known_total, which may influence model capacity.')
+    key = jax.random.PRNGKey(seed)
 
     if isinstance(loss_fn, List):
         # if given a list of LinearMeasurement, define the loss function by it
-        D_start = kwargs.get('D_start', None)
         if D_start is None:
-            D_start = _initialize_synthetic_dataset(key, num_generated_points=kwargs.get('known_total', 1000), data_dimension=np.sum(domain.shape))
+            known_total = 1000 if known_total is None else known_total
+            D_start = _initialize_synthetic_dataset(key, num_generated_points=known_total, data_dimension=np.sum(domain.shape))
 
         stat_dim = _obtain_dim(measurements = loss_fn)
         statistics = [MarginalStatistics(domain, dim) for dim in stat_dim]
@@ -167,7 +172,6 @@ def relaxed_projection_estimation(
         # -- initialize optimizer and update function --
         feats_cum = jnp.array([0] + list(domain.shape)).cumsum()
         feats_idx = [list(range(feats_cum[i], feats_cum[i+1])) for i in range(len(feats_cum)-1)]
-        optimizer = kwargs.get('optimizer', optax.adam(learning_rate=0.01))
         opt_init_fn = optimizer.init
 
 
@@ -198,10 +202,7 @@ def relaxed_projection_estimation(
     
     else:
         # if given a MarginalLossFn, we transform D_start into CliqueVector and optimize it (same as PGM)
-
-        D_start = kwargs.get('D_start', None)
         if D_start is None:
-            known_total = kwargs.get('known_total', None)
             if known_total is not None:
                 D_start = _initialize_synthetic_dataset(key, num_generated_points=known_total, data_dimension=np.sum(domain.shape))
             else:
@@ -219,7 +220,6 @@ def relaxed_projection_estimation(
 
         feats_cum = jnp.array([0] + list(domain.shape)).cumsum()
         feats_idx = [list(range(feats_cum[i], feats_cum[i+1])) for i in range(len(feats_cum)-1)]
-        optimizer = kwargs.get('optimizer', optax.adam(learning_rate=0.01))
         opt_init_fn = optimizer.init
 
         @jax.jit
@@ -272,11 +272,11 @@ def _marginal_stat(measurements, stat_dim, statistics):
             stat_id = stat_dim.index(len(cl))
             if selected_query_index[stat_id] is None:
                 selected_query_index[stat_id] = [statistics[stat_id].workload.index(cl)]
-                measured_ans[stat_id] = [np.hstack([np.array(marginal), np.zeros((statistics[stat_id].max_size - len(marginal),))])]
+                measured_ans[stat_id] = [jnp.hstack([jnp.array(marginal), jnp.zeros((statistics[stat_id].max_size - len(marginal),))])]
             else:
                 selected_query_index[stat_id].append(statistics[stat_id].workload.index(cl))
                 measured_ans[stat_id].append(
-                    np.hstack([np.array(marginal), np.zeros((statistics[stat_id].max_size - len(marginal),))])
+                    np.hstack([jnp.array(marginal), jnp.zeros((statistics[stat_id].max_size - len(marginal),))])
                 )
         except:
             raise ValueError(f'Unsupported marginal dimension: {len(cl)}')
