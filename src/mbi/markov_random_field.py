@@ -95,11 +95,12 @@ class MarkovRandomField:
             def foo(group):
                 idx = group.name
                 vals = synthetic_col(marg[idx], group.shape[0])
-                group[col] = vals
-                return group
+                return pd.Series(vals, index=group.index)
 
             if len(proj) >= 1:
-                df = df.groupby(list(proj), group_keys=False).apply(foo)
+                df[col] = df.groupby(list(proj), group_keys=False).apply(
+                    foo, include_groups=False
+                )
             else:
                 df[col] = synthetic_col(marg, df.shape[0])
 
