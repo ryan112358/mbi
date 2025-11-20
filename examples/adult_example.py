@@ -10,7 +10,7 @@ import numpy as np
 
 data = Dataset.load("../data/adult.csv", "../data/adult-domain.json")
 domain = data.domain
-total = data.df.shape[0]
+total = data.records
 
 print(domain)
 

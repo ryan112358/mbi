@@ -83,15 +83,15 @@ def public_support(
 
     def loss_and_grad(weights):
         """Calculates the loss and gradient with respect to the public data weights."""
-        est = Dataset(public_data.df, public_data.domain, weights)
+        est = Dataset(public_data.data, public_data.domain, weights)
         mu = _to_clique_vector(est, cliques)
         loss, dL = loss_and_grad_mu(mu)
         dweights = np.zeros(weights.size)
         for cl in dL.cliques:
-            idx = est.project(cl).df.values
+            idx = est.project(cl).data
             dweights += np.array(dL[cl].values[tuple(idx.T)])
         return loss, dweights
 
     weights = np.ones(public_data.records)
     weights = entropic_mirror_descent(loss_and_grad, weights, known_total)
-    return Dataset(public_data.df, public_data.domain, weights)
+    return Dataset(public_data.data, public_data.domain, weights)

@@ -1,13 +1,14 @@
 """Provides the Dataset class for representing and manipulating tabular data.
 
 This module defines the `Dataset` class, which serves as a wrapper around a
-Pandas DataFrame, associating it with a `Domain` object. It allows for
+numpy array, associating it with a `Domain` object. It allows for
 structured representation of data, facilitating operations like projection onto
 subsets of attributes and conversion into a data vector format suitable for
 various statistical and machine learning tasks.
 """
 from __future__ import annotations
 
+import csv
 import functools
 import json
 from collections.abc import Sequence
@@ -16,26 +17,27 @@ import attr
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pandas as pd
 
 from .domain import Domain
 from .factor import Factor
 
 
 class Dataset:
-    def __init__(self, df, domain, weights=None):
+    def __init__(self, data, domain, weights=None):
         """create a Dataset object
 
-        :param df: a pandas dataframe
+        :param data: a numpy array, columns aligned with domain.attrs
         :param domain: a domain object
         :param weight: weight for each row
         """
-        assert set(domain.attrs) <= set(
-            df.columns
-        ), "data must contain domain attributes"
-        assert weights is None or df.shape[0] == weights.size
         self.domain = domain
-        self.df = df.loc[:, domain.attrs]
+        self.data = np.array(data)
+
+        if self.data.ndim != 2:
+             raise ValueError(f"Data must be 2d array, got {self.data.shape}")
+
+        assert self.data.shape[1] == len(domain), "data columns must match domain attributes"
+        assert weights is None or self.data.shape[0] == weights.size
         self.weights = weights
 
     @staticmethod
@@ -47,8 +49,7 @@ class Dataset:
         """
         arr = [np.random.randint(low=0, high=n, size=N) for n in domain.shape]
         values = np.array(arr).T
-        df = pd.DataFrame(values, columns=domain.attrs)
-        return Dataset(df, domain)
+        return Dataset(values, domain)
 
     @staticmethod
     def load(path, domain):
@@ -57,16 +58,38 @@ class Dataset:
         :param path: path to csv file
         :param domain: path to json file encoding the domain information
         """
-        df = pd.read_csv(path)
         config = json.load(open(domain))
         domain = Domain(config.keys(), config.values())
-        return Dataset(df, domain)
+
+        with open(path, 'r') as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            header_map = {name: i for i, name in enumerate(header)}
+
+            if not set(domain.attrs) <= set(header):
+                 raise ValueError("data must contain domain attributes")
+
+            indices = [header_map[attr] for attr in domain.attrs]
+
+            data = []
+            for row in reader:
+                # Convert to int, handling potential float strings like '1.0'
+                try:
+                    mapped_row = [int(float(row[i])) for i in indices]
+                except ValueError:
+                    # Fallback or error if data is not numeric
+                    # Assuming domain implies discrete/integer data
+                     mapped_row = [int(row[i]) for i in indices]
+                data.append(mapped_row)
+
+        return Dataset(np.array(data), domain)
 
     def project(self, cols):
         """project dataset onto a subset of columns"""
         if type(cols) in [str, int]:
             cols = [cols]
-        data = self.df.loc[:, cols]
+        indices = self.domain.axes(cols)
+        data = self.data[:, indices]
         domain = self.domain.project(cols)
         data = Dataset(data, domain, self.weights)
         return Factor(data.domain, data.datavector(flatten=False))
@@ -82,12 +105,12 @@ class Dataset:
     @property
     def records(self):
         """Returns the number of records (rows) in the dataset."""
-        return self.df.shape[0]
+        return self.data.shape[0]
 
     def datavector(self, flatten=True):
         """return the database in vector-of-counts form"""
         bins = [range(n + 1) for n in self.domain.shape]
-        ans = np.histogramdd(self.df.values, bins, weights=self.weights)[0]
+        ans = np.histogramdd(self.data, bins, weights=self.weights)[0]
         return ans.flatten() if flatten else ans
 
 
@@ -114,8 +137,9 @@ class JaxDataset:
     weights: jax.Array | None = None
 
     def __post_init__(self):
-        if self.data.dtype != 'int':
-            raise ValueError(f'Data must be integral, got {self.data.dtype}.')
+        if not jnp.issubdtype(self.data.dtype, jnp.integer):
+             raise ValueError(f'Data must be integral, got {self.data.dtype}.')
+
         if self.data.ndim != 2:
             raise ValueError(f'Data must be 2d aray, got {self.data.shape}')
         if self.data.shape[1] != len(self.domain):
@@ -143,7 +167,7 @@ class JaxDataset:
         if type(cols) in [str, int]:
             cols = [cols]
         idx = self.domain.axes(cols)
-        data = self.data.loc[:, idx]
+        data = self.data[:, idx]
         domain = self.domain.project(cols)
         data = JaxDataset(data, domain, self.weights)
         return Factor(data.domain, data.datavector(flatten=False))
