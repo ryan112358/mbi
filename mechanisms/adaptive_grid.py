@@ -408,7 +408,11 @@ if __name__ == "__main__":
 
     df = pd.read_csv(args.dataset)
     domain = Domain.fromdict(json.load(open(args.domain, "r")))
-    data = Dataset(df, domain)
+
+    # Ensure columns are in correct order for numpy array
+    df = df[list(domain.attrs)]
+
+    data = Dataset(df.values, domain)
     mbi_args = {
         "iters": args.pgm_iters,
         "warm_start": args.warm_start,
@@ -424,4 +428,6 @@ if __name__ == "__main__":
         **mbi_args
     )
 
-    synth.df.to_csv(args.save, index=False)
+    # Convert back to pandas for saving
+    df_synth = pd.DataFrame(synth.data, columns=synth.domain.attrs)
+    df_synth.to_csv(args.save, index=False)

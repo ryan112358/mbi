@@ -92,7 +92,9 @@ class MixtureOfProducts:
             dfs.append(df)
 
         df = pd.concat(dfs).sample(frac=1).reset_index(drop=True)[:total]
-        return Dataset(df, self.domain)
+        # Ensure columns match domain order
+        df = df[list(self.domain.attrs)]
+        return Dataset(df.values, self.domain)
 
 
 def mixture_of_products(

@@ -7,6 +7,7 @@ import itertools
 from cdp2adp import cdp_rho
 from scipy.special import logsumexp
 import argparse
+import pandas as pd
 
 """
 This is a generalization of the winning mechanism from the 
@@ -104,7 +105,7 @@ def select(data, rho, measurement_log, cliques=[]):
 
 
 def transform_data(data, supports):
-  df = data.df.copy()
+  df = pd.DataFrame(data.data, columns=data.domain.attrs)
   newdom = {}
   for col in data.domain:
     support = supports[col]
@@ -122,11 +123,11 @@ def transform_data(data, supports):
     assert idx == size
     df[col] = df[col].map(mapping)
   newdom = Domain.fromdict(newdom)
-  return Dataset(df, newdom)
+  return Dataset(df.values, newdom)
 
 
 def reverse_data(data, supports):
-  df = data.df.copy()
+  df = pd.DataFrame(data.data, columns=data.domain.attrs)
   newdom = {}
   for col in data.domain:
     support = supports[col]
@@ -140,7 +141,7 @@ def reverse_data(data, supports):
       df.loc[mask, col] = np.random.choice(extra, mask.sum())
     df.loc[~mask, col] = idx[df.loc[~mask, col]]
   newdom = Domain.fromdict(newdom)
-  return Dataset(df, newdom)
+  return Dataset(df.values, newdom)
 
 
 def default_params():
@@ -200,7 +201,8 @@ if __name__ == "__main__":
   synth = MST(data, args.epsilon, args.delta)
 
   if args.save is not None:
-    synth.df.to_csv(args.save, index=False)
+    df = pd.DataFrame(synth.data, columns=synth.domain.attrs)
+    df.to_csv(args.save, index=False)
 
   errors = []
   for proj in workload:
