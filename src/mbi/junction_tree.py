@@ -90,7 +90,7 @@ def greedy_order(
             i = np.random.choice(probas.size, p=probas)
             a = choices[i]
         else:
-            a = min(cost, key=lambda a: cost[a])
+            a = min(cost, key=cost.get)
 
         order.append(a)
         unmarked.remove(a)
