@@ -12,7 +12,6 @@ import csv
 import functools
 import json
 from collections.abc import Sequence
-from typing import Union, Optional
 
 import attr
 import jax
@@ -158,11 +157,11 @@ class JaxDataset:
         if self.data.shape[1] != len(self.domain):
             raise ValueError('Number of columns of data must equal the number of attributes in the domain.')
         # This will not work in a jitted context, but not sure if this will be called from one normally.
-        # for i, ax in enumerate(self.domain):
-        #     if self.data[:, i].min() < 0:
-        #         raise ValueError('Data must be non-negative.')
-        #     if self.data[:, i].max() >= self.domain[ax]:
-        #         raise ValueError('Data must be within the bounds of the domain.')
+        for i, ax in enumerate(self.domain):
+            if self.data[:, i].min() < 0:
+                raise ValueError('Data must be non-negative.')
+            if self.data[:, i].max() >= self.domain[ax]:
+                raise ValueError('Data must be within the bounds of the domain.')
 
     @staticmethod
     def synthetic(domain: Domain, records: int) -> JaxDataset:
