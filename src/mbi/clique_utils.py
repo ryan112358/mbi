@@ -22,11 +22,11 @@ def reverse_clique_mapping(
     Returns:
       A mapping from maximal cliques to cliques they contain.
     """
-    mapping = {cl: [] for cl in maximal_cliques}
-    for cl in all_cliques:
-        for cl2 in maximal_cliques:
-            if set(cl) <= set(cl2):
-                mapping[cl2].append(cl)
+    mapping = {clique: [] for clique in maximal_cliques}
+    for clique in all_cliques:
+        for maximal_clique in maximal_cliques:
+            if set(clique) <= set(maximal_clique):
+                mapping[maximal_clique].append(clique)
                 break
     return mapping
 
@@ -49,9 +49,9 @@ def maximal_subset(cliques: list[Clique]) -> list[Clique]:
     """
     cliques = sorted(cliques, key=len, reverse=True)
     result = []
-    for cl in cliques:
-        if not any(set(cl) <= set(cl2) for cl2 in result):
-            result.append(cl)
+    for clique in cliques:
+        if not any(set(clique) <= set(existing_clique) for existing_clique in result):
+            result.append(clique)
     return result
 
 
@@ -76,9 +76,9 @@ def clique_mapping(
 
     """
     mapping = {}
-    for cl in all_cliques:
-        for cl2 in maximal_cliques:
-            if set(cl) <= set(cl2):
-                mapping[cl] = cl2
+    for clique in all_cliques:
+        for maximal_clique in maximal_cliques:
+            if set(clique) <= set(maximal_clique):
+                mapping[clique] = maximal_clique
                 break
     return mapping

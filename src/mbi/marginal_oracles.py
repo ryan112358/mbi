@@ -13,7 +13,7 @@ import concurrent.futures
 import functools
 import itertools
 import string
-from typing import Protocol
+from typing import Protocol, Optional, Union, Callable, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -54,7 +54,7 @@ class MarginalOracle(Protocol):
         self,
         potentials: CliqueVector,
         total: float = 1.0,
-        mesh: jax.sharding.Mesh | None = None
+        mesh: Optional[jax.sharding.Mesh] = None
     ) -> CliqueVector:
         """
         Computes marginals from log-space potentials.
@@ -73,12 +73,13 @@ class MarginalOracle(Protocol):
         ...
 
 
-def sum_product(factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum) -> Factor:
+def sum_product(factors: list[Factor], dom: Domain, einsum_fn: Callable = jnp.einsum) -> Factor:
     """Compute the sum-of-products of a list of Factors using einsum.
 
     Args:
         factors: A list of Factors.
         dom: The target domain of the output factor.
+        einsum_fn: The einsum function to use.
 
     Returns:
         sum_{S - D} prod_i F_i,
@@ -90,7 +91,8 @@ def sum_product(factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum) -> Fac
 
     attrs = sorted(set.union(*[set(f.domain) for f in factors]).union(set(dom)))
     mapping = dict(zip(attrs, _EINSUM_LETTERS))
-    convert = lambda d: "".join(mapping[a] for a in d.attributes)
+    def convert(domain):
+        return "".join(mapping[a] for a in domain.attributes)
     formula = ",".join(convert(f.domain) for f in factors) + "->" + convert(dom)
     values = einsum_fn(
         formula,
@@ -101,7 +103,7 @@ def sum_product(factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum) -> Fac
     return Factor(dom, values)
 
 
-def logspace_sum_product_fast(log_factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum) -> Factor:
+def logspace_sum_product_fast(log_factors: list[Factor], dom: Domain, einsum_fn: Callable = jnp.einsum) -> Factor:
     """Numerically stable algorithm for computing sum product in log space.
 
     This seems to be the most stable algorithm for doing this computation that doesn't
@@ -117,6 +119,7 @@ def logspace_sum_product_fast(log_factors: list[Factor], dom: Domain, einsum_fn=
     Args:
         log_factors: a list of log-space factors.
         dom: The desired domain of the output factor.
+        einsum_fn: The einsum function to use.
 
     Returns:
         log sum_{S - D} prod_i exp(F_i),
@@ -130,7 +133,7 @@ def logspace_sum_product_fast(log_factors: list[Factor], dom: Domain, einsum_fn=
     return sum_product(stable_factors, dom, einsum_fn).log() + sum(maxes)
 
 
-def logspace_sum_product_stable_v1(log_factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum) -> Factor:
+def logspace_sum_product_stable_v1(log_factors: list[Factor], dom: Domain, einsum_fn: Callable = jnp.einsum) -> Factor:
     """More stable implementation of logspace_sum_product.
 
     This ipmlementation may (or may not) materialize a Factor over the domain
@@ -144,16 +147,16 @@ def logspace_sum_product_stable_v1(log_factors: list[Factor], dom: Domain, einsu
 
 
 def brute_force_marginals(
-    potentials: CliqueVector, total: float = 1, mesh: jax.sharding.Mesh | None = None
+    potentials: CliqueVector, total: float = 1, mesh: Optional[jax.sharding.Mesh] = None
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials by materializing the full joint distribution."""
-    P = sum(potentials.arrays.values()).normalize(total, log=True).exp().apply_sharding(mesh)
-    marginals = {cl: P.project(cl) for cl in potentials.cliques}
+    P_val = sum(potentials.arrays.values()).normalize(total, log=True).exp().apply_sharding(mesh)
+    marginals = {clique: P_val.project(clique) for clique in potentials.cliques}
     return CliqueVector(potentials.domain, potentials.cliques, marginals).apply_sharding(mesh)
 
 
 def einsum_marginals(
-    potentials: CliqueVector, total: float = 1, mesh: jax.sharding.Mesh | None = None, einsum_fn=jnp.einsum
+    potentials: CliqueVector, total: float = 1, mesh: Optional[jax.sharding.Mesh] = None, einsum_fn: Callable = jnp.einsum
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials by using einsum.
 
@@ -164,11 +167,11 @@ def einsum_marginals(
         potentials.domain,
         potentials.cliques,
         {
-            cl: logspace_sum_product_fast(inputs, potentials[cl].domain, einsum_fn)
+            clique: logspace_sum_product_fast(inputs, potentials[clique].domain, einsum_fn)
             .normalize(total, log=True)
             .exp()
             .apply_sharding(mesh)
-            for cl in potentials.cliques
+            for clique in potentials.cliques
         },
     )
 
@@ -177,8 +180,8 @@ def einsum_marginals(
 def message_passing_stable(
     potentials: CliqueVector,
     total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
-    jtree: nx.Graph | None = None
+    mesh: Optional[jax.sharding.Mesh] = None,
+    jtree: Optional[nx.Graph] = None
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials using the message passing algorithm.
 
@@ -206,7 +209,7 @@ def message_passing_stable(
     message_order = junction_tree.message_passing_order(jtree)
     maximal_cliques = junction_tree.maximal_cliques(jtree)
 
-    mapping = clique_mapping(maximal_cliques, cliques)
+    # mapping = clique_mapping(maximal_cliques, cliques)
     beliefs = potentials.expand(maximal_cliques).apply_sharding(mesh)
 
     messages = {}
@@ -225,10 +228,10 @@ def message_passing_stable(
 def message_passing_fast(
     potentials: CliqueVector,
     total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
-    einsum_fn=jnp.einsum,
-    jtree: nx.Graph | None = None,
-    logspace_sum_product_fn=logspace_sum_product_fast
+    mesh: Optional[jax.sharding.Mesh] = None,
+    einsum_fn: Callable = jnp.einsum,
+    jtree: Optional[nx.Graph] = None,
+    logspace_sum_product_fn: Callable = logspace_sum_product_fast
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials using the message passing algorithm.
 
@@ -247,6 +250,7 @@ def message_passing_fast(
         mesh: The mesh over which the computation should be sharded.
         einsum_fn: A function with the same API and semantics as jnp.einsum.
         jtree: An optional junction tree that defines the message passing order.
+        logspace_sum_product_fn: A function to compute sum-product in log-space.
 
     Returns:
         The marginals of the graphical model, defined over the same set of cliques
@@ -266,12 +270,11 @@ def message_passing_fast(
     incoming_messages = collections.defaultdict(list)
     potential_mapping = collections.defaultdict(list)
 
-    for cl in cliques:
-        potential_mapping[mapping[cl]].append(potentials[cl])
-        inverse_mapping[mapping[cl]].append(cl)
+    for clique in cliques:
+        potential_mapping[mapping[clique]].append(potentials[clique])
+        inverse_mapping[mapping[clique]].append(clique)
 
-    for i in range(len(message_order)):
-        msg = message_order[i]
+    for i, msg in enumerate(message_order):
         for j in range(i):
             msg2 = message_order[j]
             if msg[0] == msg2[1] and msg[1] != msg2[0]:
@@ -291,11 +294,11 @@ def message_passing_fast(
         messages[(i, j)] = logspace_sum_product_fn(inputs, shared, einsum_fn=einsum_fn).apply_sharding(mesh)
 
     beliefs = {}
-    for cl in maximal_cliques:
-        input_potentials = potential_mapping[cl]
-        input_messages = [messages[key] for key in messages if key[1] == cl]
+    for clique in maximal_cliques:
+        input_potentials = potential_mapping[clique]
+        input_messages = [messages[key] for key in messages if key[1] == clique]
         inputs = input_potentials + input_messages
-        for cl2 in inverse_mapping[cl]:
+        for cl2 in inverse_mapping[clique]:
             beliefs[cl2] = (
                 logspace_sum_product_fn(inputs, domain.project(cl2), einsum_fn=einsum_fn)
                 .normalize(total, log=True)
@@ -311,7 +314,7 @@ def variable_elimination(
     potentials: CliqueVector,
     clique: Clique,
     total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
+    mesh: Optional[jax.sharding.Mesh] = None,
 ) -> Factor:
     """Compute an out-of-model/unsupported marginal from the potentials.
 
@@ -333,9 +336,9 @@ def variable_elimination(
 
     k = len(potentials.cliques)
     psi = dict(zip(range(k), potentials.arrays.values()))
-    for z in elim_order:
-        psi2 = [psi.pop(i) for i in list(psi.keys()) if z in psi[i].domain]
-        psi[k] = sum(psi2).logsumexp([z]).apply_sharding(mesh)
+    for z_var in elim_order:
+        psi2 = [psi.pop(i) for i in list(psi.keys()) if z_var in psi[i].domain]
+        psi[k] = sum(psi2).logsumexp([z_var]).apply_sharding(mesh)
         k += 1
     # this expand covers the case when clique is not in the active domain
     newdom = potentials.domain.project(clique)
@@ -355,7 +358,7 @@ def bulk_variable_elimination(
     potentials: CliqueVector,
     marginal_queries: list[tuple[str, ...]],
     total: float = 1.0,
-    mesh: jax.sharding.Mesh | None = None,
+    mesh: Optional[jax.sharding.Mesh] = None,
 ) -> CliqueVector:
     """Compute the marginals of the graphical model with the given potentials.
 
@@ -398,7 +401,7 @@ def calculate_many_marginals(
     marginal_queries: list[Clique],
     total: float = 1.0,
     belief_propagation_oracle: MarginalOracle = message_passing_stable,
-    mesh: jax.sharding.Mesh | None = None,
+    mesh: Optional[jax.sharding.Mesh] = None,
 ) -> CliqueVector:
     """ Calculates marginals for all the projections in the list using
 
@@ -410,6 +413,9 @@ def calculate_many_marginals(
     Args:
         potentials: Potentials of a graphical model.
         marginal_queries: a list of cliques whose marginals are desired.
+        total: The normalization factor.
+        belief_propagation_oracle: The oracle to use for BP.
+        mesh: The mesh over which the computation should be sharded.
 
     Returns:
         A CliqueVector, where each defined over the list of input marginal_queries.
@@ -428,12 +434,12 @@ def calculate_many_marginals(
 
     # first calculate P(Cj | Ci) for all neighbors Ci, Cj
     conditional = {}
-    for Ci in max_cliques:
-        for Cj in neighbors[Ci]:
-            Cj: tuple[str, ...]  # networkx does not seem to have the right type annotation.
-            Sij = tuple(set(Cj) & set(Ci))
-            Z = marginals.project(Cj)
-            conditional[(Cj,Ci)] = Z / Z.project(Sij)
+    for ci_clique in max_cliques:
+        for cj_clique in neighbors[ci_clique]:
+            cj_clique: tuple[str, ...]  # networkx does not seem to have the right type annotation.
+            s_ij = tuple(set(cj_clique) & set(ci_clique))
+            z_factor = marginals.project(cj_clique)
+            conditional[(cj_clique,ci_clique)] = z_factor / z_factor.project(s_ij)
 
     # now iterate through pairs of cliques in order of distance
     # not sure why this API changed and why we need to do this hack.
@@ -443,28 +449,28 @@ def calculate_many_marginals(
     order_fn = lambda x: dist[x[0]][x[1]]
 
     results = {}
-    for Ci, Cj in sorted(itertools.combinations(max_cliques, 2), key=order_fn):
-        Cl = pred[Ci][Cj]
-        Y = conditional[(Cj,Cl)]
-        if Cl == Ci:
-            X = marginals[Ci]
-            results[(Ci, Cj)] = results[(Cj, Ci)] = X*Y
+    for ci_clique, cj_clique in sorted(itertools.combinations(max_cliques, 2), key=order_fn):
+        cl_clique = pred[ci_clique][cj_clique]
+        y_factor = conditional[(cj_clique,cl_clique)]
+        if cl_clique == ci_clique:
+            x_factor = marginals[ci_clique]
+            results[(ci_clique, cj_clique)] = results[(cj_clique, ci_clique)] = x_factor*y_factor
         else:
-            X = results[(Ci, Cl)]
-            S = set(Cl) - set(Ci) - set(Cj)
-            results[(Ci, Cj)] = results[(Cj, Ci)] = (X*Y).sum(S)
+            x_factor = results[(ci_clique, cl_clique)]
+            s_set = set(cl_clique) - set(ci_clique) - set(cj_clique)
+            results[(ci_clique, cj_clique)] = results[(cj_clique, ci_clique)] = (x_factor*y_factor).sum(s_set)
 
-    results = { domain.canonical(key[0]+key[1]) : results[key] for key in results }
+    results = { domain.canonical(key[0]+key[1]) : results[key] for key, value in results.items() }
 
     answers = { }
-    for cl in marginal_queries:
+    for clique in marginal_queries:
         for attr in results:
-            if set(cl) <= set(attr):
-                answers[cl] = results[attr].project(cl)
+            if set(clique) <= set(attr):
+                answers[clique] = results[attr].project(clique)
                 break
-        if cl not in answers:
+        if clique not in answers:
             # just use variable elimination
-            answers[cl] = variable_elimination(potentials, cl, total, mesh)
+            answers[clique] = variable_elimination(potentials, clique, total, mesh)
 
     return CliqueVector(domain, marginal_queries, answers)
 
@@ -472,9 +478,21 @@ def kron_query(
     potentials: CliqueVector,
     query_factors: dict[str, jax.Array],
     total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
+    mesh: Optional[jax.sharding.Mesh] = None,
     suffix: str = "_answer"
 ) -> Factor:
+    """Computes the answer to a Kronecker product query.
+
+    Args:
+        potentials: The potentials of the graphical model.
+        query_factors: A dictionary of factors for the query.
+        total: The total normalization.
+        mesh: The mesh for sharding.
+        suffix: Suffix for query variables.
+
+    Returns:
+        The result factor.
+    """
     new_factors = {}
     extra_domain = {}
     extra_cliques = []

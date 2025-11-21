@@ -15,6 +15,7 @@ support the cliques of the marginal-based loss function can be used here.
 
 from __future__ import annotations
 
+import math
 import functools
 from collections.abc import Callable
 from typing import Any, NamedTuple, Protocol
@@ -38,7 +39,7 @@ class Estimator(Protocol):
     Defines the callable signature for marginal-based estimators.
 
     An estimator estimates a discrete distribution, or more generally
-    a `Projectable' object from a loss function defined over it's 
+    a `Projectable' object from a loss function defined over it's
     low-dimensional marginals.
 
     Examples of conforming functions from `mbi.estimation`:
@@ -84,13 +85,13 @@ def minimum_variance_unbiased_total(measurements: list[LinearMeasurement]) -> fl
     """Estimates the total count from measurements with identity queries."""
     # find the minimum variance estimate of the total given the measurements
     estimates, variances = [], []
-    for M in measurements:
-        y = M.noisy_measurement
+    for measurement in measurements:
+        y = measurement.noisy_measurement
         try:
             # TODO: generalize to support any linear measurement that supports total query
-            if M.query == Factor.datavector:  # query = Identity
+            if measurement.query == Factor.datavector:  # query = Identity
                 estimates.append(y.sum())
-                variances.append(M.stddev**2 * y.size)
+                variances.append(measurement.stddev**2 * y.size)
         except Exception:
             continue
     estimates, variances = np.array(estimates), np.array(variances)
@@ -126,7 +127,7 @@ def _get_stateful_oracle(
 ) -> StatefulMarginalOracle:
     if stateful:
         return marginal_oracle
-    return lambda theta, total, state: (marginal_oracle(theta, total), state)
+    return lambda theta, total, state, mesh=None: (marginal_oracle(theta, total), state)
 
 
 def mirror_descent(
@@ -162,6 +163,7 @@ def mirror_descent(
             that supports the cliques in the loss_fn.
         marginal_oracle: The function to use to compute marginals from potentials.
         iters: The maximum number of optimization iterations.
+        stateful: Whether the marginal oracle is stateful.
         stepsize: The step size for the optimization.  If not provided, this algorithm
             will use a line search to automatically choose appropriate step sizes.
         callback_fn: A function to call at each iteration with the iteration number.
@@ -208,8 +210,8 @@ def mirror_descent(
     # where our loss function is || mu - y ||_2^2, we have L = 1.
     alpha = 2.0 / known_total if stepsize is None else stepsize
     mu, state = marginal_oracle(potentials, known_total, state=None)
-    for t in range(iters):
-        potentials, loss, alpha, mu, state = update(potentials, alpha, state)
+    for _ in range(iters):
+        potentials, _, alpha, mu, state = update(potentials, alpha, state)
         callback_fn(mu)
 
     marginals, _ = marginal_oracle(potentials, known_total, state)
@@ -237,11 +239,11 @@ def _optimize(loss_and_grad_fn, params, iters=250, callback_fn=lambda _: None):
         linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
     )
     state = optimizer.init(params)
-    prev_loss = float("inf")
-    for t in range(iters):
+    prev_loss = math.inf
+    for _ in range(iters):
         params, state, loss = update(params, state)
         callback_fn(params)
-        # if loss == prev_loss: break
+        if loss == prev_loss: break
         prev_loss = loss
     return params
 
@@ -310,7 +312,6 @@ def mle_from_marginals(
     known_total: float,
     iters: int = 250,
     marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
-    callback_fn=lambda *_: None,
     mesh: jax.sharding.Mesh | None = None,
 ) -> MarkovRandomField:
     """Compute the MLE Graphical Model from the marginals.
@@ -356,7 +357,6 @@ def dual_averaging(
     Args:
         domain: The domain over which the model should be defined.
         loss_fn: A MarginalLossFn or a list of Linear Measurements.
-        lipschitz: The Lipschitz constant of the gradient of the loss function.
         known_total: The known or estimated number of records in the data.
         potentials: The initial potentials.  Must be defind over a set of cliques
             that supports the cliques in the loss_fn.
@@ -393,15 +393,15 @@ def dual_averaging(
         w = (1 - c) * w + c * v
         return w, v, gbar
 
-    w = v = marginal_oracle(potentials, known_total, mesh)
+    w_var = v_var = marginal_oracle(potentials, known_total, mesh)
     gbar = CliqueVector.zeros(domain, loss_fn.cliques)
     for t in range(1, iters + 1):
         c = 2.0 / (t + 1)
         beta = gamma * (t + 1) ** 1.5 / 2
-        w, v, gbar = update(w, v, gbar, c, beta, t)
-        callback_fn(w)
+        w_var, v_var, gbar = update(w_var, v_var, gbar, c, beta, t)
+        callback_fn(w_var)
 
-    return mle_from_marginals(w, known_total)
+    return mle_from_marginals(w_var, known_total)
 
 
 def interior_gradient(
@@ -426,7 +426,6 @@ def interior_gradient(
     Args:
         domain: The domain over which the model should be defined.
         loss_fn: A MarginalLossFn or a list of Linear Measurements.
-        lipschitz: The Lipschitz constant of the gradient of the loss function.
         known_total: The known or estimated number of records in the data.
         potentials: The initial potentials.  Must be defind over a set of cliques
             that supports the cliques in the loss_fn.
@@ -448,7 +447,7 @@ def interior_gradient(
         )
 
     # Algorithm parameters
-    c = 1
+    c_param = 1
     sigma = 1
     l = sigma / loss_fn.lipschitz
 
@@ -465,13 +464,13 @@ def interior_gradient(
 
     # If we remove jit from marginal oracle, then we'll need to wrap this in
     # a jitted "init" function.
-    x = y = z = marginal_oracle(potentials, known_total, mesh)
-    theta = potentials
-    for t in range(1, iters + 1):
-        theta, c, x, y, z = update(theta, c, x, y, z)
-        callback_fn(x)
+    x_var = y_var = z_var = marginal_oracle(potentials, known_total, mesh)
+    theta_var = potentials
+    for _ in range(1, iters + 1):
+        theta_var, c_param, x_var, y_var, z_var = update(theta_var, c_param, x_var, y_var, z_var)
+        callback_fn(x_var)
 
-    return mle_from_marginals(x, known_total)
+    return mle_from_marginals(x_var, known_total)
 
 
 class _AcceleratedStepSearchState(NamedTuple):
@@ -501,9 +500,9 @@ class _AcceleratedStepSearchState(NamedTuple):
         Acceleration](https://arxiv.org/pdf/1702.03828)
     """
 
-    x: CliqueVector
-    z: CliqueVector
-    u: CliqueVector
+    x_param: CliqueVector
+    z_param: CliqueVector
+    u_param: CliqueVector
     prev_stepsize: jnp.ndarray | float
     stepsize: jnp.ndarray | float
     prev_theta: jnp.ndarray | float
@@ -590,11 +589,11 @@ def _universal_accelerated_method_step_init(
         theta = jnp.where(carry.prev_theta < 0.0, 1.0, new_theta)
 
         # Computes sequences of params
-        y = (1 - theta) * carry.x + theta * carry.z
+        y = (1 - theta) * carry.x_param + theta * carry.z_param
         value_y, grad_y = jax.value_and_grad(fun)(y)
-        u = carry.u - stepsize / theta * grad_y
+        u = carry.u_param - stepsize / theta * grad_y
         z = dual_proj(u)
-        x = (1 - theta) * carry.x + theta * z
+        x = (1 - theta) * carry.x_param + theta * z
 
         # Check condition
         if linesearch:
@@ -604,9 +603,9 @@ def _universal_accelerated_method_step_init(
                     optax.tree_utils.tree_l1_norm(optax.tree_utils.tree_sub(x, y)) ** 2
                 )
             elif norm == 2:
-                sq_norm_diff = optax.tree_utils.tree_l2_norm(
-                    optax.tree_utils.tree_sub(x, y), squared=True
-                )
+                sq_norm_diff = optax.tree_utils.tree_norm(
+                    optax.tree_utils.tree_sub(x, y), 2
+                ) ** 2
             else:
                 raise ValueError(f"norm={norm} not supported")
             taylor_approx = (
@@ -619,9 +618,9 @@ def _universal_accelerated_method_step_init(
             new_stepsize = stepsize
 
         candidate = _AcceleratedStepSearchState(
-            x=x,
-            z=z,
-            u=u,
+            x_param=x,
+            z_param=z,
+            u_param=u,
             prev_stepsize=stepsize,
             stepsize=new_stepsize,
             prev_theta=theta,
@@ -631,14 +630,14 @@ def _universal_accelerated_method_step_init(
         base = carry._replace(
             stepsize=0.5 * carry.stepsize, iter_search=carry.iter_search + 1
         )
-        return jax.tree.map(lambda x, y: jnp.where(accept, x, y), candidate, base)
+        return jax.tree.map(lambda x_val, y_val: jnp.where(accept, x_val, y_val), candidate, base)
 
-    x = z = dual_proj(dual_init_params)
-    u = dual_init_params
+    x_init = z_init = dual_proj(dual_init_params)
+    u_init = dual_init_params
     init_carry = _AcceleratedStepSearchState(
-        x=x,
-        z=z,
-        u=u,
+        x_param=x_init,
+        z_param=z_init,
+        u_param=u_init,
         prev_stepsize=stepsize,
         stepsize=stepsize,
         prev_theta=jnp.asarray(-1.0),
@@ -679,6 +678,6 @@ def universal_accelerated_method(
         # jax.lax.while_loop traces the body function, so no need to jit it.
         carry = jax.lax.while_loop(cond_fun, body_fun, carry)
         carry = carry._replace(accept=jnp.asarray(False))
-        callback_fn(carry.x)
-    sol = carry.x
+        callback_fn(carry.x_param)
+    sol = carry.x_param
     return mle_from_marginals(sol, known_total)

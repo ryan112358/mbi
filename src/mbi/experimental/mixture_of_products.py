@@ -1,16 +1,6 @@
-from mbi import Dataset, Factor, CliqueVector, marginal_loss, estimation, Domain, LinearMeasurement
-from scipy.optimize import minimize
-from collections import defaultdict
-from jax import vjp
-import jax.nn
-from scipy.special import softmax
-from functools import reduce
-from scipy.sparse.linalg import lsmr
-import jax.numpy as jnp
-import optax
-import numpy as np
+"""Experimental implementation of Mixture of Products (RAP-like).
 
-""" This file is experimental.
+This file is experimental.
 
 It is a close approximation to the method described in RAP (https://arxiv.org/abs/2103.06641)
 and an even closer approximation to RAP^{softmax} (https://arxiv.org/abs/2106.07153). This 
@@ -24,10 +14,17 @@ Notable differences:
 - Added support for unbounded-DP, with automatic estimate of total.
 """
 
+from typing import Union, Optional
+import numpy as np
+import jax.numpy as jnp
+import jax.nn
+
+from mbi import Dataset, Factor, CliqueVector, marginal_loss, estimation, Domain, LinearMeasurement
+
 
 def adam(loss_and_grad, x0, iters=250):
     # TODO: Rewrite using optax
-    a = 1.0
+    a_param = 1.0
     b1, b2 = 0.9, 0.999
     eps = 10e-8
 
@@ -35,13 +32,13 @@ def adam(loss_and_grad, x0, iters=250):
     m = jnp.zeros_like(x)
     v = jnp.zeros_like(x)
     for t in range(1, iters + 1):
-        l, g = loss_and_grad(x)
+        l_val, g = loss_and_grad(x)
         # print(l)
         m = b1 * m + (1 - b1) * g
         v = b2 * v + (1 - b2) * g ** 2
         mhat = m / (1 - b1 ** t)
         vhat = v / (1 - b2 ** t)
-        x = x - a * mhat / (jnp.sqrt(vhat) + eps)
+        x = x - a_param * mhat / (jnp.sqrt(vhat) + eps)
     return x
 
 
@@ -59,6 +56,7 @@ def synthetic_col(counts, total):
 
 
 class MixtureOfProducts:
+    """Mixture of Products model."""
     def __init__(self, products, domain, total):
         self.products = products
         self.domain = domain
@@ -73,12 +71,13 @@ class MixtureOfProducts:
     def datavector(self, flatten=True):
         d = len(self.domain)
         letters = "bcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"[:d]
-        formula = ",".join(["a%s" % l for l in letters]) + "->" + "".join(letters)
+        formula = ",".join([f"a{l}" for l in letters]) + "->" + "".join(letters)
         components = [self.products[col] for col in self.domain]
         ans = jnp.einsum(formula, *components) * self.total / self.num_components
         return ans.flatten() if flatten else ans
 
     def synthetic_data(self, rows=None):
+        """Generates synthetic data from the model."""
         total = rows or int(self.total)
         subtotal = total // self.num_components + 1
 
@@ -108,15 +107,16 @@ class MixtureOfProducts:
 
 def mixture_of_products(
     domain: Domain,
-    loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
+    loss_fn: Union[marginal_loss.MarginalLossFn, list[LinearMeasurement]],
     *,
-    known_total: int | None = None,
+    known_total: Optional[int] = None,
     mixture_components: int = 100,
     iters: int = 2500,
-    alpha: float = 0.1
+    alpha: float = 0.1 # pylint: disable=unused-argument
 ) -> MixtureOfProducts:
+    """Estimates a Mixture of Products model from marginal measurements."""
 
-    loss_fn, known_total, _ = estimation._initialize(domain, loss_fn, known_total, None)
+    loss_fn, known_total, _ = estimation._initialize(domain, loss_fn, known_total, None) # pylint: disable=protected-access
 
     one_hot_features = sum(domain.shape)
     params = np.random.normal(
@@ -131,25 +131,25 @@ def mixture_of_products(
         products = {}
         idx = 0
         for col in domain:
-            n = domain[col]
-            products[col] = jax.nn.softmax(params[:, idx : idx + n], axis=1)
-            idx += n
+            n_val = domain[col]
+            products[col] = jax.nn.softmax(params[:, idx : idx + n_val], axis=1)
+            idx += n_val
         return products
 
     def marginals_from_params(params):
         products = get_products(params)
         arrays = {}
-        for cl in cliques:
-            let = letters[: len(cl)]
-            formula = ",".join(["a%s" % l for l in let]) + "->" + "".join(let)
-            components = [products[col] for col in cl]
+        for clique in cliques:
+            let = letters[: len(clique)]
+            formula = ",".join([f"a{l}" for l in let]) + "->" + "".join(let)
+            components = [products[col] for col in clique]
             ans = jnp.einsum(formula, *components) * known_total / mixture_components
-            arrays[cl] = Factor(domain.project(cl), ans)
+            arrays[clique] = Factor(domain.project(clique), ans)
         return CliqueVector(domain, cliques, arrays)
 
-    def params_loss(params: jax.Array) -> float:
-        mu = marginals_from_params(params)
-        return loss_fn(mu)
+    def params_loss(params):
+        mu_vec = marginals_from_params(params)
+        return loss_fn(mu_vec)
 
     params_loss_and_grad = jax.value_and_grad(params_loss)
 

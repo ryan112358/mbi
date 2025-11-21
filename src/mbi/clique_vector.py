@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import functools
 import operator
+from typing import Optional
 
 import attr
 import chex
@@ -94,19 +95,21 @@ class CliqueVector:
         return functools.reduce(lambda a, b: a.merge(b), domains, Domain([], []))
 
     # @functools.lru_cache(maxsize=None)
-    def parent(self, clique: Clique) -> Clique | None:
+    def parent(self, clique: Clique) -> Optional[Clique]:
         """Finds a clique in this vector that is a superset of the given clique."""
         for result in self.cliques:
             if set(clique) <= set(result):
                 return result
+        return None
 
     def supports(self, clique: Clique) -> bool:
         """Checks if the given clique is supported (is a subset of any clique in the vector)."""
         return self.parent(clique) is not None
 
     def project(self, clique: Clique, log: bool = False) -> Factor:
-        if self.supports(clique):
-            return self[self.parent(clique)].project(clique, log=log)
+        parent_clique = self.parent(clique)
+        if parent_clique is not None:
+            return self[parent_clique].project(clique, log=log)
         raise ValueError(f"Cannot project onto unsupported clique {clique}.")
 
     def expand(self, cliques: list[Clique]) -> CliqueVector:
@@ -124,17 +127,17 @@ class CliqueVector:
         """
         mapping = reverse_clique_mapping(cliques, self.cliques)
         arrays = {}
-        for cl in cliques:
-            dom = self.domain.project(cl)
-            if len(mapping[cl]) == 0:
-                arrays[cl] = Factor.zeros(dom)
+        for clique in cliques:
+            dom = self.domain.project(clique)
+            if len(mapping[clique]) == 0:
+                arrays[clique] = Factor.zeros(dom)
             else:
-                arrays[cl] = sum(self[cl2] for cl2 in mapping[cl]).expand(dom)
+                arrays[clique] = sum(self[cl2] for cl2 in mapping[clique]).expand(dom)
         return CliqueVector(self.domain, cliques, arrays)
 
     def contract(self, cliques: list[Clique], log: bool = False) -> CliqueVector:
         """Computes a new CliqueVector by projecting this one onto a smaller set of cliques."""
-        arrays = {cl: self.project(cl, log=log) for cl in cliques}
+        arrays = {clique: self.project(clique, log=log) for clique in cliques}
         return CliqueVector(self.domain, cliques, arrays)
 
     def normalize(self, total: float = 1, log: bool = True):
@@ -191,7 +194,7 @@ class CliqueVector:
         else:
             raise ValueError(f"Clique {clique} not in CliqueVector.")
 
-    def apply_sharding(self, mesh: jax.sharding.Mesh | None) -> CliqueVector:
+    def apply_sharding(self, mesh: Optional[jax.sharding.Mesh]) -> CliqueVector:
         """Apply sharding constraint to each factor in the CliqueVector.
 
         The sharding strategy is automatically determined based on the provided

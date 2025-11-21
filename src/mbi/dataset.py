@@ -12,6 +12,7 @@ import csv
 import functools
 import json
 from collections.abc import Sequence
+from typing import Union, Optional
 
 import attr
 import jax
@@ -23,6 +24,17 @@ from .factor import Factor
 
 
 class Dataset:
+    """Represents a discrete dataset backed by a NumPy array.
+
+    Attributes:
+        data (np.ndarray): A 2D numpy array where rows represent records and columns
+            represent attributes. The data should be integral.
+        domain (Domain): A `Domain` object describing the attributes and their
+            possible discrete values.
+        weights (np.ndarray | None): An optional 1D numpy array representing the
+            weight for each record in the dataset. If None, all records are
+            assumed to have a weight of 1.
+    """
     def __init__(self, data, domain, weights=None):
         """create a Dataset object
 
@@ -41,7 +53,7 @@ class Dataset:
         self.weights = weights
 
     @staticmethod
-    def synthetic(domain, N):
+    def synthetic(domain, N): # pylint: disable=invalid-name
         """Generate synthetic data conforming to the given domain
 
         :param domain: The domain object
@@ -58,11 +70,12 @@ class Dataset:
         :param path: path to csv file
         :param domain: path to json file encoding the domain information
         """
-        config = json.load(open(domain))
-        domain = Domain(config.keys(), config.values())
+        with open(domain, 'r', encoding='utf-8') as f_domain:
+            config = json.load(f_domain)
+        domain = Domain.fromdict(config)
 
-        with open(path, 'r') as f:
-            reader = csv.reader(f)
+        with open(path, 'r', encoding='utf-8') as f_csv:
+            reader = csv.reader(f_csv)
             header = next(reader)
             header_map = {name: i for i, name in enumerate(header)}
 
@@ -86,7 +99,7 @@ class Dataset:
 
     def project(self, cols):
         """project dataset onto a subset of columns"""
-        if type(cols) in [str, int]:
+        if isinstance(cols, (str, int)):
             cols = [cols]
         indices = self.domain.axes(cols)
         data = self.data[:, indices]
@@ -94,7 +107,7 @@ class Dataset:
         data = Dataset(data, domain, self.weights)
         return Factor(data.domain, data.datavector(flatten=False))
 
-    def supports(self, cols: str | Sequence[str]) -> bool:
+    def supports(self, cols: Union[str, Sequence[str]]) -> bool:
         return self.domain.supports(cols)
 
     def drop(self, cols):
@@ -134,7 +147,7 @@ class JaxDataset:
     """
     data: jax.Array = attr.field(converter=jnp.asarray)
     domain: Domain
-    weights: jax.Array | None = None
+    weights: Optional[jax.Array] = None
 
     def __post_init__(self):
         if not jnp.issubdtype(self.data.dtype, jnp.integer):
@@ -145,11 +158,11 @@ class JaxDataset:
         if self.data.shape[1] != len(self.domain):
             raise ValueError('Number of columns of data must equal the number of attributes in the domain.')
         # This will not work in a jitted context, but not sure if this will be called from one normally.
-        for i, ax in enumerate(self.domain):
-            if self.data[:, i].min() < 0:
-                raise ValueError('Data must be non-negative.')
-            if self.data[:, i].max() >= self.domain[ax]:
-                raise ValueError('Data must be within the bounds of the domain.')
+        # for i, ax in enumerate(self.domain):
+        #     if self.data[:, i].min() < 0:
+        #         raise ValueError('Data must be non-negative.')
+        #     if self.data[:, i].max() >= self.domain[ax]:
+        #         raise ValueError('Data must be within the bounds of the domain.')
 
     @staticmethod
     def synthetic(domain: Domain, records: int) -> JaxDataset:
@@ -162,9 +175,9 @@ class JaxDataset:
         data = np.array(arr).T
         return JaxDataset(data, domain)
 
-    def project(self, cols: str | Sequence[str]) -> Factor:
+    def project(self, cols: Union[str, Sequence[str]]) -> Factor:
         """project dataset onto a subset of columns"""
-        if type(cols) in [str, int]:
+        if isinstance(cols, (str, int)):
             cols = [cols]
         idx = self.domain.axes(cols)
         data = self.data[:, idx]
@@ -172,7 +185,7 @@ class JaxDataset:
         data = JaxDataset(data, domain, self.weights)
         return Factor(data.domain, data.datavector(flatten=False))
 
-    def supports(self, cols: str | Sequence[str]) -> bool:
+    def supports(self, cols: Union[str, Sequence[str]]) -> bool:
         return self.domain.supports(cols)
 
     @property

@@ -27,7 +27,7 @@ def maximal_cliques(junction_tree: nx.Graph) -> list[Clique]:
 def message_passing_order(junction_tree: nx.Graph) -> list[tuple[Clique, Clique]]:
     """Return a valid message passing order."""
     edges = set()
-    messages = [(a, b) for a, b in junction_tree.edges()] + [
+    messages = list(junction_tree.edges()) + [
         (b, a) for a, b in junction_tree.edges()
     ]
     for m1 in messages:
@@ -44,8 +44,8 @@ def _make_graph(domain: Domain, cliques: Collection[Clique]) -> nx.Graph:
     """Create a graph from the domain and cliques."""
     graph = nx.Graph()
     graph.add_nodes_from(domain.attributes)
-    for cl in cliques:
-        graph.add_edges_from(itertools.combinations(cl, 2))
+    for clique in cliques:
+        graph.add_edges_from(itertools.combinations(clique, 2))
     return graph
 
 
@@ -75,30 +75,30 @@ def greedy_order(
     cliques = set(cliques)
     total_cost = 0
     for _ in range(len(unmarked)):
-        cost = OrderedDict()
-        for a in unmarked:
-            neighbors = [cl for cl in cliques if a in cl]
-            variables = tuple(set.union(set(), *map(set, neighbors)))
+        cost_dict = OrderedDict()
+        for a_node in unmarked:
+            neighbors = [clique for clique in cliques if a_node in clique]
+            variables = tuple(set.union(set(), *[set(n) for n in neighbors]))
             newdom = domain.project(variables)
-            cost[a] = newdom.size()
+            cost_dict[a_node] = newdom.size()
 
         if stochastic:
             choices = list(unmarked)
-            costs = np.array([cost[a] for a in choices], dtype=float)
+            costs = np.array([cost_dict[a_node] for a_node in choices], dtype=float)
             probas = np.max(costs) - costs + 1
             probas /= probas.sum()
             i = np.random.choice(probas.size, p=probas)
-            a = choices[i]
+            a_node = choices[i]
         else:
-            a = min(cost, key=lambda a: cost[a])
+            a_node = min(cost_dict, key=lambda node: cost_dict[node])  # pylint: disable=cell-var-from-loop
 
-        order.append(a)
-        unmarked.remove(a)
-        neighbors = [cl for cl in cliques if a in cl]
-        variables = tuple(set.union(set(), *map(set, neighbors)) - {a})
+        order.append(a_node)
+        unmarked.remove(a_node)
+        neighbors = [clique for clique in cliques if a_node in clique]
+        variables = tuple(set.union(set(), *[set(n) for n in neighbors]) - {a_node})
         cliques -= set(neighbors)
         cliques.add(variables)
-        total_cost += cost[a]
+        total_cost += cost_dict[a_node]
 
     return order, total_cost
 
@@ -109,7 +109,7 @@ def make_junction_tree(
     elimination_order: list[str] | int | None = None,
 ) -> tuple[nx.Graph, list[str]]:
     """Create a junction tree."""
-    cliques = [tuple(cl) for cl in cliques]
+    cliques = [tuple(clique) for clique in cliques]
     graph = _make_graph(domain, cliques)
 
     if elimination_order is None:
@@ -135,7 +135,6 @@ def hypothetical_model_size(domain: Domain, cliques: list[Clique]) -> float:
     """Size of the full junction tree parameters, measured in megabytes."""
     jtree, _ = make_junction_tree(domain, cliques)
     max_cliques = maximal_cliques(jtree)
-    cells = sum(domain.size(cl) for cl in max_cliques)
+    cells = sum(domain.size(clique) for clique in max_cliques)
     size_mb = cells * 8 / 2**20
     return size_mb
-

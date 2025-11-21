@@ -14,7 +14,7 @@ Pull requests are welcome to add support for other approximate oracles.
 
 import functools
 import itertools
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Protocol, TypeAlias, Optional
 
 import jax
 import networkx as nx
@@ -43,7 +43,7 @@ class StatefulMarginalOracle(Protocol):
         potentials: CliqueVector,
         total: float = 1.0,
         state: Any = None,
-        mesh: jax.sharding.Mesh | None = None
+        mesh: Optional[jax.sharding.Mesh] = None
     ) -> tuple[CliqueVector, Any]:
         """
         Computes marginals from log-space potentials and manages state.
@@ -79,48 +79,48 @@ def build_graph(domain: Domain, cliques: list[tuple[str, ...]]) -> ...:
             if len(z) > 0 and not z in regions:
                 regions.update({z})
 
-    G = nx.DiGraph()
-    G.add_nodes_from(regions)
+    region_graph = nx.DiGraph()
+    region_graph.add_nodes_from(regions)
     for r1 in regions:
         for r2 in regions:
             if set(r2) < set(r1) and not any(
                 set(r2) < set(r3) and set(r3) < set(r1) for r3 in regions
             ):
-                G.add_edge(r1, r2)
+                region_graph.add_edge(r1, r2)
 
-    H = G.reverse()
-    G1, H1 = nx.transitive_closure(G), nx.transitive_closure(H)
+    reverse_graph = region_graph.reverse()
+    transitive_closure_h = nx.transitive_closure(reverse_graph)
 
-    children = {r: list(G.neighbors(r)) for r in regions}
-    parents = {r: list(H.neighbors(r)) for r in regions}
-    descendants = {r: list(G1.neighbors(r)) for r in regions}
-    ancestors = {r: list(H1.neighbors(r)) for r in regions}
-    forebears = {r: set([r] + ancestors[r]) for r in regions}
-    downp = {r: set([r] + descendants[r]) for r in regions}
+    # children = {r: list(region_graph.neighbors(r)) for r in regions}
+    parents = {r: list(reverse_graph.neighbors(r)) for r in regions}
+    # descendants = {r: list(transitive_closure_g.neighbors(r)) for r in regions}
+    ancestors = {r: list(transitive_closure_h.neighbors(r)) for r in regions}
+    # forebears = {r: set([r] + ancestors[r]) for r in regions}
+    # downp = {r: set([r] + descendants[r]) for r in regions}
 
     min_edges = []
     for r in regions:
-        ds = DisjointSet()
+        disjoint_set = DisjointSet()
         for u in parents[r]:
-            ds.add(u)
+            disjoint_set.add(u)
         for u, v in itertools.combinations(parents[r], 2):
             uv = set(ancestors[u]) & set(ancestors[v])
             if len(uv) > 0:
-                ds.merge(u, v)
+                disjoint_set.merge(u, v)
         canonical = set()
         for u in parents[r]:
-            canonical.update({ds[u]})
+            canonical.update({disjoint_set[u]})
         min_edges.extend([(u, r) for u in canonical])
 
-    G = nx.DiGraph()
-    G.add_nodes_from(regions)
-    G.add_edges_from(min_edges)
+    region_graph = nx.DiGraph()
+    region_graph.add_nodes_from(regions)
+    region_graph.add_edges_from(min_edges)
 
-    H = G.reverse()
-    G1, H1 = nx.transitive_closure(G), nx.transitive_closure(H)
+    reverse_graph = region_graph.reverse()
+    # transitive_closure_g, transitive_closure_h = nx.transitive_closure(region_graph), nx.transitive_closure(reverse_graph)
 
-    children = {r: list(G.neighbors(r)) for r in regions}
-    parents = {r: list(H.neighbors(r)) for r in regions}
+    children = {r: list(region_graph.neighbors(r)) for r in regions}
+    parents = {r: list(reverse_graph.neighbors(r)) for r in regions}
 
     messages = {}
     message_order = []
@@ -138,8 +138,8 @@ _State = dict[tuple[Clique, Clique], Factor]
 def convex_generalized_belief_propagation(
     potentials: CliqueVector,
     total: float = 1,
-    state: _State | None = None,
-    mesh: jax.sharding.Mesh | None = None,
+    state: Optional[_State] = None,
+    mesh: Optional[jax.sharding.Mesh] = None,
     iters: int = 1,
     damping: float = 0.5,
 ) -> tuple[CliqueVector, _State]:
@@ -165,7 +165,7 @@ def convex_generalized_belief_propagation(
     potentials = potentials.apply_sharding(mesh)
     domain, cliques = potentials.domain, potentials.cliques
     # We might need or want a sharding constraint on messages here
-    regions, cliques, messages, message_order, parents, children = build_graph(
+    regions, cliques, messages, _, parents, children = build_graph(
         domain, cliques
     )
     if state is not None:

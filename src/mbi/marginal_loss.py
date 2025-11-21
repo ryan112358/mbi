@@ -10,6 +10,7 @@ included.
 """
 import functools
 from collections.abc import Callable
+from typing import Optional
 
 import attr
 import chex
@@ -64,7 +65,7 @@ class MarginalLossFn:
 
     cliques: list[Clique]
     loss_fn: Callable[[CliqueVector], chex.Numeric]
-    lipschitz: float | None = None
+    lipschitz: Optional[float] = None
 
     def __call__(self, marginals: CliqueVector) -> chex.Numeric:
         return self.loss_fn(marginals)
@@ -79,26 +80,29 @@ def calculate_l2_lipschitz(domain: Domain, cliques: list[Clique], loss_fn: Calla
 
     Args:
         domain: The domain over which the loss_fn is defined.
+        cliques: The cliques defining the marginals.
         loss_fn: The loss function, assumed to be of the form || f(x) - y ||_2^2 where f is linear.
 
     Returns:
         An estimate of the Lipschitz constant of the grad(L).
     """
-    x0 = CliqueVector.zeros(domain, cliques)
+    initial_params = CliqueVector.zeros(domain, cliques)
     @jax.jit
-    def compute_Hv(v: CliqueVector) -> CliqueVector:
-        return jax.jvp(jax.grad(loss_fn), (x0,), (v,))[1]
-    v = CliqueVector.ones(domain, cliques)
-    v = v / optax.global_norm(v)
+    def compute_hessian_vector_product(vector: CliqueVector) -> CliqueVector:
+        return jax.jvp(jax.grad(loss_fn), (initial_params,), (vector,))[1]
+    vector = CliqueVector.ones(domain, cliques)
+    vector = vector / optax.global_norm(vector)
+    hessian_vector_product = None
+    estimate = 0.0
     for _ in range(50):
-        Hv = compute_Hv(v)
-        estimate = optax.global_norm(Hv)
-        v = Hv / (estimate + 1e-12)
+        hessian_vector_product = compute_hessian_vector_product(vector)
+        estimate = optax.global_norm(hessian_vector_product)
+        vector = hessian_vector_product / (estimate + 1e-12)
     return estimate
 
 
 def from_linear_measurements(
-    measurements: list[LinearMeasurement], norm: str = "l2", normalize: bool = False, domain: Domain | None = None,
+    measurements: list[LinearMeasurement], norm: str = "l2", normalize: bool = False, domain: Optional[Domain] = None,
 ) -> MarginalLossFn:
     """Construct a MarginalLossFn from a list of LinearMeasurements.
 
@@ -119,13 +123,13 @@ def from_linear_measurements(
 
     def loss_fn(marginals: CliqueVector) -> chex.Numeric:
         loss = 0.0
-        for M in measurements:
-            mu = marginals.project(M.clique)
-            diff = M.query(mu) - M.noisy_measurement
+        for measurement in measurements:
+            marginal = marginals.project(measurement.clique)
+            diff = measurement.query(marginal) - measurement.noisy_measurement
             if norm == "l2":
-                loss += (diff @ diff) / (2 * M.stddev)
+                loss += (diff @ diff) / (2 * measurement.stddev)
             elif norm == "l1":
-                loss += jnp.sum(jnp.abs(diff)) / M.stddev
+                loss += jnp.sum(jnp.abs(diff)) / measurement.stddev
 
         if normalize:
             total = marginals.project([]).datavector(flatten=False)
@@ -141,23 +145,23 @@ def from_linear_measurements(
     return MarginalLossFn(maximal_cliques, loss_fn)
 
 
-def primal_feasibility(mu: CliqueVector) -> chex.Numeric:
+def primal_feasibility(marginals: CliqueVector) -> chex.Numeric:
     """Calculates the average L1 distance between overlapping marginals in `mu` (consistency)."""
     ans = 0
     count = 0
-    for r in mu.cliques:
-        for s in mu.cliques:
-            if r == s:
+    for residual in marginals.cliques:
+        for sigma in marginals.cliques:
+            if residual == sigma:
                 break
-            d = tuple(set(r) & set(s))
-            if len(d) > 0:
-                x = mu[r].project(d).datavector()
-                y = mu[s].project(d).datavector()
-                denom = 0.5 * x.sum() + 0.5 * y.sum()
-                err = jnp.linalg.norm(x - y, 1) / denom
+            delta = tuple(set(residual) & set(sigma))
+            if len(delta) > 0:
+                x_val = marginals[residual].project(delta).datavector()
+                y_val = marginals[sigma].project(delta).datavector()
+                denom = 0.5 * x_val.sum() + 0.5 * y_val.sum()
+                err = jnp.linalg.norm(x_val - y_val, 1) / denom
                 ans += err
                 count += 1
     try:
         return ans / count
-    except:
+    except ZeroDivisionError:
         return 0
