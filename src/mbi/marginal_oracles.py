@@ -90,7 +90,10 @@ def sum_product(factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum) -> Fac
 
     attrs = sorted(set.union(*[set(f.domain) for f in factors]).union(set(dom)))
     mapping = dict(zip(attrs, _EINSUM_LETTERS))
-    convert = lambda d: "".join(mapping[a] for a in d.attributes)
+
+    def convert(d):
+        return "".join(mapping[a] for a in d.attributes)
+
     formula = ",".join(convert(f.domain) for f in factors) + "->" + convert(dom)
     values = einsum_fn(
         formula,
@@ -440,7 +443,8 @@ def calculate_many_marginals(
     nx.set_edge_attributes(jtree, values=1.0, name='weight')  # type: ignore
     pred, dist = nx.floyd_warshall_predecessor_and_distance(jtree) #, weight=None)
 
-    order_fn = lambda x: dist[x[0]][x[1]]
+    def order_fn(x):
+        return dist[x[0]][x[1]]
 
     results = {}
     for Ci, Cj in sorted(itertools.combinations(max_cliques, 2), key=order_fn):
