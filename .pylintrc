@@ -31,7 +31,7 @@ load-plugins=
 jobs=0
 
 # Minimum supported python version
-py-version = 3.9.0
+py-version = 3.10.0
 
 # Specify a score threshold under which the program will exit with error.
 fail-under=9.0 # Adjusted slightly lower, 10.0 is very strict.
@@ -51,6 +51,7 @@ enable=
 # Disable the message, report, category or checker with the given id(s).
 disable=
     # User provided disables:
+    invalid-name,
     attribute-defined-outside-init, # Google prefers init, but can be noisy
     protected-access, # Google discourages, but might be needed sometimes
     too-few-public-methods,
