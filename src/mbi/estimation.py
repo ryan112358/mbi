@@ -96,10 +96,10 @@ def minimum_variance_unbiased_total(measurements: list[LinearMeasurement]) -> fl
     estimates, variances = np.array(estimates), np.array(variances)
     if len(estimates) == 0:
         return 1
-    else:
-        variance = 1.0 / np.sum(1.0 / variances)
-        estimate = variance * np.sum(estimates / variances)
-        return max(1, estimate)
+
+    variance = 1.0 / np.sum(1.0 / variances)
+    estimate = variance * np.sum(estimates / variances)
+    return max(1, estimate)
 
 
 def _initialize(domain, loss_fn, known_total, potentials):
@@ -126,7 +126,11 @@ def _get_stateful_oracle(
 ) -> StatefulMarginalOracle:
     if stateful:
         return marginal_oracle
-    return lambda theta, total, state: (marginal_oracle(theta, total), state)
+
+    def wrapper(theta, total, state):
+        return marginal_oracle(theta, total), state
+
+    return wrapper
 
 
 def mirror_descent(
@@ -220,7 +224,8 @@ def mirror_descent(
 
 def _optimize(loss_and_grad_fn, params, iters=250, callback_fn=lambda _: None):
     """Runs an optimization loop using Optax L-BFGS."""
-    loss_fn = lambda theta: loss_and_grad_fn(theta)[0]
+    def loss_fn(theta):
+        return loss_and_grad_fn(theta)[0]
 
     @jax.jit
     def update(params, opt_state):
@@ -292,9 +297,14 @@ def lbfgs(
     )
     marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
 
-    theta_loss = lambda theta: loss_fn(marginal_oracle(theta, known_total))
+    def theta_loss(theta):
+        return loss_fn(marginal_oracle(theta, known_total))
+
     theta_loss_and_grad = jax.value_and_grad(theta_loss)
-    theta_callback_fn = lambda theta: callback_fn(marginal_oracle(theta, known_total))
+
+    def theta_callback_fn(theta):
+        callback_fn(marginal_oracle(theta, known_total))
+
     potentials = _optimize(
         theta_loss_and_grad, potentials, iters=iters, callback_fn=theta_callback_fn
     )

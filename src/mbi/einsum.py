@@ -184,9 +184,10 @@ def scan_einsum(
   if ax in output_axes:
     # Each smaller einsum is independent.
     return jax.lax.map(small_einsum, loop).swapaxes(0, output_axes.index(ax))
-  else:
-    # Each smaller einsum contributes to the global einsum.
-    init = jnp.zeros(tuple(shapes[i] for i in output_axes))
-    return jax.lax.scan(
-        lambda carry, i: (carry + small_einsum(i), ()), init, loop
-    )[0]
+
+  # Each smaller einsum contributes to the global einsum.
+  init = jnp.zeros(tuple(shapes[i] for i in output_axes))
+  return jax.lax.scan(
+      lambda carry, i: (carry + small_einsum(i), ()), init, loop
+  )[0]
+    

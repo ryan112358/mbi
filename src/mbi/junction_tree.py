@@ -27,7 +27,7 @@ def maximal_cliques(junction_tree: nx.Graph) -> list[Clique]:
 def message_passing_order(junction_tree: nx.Graph) -> list[tuple[Clique, Clique]]:
     """Return a valid message passing order."""
     edges = set()
-    messages = [(a, b) for a, b in junction_tree.edges()] + [
+    messages = list(junction_tree.edges()) + [
         (b, a) for a, b in junction_tree.edges()
     ]
     for m1 in messages:
@@ -78,7 +78,7 @@ def greedy_order(
         cost = OrderedDict()
         for a in unmarked:
             neighbors = [cl for cl in cliques if a in cl]
-            variables = tuple(set.union(set(), *map(set, neighbors)))
+            variables = tuple(set.union(set(), *[set(n) for n in neighbors]))
             newdom = domain.project(variables)
             cost[a] = newdom.size()
 
@@ -95,7 +95,7 @@ def greedy_order(
         order.append(a)
         unmarked.remove(a)
         neighbors = [cl for cl in cliques if a in cl]
-        variables = tuple(set.union(set(), *map(set, neighbors)) - {a})
+        variables = tuple(set.union(set(), *[set(n) for n in neighbors]) - {a})
         cliques -= set(neighbors)
         cliques.add(variables)
         total_cost += cost[a]
