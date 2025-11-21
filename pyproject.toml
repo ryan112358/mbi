@@ -21,7 +21,6 @@ dependencies = [
     "attrs",
     "numpy",
     "scipy",
-    "pandas",
     "networkx",
     "jax",
     "jaxlib",

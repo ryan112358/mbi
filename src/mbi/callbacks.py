@@ -6,7 +6,6 @@ marginals. It logs loss values and other relevant statistics.
 """
 import attr
 import jax
-import pandas as pd
 
 from . import marginal_loss
 from .clique_vector import CliqueVector
@@ -45,9 +44,10 @@ class Callback:
 
     @property
     def summary(self):
-        return pd.DataFrame(
-            columns=["step"] + list(self.loss_fns.keys()), data=self._logs
-        ).astype(float)
+        return {
+            "columns": ["step"] + list(self.loss_fns.keys()),
+            "data": self._logs,
+        }
 
 
 def default(

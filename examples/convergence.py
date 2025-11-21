@@ -7,6 +7,7 @@ import pickle
 from scipy import sparse
 import IPython
 import jax
+import pandas as pd
 
 # jax.config.update('jax_debug_nans', True)
 
@@ -101,7 +102,7 @@ if __name__ == "__main__":
                 callback_fn=callback_fn,
             )
 
-        summary = callback_fn.summary
+        summary = pd.DataFrame(callback_fn.summary['data'], columns=callback_fn.summary['columns'])
         if args.stddev > 0:
             best = min(best, summary["L2 Loss"].min())
             summary = summary.iloc[: summary.shape[0] // 5]
