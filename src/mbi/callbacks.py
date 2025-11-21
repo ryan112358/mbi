@@ -32,14 +32,14 @@ class Callback:
 
     def __call__(self, marginals: CliqueVector):
         if self._step == 0:
-            header = "|".join([_pad(x, 12) for x in ["step", *self.loss_fns.keys()]])
+            header = "|".join(_pad(x, 12) for x in ("step", *self.loss_fns.keys()))
             print(header)
             print("=" * len(header))
         if self._step % self.frequency == 0:
             row = [self.loss_fns[key](marginals) for key in self.loss_fns]
             self._logs.append([self._step] + row)
             padded_step = str(self._step) + " " * (9 - len(str(self._step)))
-            print(padded_step, *[("%.6f" % v)[:6] for v in row], sep="   |   ")
+            print(padded_step, *(("%.6f" % v)[:6] for v in row), sep="   |   ")
         self._step += 1
 
     @property
@@ -56,16 +56,23 @@ def default(
     frequency: int = 50,
 ) -> Callback:
     """Creates a default Callback with standard loss functions (L1/L2 Loss/Error, Primal Feas)."""
-    loss_fns = {}
     # Measures distance between input marginals and noisy marginals.
-    loss_fns["L2 Loss"] = marginal_loss.from_linear_measurements(
-        measurements, norm="l2", normalize=True
-    )
-    loss_fns["L1 Loss"] = marginal_loss.from_linear_measurements(
-        measurements,
-        norm="l1",
-        normalize=True,
-    )
+    loss_fns_items = [
+        (
+            "L2 Loss",
+            marginal_loss.from_linear_measurements(
+                measurements, norm="l2", normalize=True
+            ),
+        ),
+        (
+            "L1 Loss",
+            marginal_loss.from_linear_measurements(
+                measurements,
+                norm="l1",
+                normalize=True,
+            ),
+        ),
+    ]
 
     if data is not None:
         # Measures distance between input marginals and true marginals.
@@ -78,14 +85,24 @@ def default(
             )
             for M in measurements
         ]
-        loss_fns["L2 Error"] = marginal_loss.from_linear_measurements(
-            ground_truth, norm="l2", normalize=True
-        )
-        loss_fns["L1 Error"] = marginal_loss.from_linear_measurements(
-            ground_truth, norm="l1", normalize=True
+        loss_fns_items.extend(
+            [
+                (
+                    "L2 Error",
+                    marginal_loss.from_linear_measurements(
+                        ground_truth, norm="l2", normalize=True
+                    ),
+                ),
+                (
+                    "L1 Error",
+                    marginal_loss.from_linear_measurements(
+                        ground_truth, norm="l1", normalize=True
+                    ),
+                ),
+            ]
         )
 
-    loss_fns = {key: jax.jit(loss_fns[key].__call__) for key in loss_fns}
+    loss_fns = {key: jax.jit(fn.__call__) for key, fn in loss_fns_items}
     loss_fns["Primal Feas"] = jax.jit(marginal_loss.primal_feasibility)
 
     return Callback(loss_fns, frequency)
