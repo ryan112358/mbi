@@ -14,12 +14,13 @@ def custom_dot_general(
     *,
     combine_fn: Callable[[jax.Array, jax.Array], jax.Array] = jnp.multiply,
     reduce_fn: Callable[[jax.Array, int | Sequence[int]], jax.Array] = jnp.sum,
+    out_sharding: jax.sharding.Sharding | None = None, # pylint: disable=unused-argument
 ) -> jax.Array:
   """Computes a generalized dot product of two arrays.
 
   This function extends the concept of `jax.numpy.dot_general` by allowing
   custom functions for combining elements and reducing along contracting
-  dimensions. Specifically, this function works by making lhs and rhs 
+  dimensions. Specifically, this function works by making lhs and rhs
   broadcast-compatible, calling combine_fn on them to merge them into a single
   Array, then calling reduce_fn, to marginalize over the contracting dimensions.
 
@@ -72,17 +73,17 @@ def custom_dot_general(
   rhs_permuted = jnp.transpose(rhs, axes=rhs_permutation)
 
   batch_dims = len(lhs_batch)
-  lhs_other_dims = len(lhs_other_dims)
-  rhs_other_dims = len(rhs_other_dims)
+  lhs_other_dims_len = len(lhs_other_dims)
+  rhs_other_dims_len = len(rhs_other_dims)
   contract_dims = len(lhs_contract)
 
   # Make broadcast compatible
-  new_axes = tuple(batch_dims+lhs_other_dims+i for i in range(rhs_other_dims))
+  new_axes = tuple(batch_dims+lhs_other_dims_len+i for i in range(rhs_other_dims_len))
   lhs_expanded = jnp.expand_dims(lhs_permuted, axis=new_axes)
 
-  rhs_axes = tuple(batch_dims+i for i in range(lhs_other_dims))
+  rhs_axes = tuple(batch_dims+i for i in range(lhs_other_dims_len))
   rhs_expanded = jnp.expand_dims(rhs_permuted, axis=rhs_axes)
-  
+
   combined = combine_fn(lhs_expanded, rhs_expanded)
   contract_axes = tuple(range(combined.ndim - contract_dims, combined.ndim))
   return reduce_fn(combined, contract_axes)
@@ -92,8 +93,7 @@ def _axis_name_to_dim(axis_names: str, axis_name: str) -> int | None:
   """Returns the index of axis_name in axis_names, or None if not found."""
   if axis_name in axis_names:
     return axis_names.index(axis_name)
-  else:
-    return None
+  return None
 
 
 def _get_subarrays(
@@ -148,11 +148,11 @@ def scan_einsum(
   Args:
     formula: The einsum formula.
     *arrays: The arrays to einsum.
-    sequential: A string of axes to sequentially einsum across.  
+    sequential: A string of axes to sequentially einsum across.
     When sequential is empty, jnp.einsum is used.  When sequential is a single
       axis name, the smaller einsums are executed sequentially along that axis,
       and the results are accumulated.  When sequential is a string with
-      multiple axis names, sequential einsums are executed along all axis 
+      multiple axis names, sequential einsums are executed along all axis
       names given.
     **kwargs: Keyword arguments to pass to jnp.einsum in the base case.
 
@@ -162,31 +162,30 @@ def scan_einsum(
   if not sequential:
     return jnp.einsum(formula, *arrays, **kwargs)
 
-  ax = sequential[0]
-  if ax not in formula:
-      raise ValueError(f"Sequential axis '{ax}' not found.")
+  axis_to_scan = sequential[0]
+  if axis_to_scan not in formula:
+      raise ValueError(f"Sequential axis '{axis_to_scan}' not found.")
 
   input_axes, output_axes = formula.split('->')
   input_axes = input_axes.split(',')
   shapes = _infer_shapes(input_axes, arrays)
 
-  ax_dims = [_axis_name_to_dim(names, ax) for names in input_axes]
+  ax_dims = [_axis_name_to_dim(names, axis_to_scan) for names in input_axes]
 
   # We compute smaller einsums sequentially by looping over the ax dimension.
-  loop = jnp.arange(shapes[ax])
-  new_formula = formula.replace(ax, '')
+  loop = jnp.arange(shapes[axis_to_scan])
+  new_formula = formula.replace(axis_to_scan, '')
 
   def small_einsum(i):
     new_arrays = _get_subarrays(arrays, ax_dims, i)
     return scan_einsum(new_formula, *new_arrays, sequential=sequential[1:])
 
-  if ax in output_axes:
+  if axis_to_scan in output_axes:
     # Each smaller einsum is independent.
-    return jax.lax.map(small_einsum, loop).swapaxes(0, output_axes.index(ax))
-  else:
-    # Each smaller einsum contributes to the global einsum.
-    init = jnp.zeros(tuple(shapes[i] for i in output_axes))
-    return jax.lax.scan(
-        lambda carry, i: (carry + small_einsum(i), ()), init, loop
-    )[0]
-    
+    return jax.lax.map(small_einsum, loop).swapaxes(0, output_axes.index(axis_to_scan))
+
+  # Each smaller einsum contributes to the global einsum.
+  init = jnp.zeros(tuple(shapes[i] for i in output_axes))
+  return jax.lax.scan(
+      lambda carry, i: (carry + small_einsum(i), ()), init, loop
+  )[0]

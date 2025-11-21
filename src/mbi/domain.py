@@ -7,6 +7,7 @@ various operations like projection, marginalization, and merging of domains.
 """
 import functools
 from collections.abc import Iterator, Sequence
+from typing import Union
 
 import attr
 
@@ -64,9 +65,9 @@ class Domain:
         Returns:
           the Domain object
         """
-        return Domain(config.keys(), config.values())
+        return Domain(tuple(config.keys()), tuple(config.values()))
 
-    def project(self, attributes: str | Sequence[str]) -> "Domain":
+    def project(self, attributes: Union[str, Sequence[str]]) -> "Domain":
         """Project the domain onto a subset of attributes.
 
         Args:
@@ -79,7 +80,7 @@ class Domain:
         if not set(attributes) <= set(self.attributes):
             raise ValueError(f"Cannot project {self} onto {attributes}.")
         shape = tuple(self.config[a] for a in attributes)
-        return Domain(attributes, shape)
+        return Domain(tuple(attributes), shape)
 
     def marginalize(self, attrs: Sequence[str]) -> "Domain":
         """Marginalize out some attributes from the domain (opposite of project).
@@ -155,7 +156,7 @@ class Domain:
         extra = other.marginalize(self.attributes)
         return Domain(self.attributes + extra.attributes, self.shape + extra.shape)
 
-    def size(self, attributes: Sequence[str] | None = None) -> int:
+    def size(self, attributes: Union[Sequence[str], None] = None) -> int:
         """Return the total size of the domain.
 
         Example:
@@ -179,7 +180,7 @@ class Domain:
         """Alias for the `attributes` tuple."""
         return self.attributes
     
-    def supports(self, attrs: str | Sequence[str]) -> bool:
+    def supports(self, attrs: Union[str, Sequence[str]]) -> bool:
         if isinstance(attrs, str):
             attrs = [attrs]
         return set(attrs) <= set(self.attributes)
@@ -188,8 +189,8 @@ class Domain:
         """Check if the given attribute is in the domain."""
         return name in self.attributes
 
-    def __getitem__(self, a: str) -> int:
-        return self.config[a]
+    def __getitem__(self, attr: str) -> int:
+        return self.config[attr]
 
     def __iter__(self) -> Iterator[str]:
         return self.attributes.__iter__()
@@ -198,5 +199,5 @@ class Domain:
         return len(self.attributes)
 
     def __str__(self) -> str:
-        inner = ", ".join(["%s: %d" % x for x in zip(self.attributes, self.shape)])
-        return "Domain(%s)" % inner
+        inner = ", ".join([f"{x[0]}: {x[1]}" for x in zip(self.attributes, self.shape)])
+        return f"Domain({inner})"

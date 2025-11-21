@@ -7,6 +7,7 @@ number of records). It also offers methods for querying marginals and
 generating synthetic data.
 """
 from collections.abc import Sequence
+from typing import Union
 import chex
 import numpy as np
 
@@ -38,7 +39,7 @@ class MarkovRandomField:
     marginals: CliqueVector
     total: chex.Numeric = 1
 
-    def project(self, attrs: str | Sequence[str]) -> Factor:
+    def project(self, attrs: Union[str, Sequence[str]]) -> Factor:
         if isinstance(attrs, str):
             attrs = (attrs,)
         attrs = tuple(attrs)
@@ -48,18 +49,18 @@ class MarkovRandomField:
             self.potentials, attrs, self.total
         )
 
-    def supports(self, attrs: str | Sequence[str]) -> bool:
+    def supports(self, attrs: Union[str, Sequence[str]]) -> bool:
         return self.marginals.domain.supports(attrs)
 
-    def synthetic_data(self, rows: int | None = None, method: str = "round"):
+    def synthetic_data(self, rows: Union[int, None] = None, method: str = "round"):
         """Generates synthetic data based on the learned model's marginals."""
         total = max(1, int(rows or self.total))
         domain = self.domain
         cols = domain.attrs
         col_to_idx = {col: i for i, col in enumerate(cols)}
         data = np.zeros((total, len(cols)), dtype=int)
-        cliques = [set(cl) for cl in self.cliques]
-        jtree, elimination_order = junction_tree.make_junction_tree(domain, cliques)
+        cliques = [set(clique) for clique in self.cliques]
+        _, elimination_order = junction_tree.make_junction_tree(domain, cliques)
 
         def synthetic_col(counts, total):
             """Generates a synthetic column by sampling or rounding based on counts and total."""
@@ -87,7 +88,7 @@ class MarkovRandomField:
         used = {col}
 
         for col in order[1:]:
-            relevant = [cl for cl in cliques if col in cl]
+            relevant = [clique for clique in cliques if col in clique]
             relevant = used.intersection(set().union(*relevant))
             proj = tuple(relevant)
             used.add(col)
@@ -106,7 +107,7 @@ class MarkovRandomField:
                 unique_rows, inverse = np.unique(current_proj_data, axis=0, return_inverse=True)
 
                 # For each unique configuration, sample the new column
-                for i in range(len(unique_rows)):
+                for i, _ in enumerate(unique_rows):
                     # Identify rows matching this configuration
                     mask = (inverse == i)
                     count = np.sum(mask)

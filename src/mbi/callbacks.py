@@ -24,6 +24,15 @@ def _pad(string: str, length: int):
 
 @attr.dataclass
 class Callback:
+    """
+    A callback class for logging loss functions during optimization.
+
+    Attributes:
+        loss_fns: A dictionary mapping names to loss functions.
+        frequency: The frequency at which to log the loss values.
+        _step: The current step number (internal).
+        _logs: A list of logged values (internal).
+    """
     loss_fns: dict[str, marginal_loss.MarginalLossFn]
     frequency: int = 50
     # Internal state
@@ -39,7 +48,9 @@ class Callback:
             row = [self.loss_fns[key](marginals) for key in self.loss_fns]
             self._logs.append([self._step] + row)
             padded_step = str(self._step) + " " * (9 - len(str(self._step)))
-            print(padded_step, *[("%.6f" % v)[:6] for v in row], sep="   |   ")
+            formatted_row = ["%.6f" % v for v in row]
+            truncated_row = [val[:6] for val in formatted_row]
+            print(padded_step, *truncated_row, sep="   |   ")
         self._step += 1
 
     @property
@@ -85,7 +96,7 @@ def default(
             ground_truth, norm="l1", normalize=True
         )
 
-    loss_fns = {key: jax.jit(loss_fns[key].__call__) for key in loss_fns}
+    loss_fns = {key: jax.jit(loss_fns[key].__call__) for key in loss_fns.keys()}
     loss_fns["Primal Feas"] = jax.jit(marginal_loss.primal_feasibility)
 
     return Callback(loss_fns, frequency)

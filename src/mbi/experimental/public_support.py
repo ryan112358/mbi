@@ -30,25 +30,25 @@ refactoring. Contributions for improvement are welcome.
 
 def entropic_mirror_descent(loss_and_grad, x0, total, iters=250):
     """Performs optimization using entropic mirror descent to find optimal weights."""
-    logP = np.log(x0 + np.nextafter(0, 1)) + np.log(total) - np.log(x0.sum())
-    P = np.exp(logP)
-    P = x0 * total / x0.sum()
-    loss, dL = loss_and_grad(P)
+    log_proba = np.log(x0 + np.nextafter(0, 1)) + np.log(total) - np.log(x0.sum())
+    proba = np.exp(log_proba)
+    proba = x0 * total / x0.sum()
+    loss, grad = loss_and_grad(proba)
     alpha = 1.0
     begun = False
 
     for _ in range(iters):
-        logQ = logP - alpha * dL
-        logQ += np.log(total) - logsumexp(logQ)
-        Q = np.exp(logQ)
+        log_q_val = log_proba - alpha * grad
+        log_q_val += np.log(total) - logsumexp(log_q_val)
+        q_val = np.exp(log_q_val)
         # Q = P * np.exp(-alpha*dL)
         # Q *= total / Q.sum()
-        new_loss, new_dL = loss_and_grad(Q)
+        new_loss, new_dL = loss_and_grad(q_val)
 
-        if loss - new_loss >= 0.5 * alpha * dL.dot(P - Q):
+        if loss - new_loss >= 0.5 * alpha * grad.dot(proba - q_val):
             # print(alpha, loss)
-            logP = logQ
-            loss, dL = new_loss, new_dL
+            log_proba = log_q_val
+            loss, grad = new_loss, new_dL
             # increase step size if we haven't already decreased it at least once
             if not begun:
                 alpha *= 2
@@ -56,7 +56,7 @@ def entropic_mirror_descent(loss_and_grad, x0, total, iters=250):
             alpha *= 0.5
             begun = True
 
-    return np.exp(logP)
+    return np.exp(log_proba)
 
 def _to_clique_vector(data, cliques):
     """Converts a Dataset object into a CliqueVector representation of its marginals."""
@@ -75,8 +75,9 @@ def public_support(
     public_data: Dataset,
     known_total=None
 ) -> Dataset:
+    """Uses public data to synthesize a dataset that matches private marginals."""
 
-    loss_fn, known_total, _ = estimation._initialize(domain, loss_fn, known_total, None)
+    loss_fn, known_total, _ = estimation._initialize(domain, loss_fn, known_total, None) # pylint: disable=protected-access
     loss_and_grad_mu = jax.value_and_grad(loss_fn)
 
     cliques = loss_fn.cliques  # type: ignore
@@ -84,12 +85,14 @@ def public_support(
     def loss_and_grad(weights):
         """Calculates the loss and gradient with respect to the public data weights."""
         est = Dataset(public_data.data, public_data.domain, weights)
-        mu = _to_clique_vector(est, cliques)
-        loss, dL = loss_and_grad_mu(mu)
+        mu_val = _to_clique_vector(est, cliques)
+        loss, dL_val = loss_and_grad_mu(mu_val)
         dweights = np.zeros(weights.size)
-        for cl in dL.cliques:
-            idx = est.project(cl).data
-            dweights += np.array(dL[cl].values[tuple(idx.T)])
+        for cl in dL_val.cliques:
+            indices = est.domain.axes(cl)
+            idx = est.data[:, indices]
+            # The original code used dL[cl].values[tuple(idx.T)] which is correct for Factor object
+            dweights += np.array(dL_val[cl].values[tuple(idx.T)])
         return loss, dweights
 
     weights = np.ones(public_data.records)

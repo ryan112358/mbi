@@ -18,7 +18,7 @@ def _try_convert(values):
     """Attempts to convert input to a JAX array, returning original if it fails."""
     try:
         return jnp.array(values)
-    except:
+    except: # pylint: disable=bare-except
         return values  # useful if values is a Jax tracer object
 
 @functools.partial(
@@ -134,11 +134,11 @@ class Factor:
         return self.domain.supports(attrs)
 
     # Functions that operate element-wise
-    def exp(self, out=None) -> Factor:
+    def exp(self, out=None) -> Factor: # pylint: disable=unused-argument
         """Applies element-wise exponentiation (jnp.exp) to the factor's values."""
         return Factor(self.domain, jnp.exp(self.values))
 
-    def log(self, out=None) -> Factor:
+    def log(self, out=None) -> Factor: # pylint: disable=unused-argument
         """Applies element-wise logarithm (jnp.log) to the factor's values."""
         return Factor(self.domain, jnp.log(self.values))
 
@@ -213,13 +213,14 @@ class Factor:
         return self.values.flatten() if flatten else self.values
 
     def pad(self, mesh: jax.sharding.Mesh | None, pad_value: Literal[0, '-inf']) -> Factor:
+        """Pads the factor values based on the mesh."""
         if mesh is None:
             return self
         pad_amounts = [0]*len(self.domain)
-        for i, ax in enumerate(self.domain):
-            if ax in mesh.axis_names:
-                size = self.domain[ax]
-                num_shards = mesh.axis_sizes[mesh.axis_names.index(ax)]
+        for i, axis_name in enumerate(self.domain):
+            if axis_name in mesh.axis_names:
+                size = self.domain[axis_name]
+                num_shards = mesh.axis_sizes[mesh.axis_names.index(axis_name)]
                 pad_amounts[i] = -size % num_shards
 
         values = jnp.pad(
@@ -252,11 +253,11 @@ class Factor:
         """
         if mesh is None:
             return self
-        pspec = [None]*len(self.domain)
-        for i, ax in enumerate(self.domain):
-            if ax in mesh.axis_names:
-                pspec[i] = ax
-        sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(*pspec))
+        partition_spec = [None]*len(self.domain)
+        for i, axis_name in enumerate(self.domain):
+            if axis_name in mesh.axis_names:
+                partition_spec[i] = axis_name
+        sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(*partition_spec))
 
         return Factor(
             domain=self.domain,

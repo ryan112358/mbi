@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import functools
 import operator
+from typing import Optional
 
 import attr
 import chex
@@ -94,19 +95,21 @@ class CliqueVector:
         return functools.reduce(lambda a, b: a.merge(b), domains, Domain([], []))
 
     # @functools.lru_cache(maxsize=None)
-    def parent(self, clique: Clique) -> Clique | None:
+    def parent(self, clique: Clique) -> Optional[Clique]:
         """Finds a clique in this vector that is a superset of the given clique."""
         for result in self.cliques:
             if set(clique) <= set(result):
                 return result
+        return None
 
     def supports(self, clique: Clique) -> bool:
         """Checks if the given clique is supported (is a subset of any clique in the vector)."""
         return self.parent(clique) is not None
 
     def project(self, clique: Clique, log: bool = False) -> Factor:
-        if self.supports(clique):
-            return self[self.parent(clique)].project(clique, log=log)
+        parent_clique = self.parent(clique)
+        if parent_clique is not None:
+            return self[parent_clique].project(clique, log=log)
         raise ValueError(f"Cannot project onto unsupported clique {clique}.")
 
     def expand(self, cliques: list[Clique]) -> CliqueVector:
@@ -191,7 +194,7 @@ class CliqueVector:
         else:
             raise ValueError(f"Clique {clique} not in CliqueVector.")
 
-    def apply_sharding(self, mesh: jax.sharding.Mesh | None) -> CliqueVector:
+    def apply_sharding(self, mesh: Optional[jax.sharding.Mesh]) -> CliqueVector:
         """Apply sharding constraint to each factor in the CliqueVector.
 
         The sharding strategy is automatically determined based on the provided
