@@ -6,7 +6,6 @@ import jax.nn
 from scipy.special import softmax
 from functools import reduce
 from scipy.sparse.linalg import lsmr
-import pandas as pd
 import jax.numpy as jnp
 import optax
 import numpy as np
@@ -83,18 +82,28 @@ class MixtureOfProducts:
         total = rows or int(self.total)
         subtotal = total // self.num_components + 1
 
-        dfs = []
+        data_list = []
         for i in range(self.num_components):
-            df = pd.DataFrame()
+            comp_data = {}
             for col in self.products:
                 counts = self.products[col][i]
-                df[col] = synthetic_col(counts, subtotal)
-            dfs.append(df)
+                comp_data[col] = synthetic_col(counts, subtotal)
 
-        df = pd.concat(dfs).sample(frac=1).reset_index(drop=True)[:total]
-        # Ensure columns match domain order
-        df = df[list(self.domain.attrs)]
-        return Dataset(df.values, self.domain)
+            # Convert comp_data (dict of arrays) to a structured representation or just a list of rows
+            # Here we know the length is subtotal
+            # We want a 2D array with columns in domain order
+            current_block = np.stack([comp_data[col] for col in self.domain.attrs], axis=1)
+            data_list.append(current_block)
+
+        full_data = np.concatenate(data_list, axis=0)
+
+        # Shuffle
+        np.random.shuffle(full_data)
+
+        # Truncate to total
+        full_data = full_data[:total]
+
+        return Dataset(full_data, self.domain)
 
 
 def mixture_of_products(

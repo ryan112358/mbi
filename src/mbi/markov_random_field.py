@@ -9,7 +9,6 @@ generating synthetic data.
 from collections.abc import Sequence
 import chex
 import numpy as np
-import pandas as pd
 
 from . import junction_tree, marginal_oracles
 from .clique_vector import CliqueVector
@@ -123,8 +122,7 @@ class MarkovRandomField:
             else:
                 data[:, col_idx] = synthetic_col(marg, total)
 
-        df = pd.DataFrame(data, columns=cols)
-        return Dataset(df, domain)
+        return Dataset(data, domain)
 
 
     @property
