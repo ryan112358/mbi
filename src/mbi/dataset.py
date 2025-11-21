@@ -107,7 +107,7 @@ class Dataset:
         data = Dataset(data, domain, self.weights)
         return Factor(data.domain, data.datavector(flatten=False))
 
-    def supports(self, cols: Union[str, Sequence[str]]) -> bool:
+    def supports(self, cols: str | Sequence[str]) -> bool:
         return self.domain.supports(cols)
 
     def drop(self, cols):
@@ -147,7 +147,7 @@ class JaxDataset:
     """
     data: jax.Array = attr.field(converter=jnp.asarray)
     domain: Domain
-    weights: Optional[jax.Array] = None
+    weights: jax.Array | None = None
 
     def __post_init__(self):
         if not jnp.issubdtype(self.data.dtype, jnp.integer):
@@ -158,11 +158,11 @@ class JaxDataset:
         if self.data.shape[1] != len(self.domain):
             raise ValueError('Number of columns of data must equal the number of attributes in the domain.')
         # This will not work in a jitted context, but not sure if this will be called from one normally.
-        # for i, ax in enumerate(self.domain):
-        #     if self.data[:, i].min() < 0:
-        #         raise ValueError('Data must be non-negative.')
-        #     if self.data[:, i].max() >= self.domain[ax]:
-        #         raise ValueError('Data must be within the bounds of the domain.')
+        for i, ax in enumerate(self.domain):
+            if self.data[:, i].min() < 0:
+                raise ValueError('Data must be non-negative.')
+            if self.data[:, i].max() >= self.domain[ax]:
+                raise ValueError('Data must be within the bounds of the domain.')
 
     @staticmethod
     def synthetic(domain: Domain, records: int) -> JaxDataset:
@@ -175,7 +175,7 @@ class JaxDataset:
         data = np.array(arr).T
         return JaxDataset(data, domain)
 
-    def project(self, cols: Union[str, Sequence[str]]) -> Factor:
+    def project(self, cols: str | Sequence[str]) -> Factor:
         """project dataset onto a subset of columns"""
         if isinstance(cols, (str, int)):
             cols = [cols]
@@ -185,7 +185,7 @@ class JaxDataset:
         data = JaxDataset(data, domain, self.weights)
         return Factor(data.domain, data.datavector(flatten=False))
 
-    def supports(self, cols: Union[str, Sequence[str]]) -> bool:
+    def supports(self, cols: str | Sequence[str]) -> bool:
         return self.domain.supports(cols)
 
     @property

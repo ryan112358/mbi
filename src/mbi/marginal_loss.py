@@ -10,7 +10,6 @@ included.
 """
 import functools
 from collections.abc import Callable
-from typing import Optional
 
 import attr
 import chex
@@ -65,7 +64,7 @@ class MarginalLossFn:
 
     cliques: list[Clique]
     loss_fn: Callable[[CliqueVector], chex.Numeric]
-    lipschitz: Optional[float] = None
+    lipschitz: float | None = None
 
     def __call__(self, marginals: CliqueVector) -> chex.Numeric:
         return self.loss_fn(marginals)
@@ -102,7 +101,7 @@ def calculate_l2_lipschitz(domain: Domain, cliques: list[Clique], loss_fn: Calla
 
 
 def from_linear_measurements(
-    measurements: list[LinearMeasurement], norm: str = "l2", normalize: bool = False, domain: Optional[Domain] = None,
+    measurements: list[LinearMeasurement], norm: str = "l2", normalize: bool = False, domain: Domain | None = None,
 ) -> MarginalLossFn:
     """Construct a MarginalLossFn from a list of LinearMeasurements.
 

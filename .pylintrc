@@ -31,7 +31,7 @@ load-plugins=
 jobs=0
 
 # Minimum supported python version
-py-version = 3.9.0
+py-version = 3.10.0
 
 # Specify a score threshold under which the program will exit with error.
 fail-under=9.0 # Adjusted slightly lower, 10.0 is very strict.
@@ -167,7 +167,7 @@ indent-after-paren=4
 [BASIC]
 
 # Good variable names which should always be accepted, separated by a comma
-good-names=i,j,k,ex,err,Run,_,fh
+good-names=i,j,k,ex,err,Run,_,fh,cl
 
 # Good variable names regexes, separated by a comma.
 # good-names-rgxs=

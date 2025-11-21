@@ -44,8 +44,8 @@ def _make_graph(domain: Domain, cliques: Collection[Clique]) -> nx.Graph:
     """Create a graph from the domain and cliques."""
     graph = nx.Graph()
     graph.add_nodes_from(domain.attributes)
-    for clique in cliques:
-        graph.add_edges_from(itertools.combinations(clique, 2))
+    for cl in cliques:
+        graph.add_edges_from(itertools.combinations(cl, 2))
     return graph
 
 
@@ -77,7 +77,7 @@ def greedy_order(
     for _ in range(len(unmarked)):
         cost_dict = OrderedDict()
         for a_node in unmarked:
-            neighbors = [clique for clique in cliques if a_node in clique]
+            neighbors = [cl for cl in cliques if a_node in cl]
             variables = tuple(set.union(set(), *[set(n) for n in neighbors]))
             newdom = domain.project(variables)
             cost_dict[a_node] = newdom.size()
@@ -94,7 +94,7 @@ def greedy_order(
 
         order.append(a_node)
         unmarked.remove(a_node)
-        neighbors = [clique for clique in cliques if a_node in clique]
+        neighbors = [cl for cl in cliques if a_node in cl]
         variables = tuple(set.union(set(), *[set(n) for n in neighbors]) - {a_node})
         cliques -= set(neighbors)
         cliques.add(variables)
@@ -109,7 +109,7 @@ def make_junction_tree(
     elimination_order: list[str] | int | None = None,
 ) -> tuple[nx.Graph, list[str]]:
     """Create a junction tree."""
-    cliques = [tuple(clique) for clique in cliques]
+    cliques = [tuple(cl) for cl in cliques]
     graph = _make_graph(domain, cliques)
 
     if elimination_order is None:
@@ -135,6 +135,6 @@ def hypothetical_model_size(domain: Domain, cliques: list[Clique]) -> float:
     """Size of the full junction tree parameters, measured in megabytes."""
     jtree, _ = make_junction_tree(domain, cliques)
     max_cliques = maximal_cliques(jtree)
-    cells = sum(domain.size(clique) for clique in max_cliques)
+    cells = sum(domain.size(cl) for cl in max_cliques)
     size_mb = cells * 8 / 2**20
     return size_mb

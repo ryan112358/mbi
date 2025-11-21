@@ -64,7 +64,7 @@ class Callback:
 
 def default(
     measurements: list[LinearMeasurement],
-    data: Optional[Projectable] = None,
+    data: Projectable | None = None,
     frequency: int = 50,
 ) -> Callback:
     """Creates a default Callback with standard loss functions (L1/L2 Loss/Error, Primal Feas)."""

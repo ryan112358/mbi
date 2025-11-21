@@ -127,17 +127,17 @@ class CliqueVector:
         """
         mapping = reverse_clique_mapping(cliques, self.cliques)
         arrays = {}
-        for clique in cliques:
-            dom = self.domain.project(clique)
-            if len(mapping[clique]) == 0:
-                arrays[clique] = Factor.zeros(dom)
+        for cl in cliques:
+            dom = self.domain.project(cl)
+            if len(mapping[cl]) == 0:
+                arrays[cl] = Factor.zeros(dom)
             else:
-                arrays[clique] = sum(self[cl2] for cl2 in mapping[clique]).expand(dom)
+                arrays[cl] = sum(self[cl2] for cl2 in mapping[cl]).expand(dom)
         return CliqueVector(self.domain, cliques, arrays)
 
     def contract(self, cliques: list[Clique], log: bool = False) -> CliqueVector:
         """Computes a new CliqueVector by projecting this one onto a smaller set of cliques."""
-        arrays = {clique: self.project(clique, log=log) for clique in cliques}
+        arrays = {cl: self.project(cl, log=log) for cl in cliques}
         return CliqueVector(self.domain, cliques, arrays)
 
     def normalize(self, total: float = 1, log: bool = True):

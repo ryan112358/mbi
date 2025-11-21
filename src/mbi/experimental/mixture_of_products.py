@@ -139,12 +139,12 @@ def mixture_of_products(
     def marginals_from_params(params):
         products = get_products(params)
         arrays = {}
-        for clique in cliques:
-            let = letters[: len(clique)]
+        for cl in cliques:
+            let = letters[: len(cl)]
             formula = ",".join([f"a{l}" for l in let]) + "->" + "".join(let)
-            components = [products[col] for col in clique]
+            components = [products[col] for col in cl]
             ans = jnp.einsum(formula, *components) * known_total / mixture_components
-            arrays[clique] = Factor(domain.project(clique), ans)
+            arrays[cl] = Factor(domain.project(cl), ans)
         return CliqueVector(domain, cliques, arrays)
 
     def params_loss(params):

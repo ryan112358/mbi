@@ -312,6 +312,7 @@ def mle_from_marginals(
     known_total: float,
     iters: int = 250,
     marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
+    callback_fn: Callable[[CliqueVector], None] = lambda _: None,
     mesh: jax.sharding.Mesh | None = None,
 ) -> MarkovRandomField:
     """Compute the MLE Graphical Model from the marginals.
@@ -329,7 +330,7 @@ def mle_from_marginals(
         return -marginals.dot(mu.log()), mu - marginals
 
     potentials = CliqueVector.zeros(marginals.domain, marginals.cliques)
-    potentials = _optimize(loss_and_grad_fn, potentials, iters=iters)
+    potentials = _optimize(loss_and_grad_fn, potentials, iters=iters, callback_fn=callback_fn)
     return MarkovRandomField(
         potentials=potentials,
         marginals=marginal_oracle(potentials, known_total),

@@ -61,10 +61,10 @@ def entropic_mirror_descent(loss_and_grad, x0, total, iters=250):
 def _to_clique_vector(data, cliques):
     """Converts a Dataset object into a CliqueVector representation of its marginals."""
     arrays = {}
-    for clique in cliques:
-        dom = data.domain.project(clique)
-        vals = data.project(clique).datavector(flatten=False)
-        arrays[clique] = Factor(dom, vals)
+    for cl in cliques:
+        dom = data.domain.project(cl)
+        vals = data.project(cl).datavector(flatten=False)
+        arrays[cl] = Factor(dom, vals)
     return CliqueVector(dom, cliques, arrays)
 
 
@@ -88,11 +88,11 @@ def public_support(
         mu_val = _to_clique_vector(est, cliques)
         loss, dL_val = loss_and_grad_mu(mu_val)
         dweights = np.zeros(weights.size)
-        for clique in dL_val.cliques:
-            indices = est.domain.axes(clique)
+        for cl in dL_val.cliques:
+            indices = est.domain.axes(cl)
             idx = est.data[:, indices]
             # The original code used dL[cl].values[tuple(idx.T)] which is correct for Factor object
-            dweights += np.array(dL_val[clique].values[tuple(idx.T)])
+            dweights += np.array(dL_val[cl].values[tuple(idx.T)])
         return loss, dweights
 
     weights = np.ones(public_data.records)

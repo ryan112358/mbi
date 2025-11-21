@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable, Sequence
-from typing import Literal, Protocol, Union, Optional
+from typing import Literal, Protocol
 
 import attr
 import chex
@@ -101,7 +101,7 @@ class Factor:
 
     # Functions that aggregate along some subset of axes
     def _aggregate(
-        self, fn: Callable, attrs: Optional[Sequence[str]] = None
+        self, fn: Callable, attrs: Sequence[str] | None = None
     ) -> Factor:
         """Helper for aggregating values along specified attribute axes."""
         attrs = self.domain.attrs if attrs is None else attrs
@@ -110,19 +110,19 @@ class Factor:
         newdom = self.domain.marginalize(attrs)
         return Factor(newdom, values)
 
-    def max(self, attrs: Optional[Sequence[str]] = None) -> Factor:
+    def max(self, attrs: Sequence[str] | None = None) -> Factor:
         """Computes the maximum value along specified attribute axes."""
         return self._aggregate(jnp.max, attrs)
 
-    def sum(self, attrs: Optional[Sequence[str]] = None) -> Factor:
+    def sum(self, attrs: Sequence[str] | None = None) -> Factor:
         """Computes the sum along specified attribute axes."""
         return self._aggregate(jnp.sum, attrs)
 
-    def logsumexp(self, attrs: Optional[Sequence[str]] = None) -> Factor:
+    def logsumexp(self, attrs: Sequence[str] | None = None) -> Factor:
         """Computes the log-sum-exp along specified attribute axes."""
         return self._aggregate(jax.scipy.special.logsumexp, attrs)
 
-    def project(self, attrs: Union[str, Sequence[str]], log: bool = False) -> Factor:
+    def project(self, attrs: str | Sequence[str], log: bool = False) -> Factor:
         """Computes the marginal distribution by summing/logsumexp'ing out other attributes."""
         if isinstance(attrs, str):
             attrs = (attrs,)
@@ -130,7 +130,7 @@ class Factor:
         result = self.logsumexp(marginalized) if log else self.sum(marginalized)
         return result.transpose(attrs)
 
-    def supports(self, attrs: Union[str, Sequence[str]]) -> bool:
+    def supports(self, attrs: str | Sequence[str]) -> bool:
         return self.domain.supports(attrs)
 
     # Functions that operate element-wise
@@ -158,7 +158,7 @@ class Factor:
         return float(self.values)
 
     # Binary operations between two factors
-    def _binaryop(self, fn: Callable, other: Union[Factor, chex.Numeric]) -> Factor:
+    def _binaryop(self, fn: Callable, other: Factor | chex.Numeric) -> Factor:
         """Helper for applying binary operations between this factor and another factor or scalar."""
         if isinstance(other, chex.Numeric) and jnp.ndim(other) == 0:
             other = Factor(Domain([], []), other)
@@ -167,13 +167,13 @@ class Factor:
         factor2 = other.expand(newdom)
         return Factor(newdom, fn(factor1.values, factor2.values))
 
-    def __sub__(self, other: Union[Factor, chex.Numeric]) -> Factor:
+    def __sub__(self, other: Factor | chex.Numeric) -> Factor:
         return self._binaryop(jnp.subtract, other)
 
-    def __truediv__(self, other: Union[Factor, chex.Numeric]) -> Factor:
+    def __truediv__(self, other: Factor | chex.Numeric) -> Factor:
         return self._binaryop(jnp.divide, other)
 
-    def __mul__(self, other: Union[Factor, chex.Numeric]) -> Factor:
+    def __mul__(self, other: Factor | chex.Numeric) -> Factor:
         """Multiply two factors together.
 
         Example Usage:
@@ -191,7 +191,7 @@ class Factor:
         """
         return self._binaryop(jnp.multiply, other)
 
-    def __add__(self, other: Union[Factor, chex.Numeric]) -> Factor:
+    def __add__(self, other: Factor | chex.Numeric) -> Factor:
         return self._binaryop(jnp.add, other)
 
     def __radd__(self, other: chex.Numeric) -> Factor:
@@ -212,7 +212,7 @@ class Factor:
         """Returns the factor's values as a flattened vector or original array."""
         return self.values.flatten() if flatten else self.values
 
-    def pad(self, mesh: Optional[jax.sharding.Mesh], pad_value: Literal[0, '-inf']) -> Factor:
+    def pad(self, mesh: jax.sharding.Mesh | None, pad_value: Literal[0, '-inf']) -> Factor:
         """Pads the factor values based on the mesh."""
         if mesh is None:
             return self
@@ -239,7 +239,7 @@ class Factor:
 
 
 
-    def apply_sharding(self, mesh: Optional[jax.sharding.Mesh]) -> Factor:
+    def apply_sharding(self, mesh: jax.sharding.Mesh | None) -> Factor:
         """Apply sharding constraint to the factor values.
 
         The sharding strategy is automatically determined based on the provided
@@ -277,8 +277,8 @@ class Projectable(Protocol):
     def domain(self) -> Domain:
         """Returns the domain over which this projectable is defined."""
 
-    def project(self, attrs: Union[str, Sequence[str]]) -> Factor:
+    def project(self, attrs: str | Sequence[str]) -> Factor:
         """Projection onto a subset of attributes."""
 
-    def supports(self, attrs: Union[str, Sequence[str]]) -> bool:
+    def supports(self, attrs: str | Sequence[str]) -> bool:
         """Returns true if the given attributes can be projected onto."""

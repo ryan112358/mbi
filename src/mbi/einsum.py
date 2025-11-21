@@ -3,7 +3,6 @@
 import jax
 import jax.numpy as jnp
 from collections.abc import Callable, Sequence
-from typing import Optional, Union
 
 
 def custom_dot_general(
@@ -14,8 +13,8 @@ def custom_dot_general(
     preferred_element_type = None,
     *,
     combine_fn: Callable[[jax.Array, jax.Array], jax.Array] = jnp.multiply,
-    reduce_fn: Callable[[jax.Array, Union[int, Sequence[int]]], jax.Array] = jnp.sum,
-    out_sharding: Optional[jax.sharding.Sharding] = None, # pylint: disable=unused-argument
+    reduce_fn: Callable[[jax.Array, int | Sequence[int]], jax.Array] = jnp.sum,
+    out_sharding: jax.sharding.Sharding | None = None, # pylint: disable=unused-argument
 ) -> jax.Array:
   """Computes a generalized dot product of two arrays.
 
@@ -90,7 +89,7 @@ def custom_dot_general(
   return reduce_fn(combined, contract_axes)
 
 
-def _axis_name_to_dim(axis_names: str, axis_name: str) -> Optional[int]:
+def _axis_name_to_dim(axis_names: str, axis_name: str) -> int | None:
   """Returns the index of axis_name in axis_names, or None if not found."""
   if axis_name in axis_names:
     return axis_names.index(axis_name)
@@ -98,7 +97,7 @@ def _axis_name_to_dim(axis_names: str, axis_name: str) -> Optional[int]:
 
 
 def _get_subarrays(
-    arrays: tuple[jax.Array, ...], ax_dims: list[Optional[int]], index: int
+    arrays: tuple[jax.Array, ...], ax_dims: list[int | None], index: int
 ) -> tuple[jax.Array, ...]:
   """Return a slice of each array along the given axis at the given index.
 

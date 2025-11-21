@@ -14,7 +14,7 @@ Pull requests are welcome to add support for other approximate oracles.
 
 import functools
 import itertools
-from typing import Any, Protocol, TypeAlias, Optional
+from typing import Any, Protocol, TypeAlias
 
 import jax
 import networkx as nx
@@ -43,7 +43,7 @@ class StatefulMarginalOracle(Protocol):
         potentials: CliqueVector,
         total: float = 1.0,
         state: Any = None,
-        mesh: Optional[jax.sharding.Mesh] = None
+        mesh: jax.sharding.Mesh | None = None
     ) -> tuple[CliqueVector, Any]:
         """
         Computes marginals from log-space potentials and manages state.
@@ -138,8 +138,8 @@ _State = dict[tuple[Clique, Clique], Factor]
 def convex_generalized_belief_propagation(
     potentials: CliqueVector,
     total: float = 1,
-    state: Optional[_State] = None,
-    mesh: Optional[jax.sharding.Mesh] = None,
+    state: _State | None = None,
+    mesh: jax.sharding.Mesh | None = None,
     iters: int = 1,
     damping: float = 0.5,
 ) -> tuple[CliqueVector, _State]:

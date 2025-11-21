@@ -7,7 +7,6 @@ various operations like projection, marginalization, and merging of domains.
 """
 import functools
 from collections.abc import Iterator, Sequence
-from typing import Union
 
 import attr
 
@@ -67,7 +66,7 @@ class Domain:
         """
         return Domain(tuple(config.keys()), tuple(config.values()))
 
-    def project(self, attributes: Union[str, Sequence[str]]) -> "Domain":
+    def project(self, attributes: str | Sequence[str]) -> "Domain":
         """Project the domain onto a subset of attributes.
 
         Args:
@@ -156,7 +155,7 @@ class Domain:
         extra = other.marginalize(self.attributes)
         return Domain(self.attributes + extra.attributes, self.shape + extra.shape)
 
-    def size(self, attributes: Union[Sequence[str], None] = None) -> int:
+    def size(self, attributes: Sequence[str] | None = None) -> int:
         """Return the total size of the domain.
 
         Example:
@@ -180,7 +179,7 @@ class Domain:
         """Alias for the `attributes` tuple."""
         return self.attributes
     
-    def supports(self, attrs: Union[str, Sequence[str]]) -> bool:
+    def supports(self, attrs: str | Sequence[str]) -> bool:
         if isinstance(attrs, str):
             attrs = [attrs]
         return set(attrs) <= set(self.attributes)
