@@ -58,10 +58,11 @@ class Dataset:
         :param path: path to csv file
         :param domain: path to json file encoding the domain information
         """
-        config = json.load(open(domain))
+        with open(domain, "r", encoding="utf-8") as f:
+            config = json.load(f)
         domain = Domain(config.keys(), config.values())
 
-        with open(path, 'r') as f:
+        with open(path, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
             header = next(reader)
             header_map = {name: i for i, name in enumerate(header)}
@@ -138,18 +139,18 @@ class JaxDataset:
 
     def __post_init__(self):
         if not jnp.issubdtype(self.data.dtype, jnp.integer):
-             raise ValueError(f'Data must be integral, got {self.data.dtype}.')
+             raise ValueError(f"Data must be integral, got {self.data.dtype}.")
 
         if self.data.ndim != 2:
-            raise ValueError(f'Data must be 2d aray, got {self.data.shape}')
+            raise ValueError(f"Data must be 2d aray, got {self.data.shape}")
         if self.data.shape[1] != len(self.domain):
-            raise ValueError('Number of columns of data must equal the number of attributes in the domain.')
+            raise ValueError("Number of columns of data must equal the number of attributes in the domain.")
         # This will not work in a jitted context, but not sure if this will be called from one normally.
         for i, ax in enumerate(self.domain):
             if self.data[:, i].min() < 0:
-                raise ValueError('Data must be non-negative.')
+                raise ValueError("Data must be non-negative.")
             if self.data[:, i].max() >= self.domain[ax]:
-                raise ValueError('Data must be within the bounds of the domain.')
+                raise ValueError("Data must be within the bounds of the domain.")
 
     @staticmethod
     def synthetic(domain: Domain, records: int) -> JaxDataset:

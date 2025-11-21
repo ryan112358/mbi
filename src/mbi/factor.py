@@ -212,7 +212,7 @@ class Factor:
         """Returns the factor's values as a flattened vector or original array."""
         return self.values.flatten() if flatten else self.values
 
-    def pad(self, mesh: jax.sharding.Mesh | None, pad_value: Literal[0, '-inf']) -> Factor:
+    def pad(self, mesh: jax.sharding.Mesh | None, pad_value: Literal[0, "-inf"]) -> Factor:
         if mesh is None:
             return self
         pad_amounts = [0]*len(self.domain)

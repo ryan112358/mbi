@@ -1,8 +1,9 @@
 """Prototype implementation of scan-based einsum implementation."""
 
+from collections.abc import Callable, Sequence
+
 import jax
 import jax.numpy as jnp
-from collections.abc import Callable, Sequence
 
 
 def custom_dot_general(
