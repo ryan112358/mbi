@@ -7,7 +7,6 @@ number of records). It also offers methods for querying marginals and
 generating synthetic data.
 """
 from collections.abc import Sequence
-from typing import Union
 import chex
 import numpy as np
 
@@ -39,7 +38,7 @@ class MarkovRandomField:
     marginals: CliqueVector
     total: chex.Numeric = 1
 
-    def project(self, attrs: Union[str, Sequence[str]]) -> Factor:
+    def project(self, attrs: str | Sequence[str]) -> Factor:
         if isinstance(attrs, str):
             attrs = (attrs,)
         attrs = tuple(attrs)
@@ -49,10 +48,10 @@ class MarkovRandomField:
             self.potentials, attrs, self.total
         )
 
-    def supports(self, attrs: Union[str, Sequence[str]]) -> bool:
+    def supports(self, attrs: str | Sequence[str]) -> bool:
         return self.marginals.domain.supports(attrs)
 
-    def synthetic_data(self, rows: Union[int, None] = None, method: str = "round"):
+    def synthetic_data(self, rows: int | None = None, method: str = "round"):
         """Generates synthetic data based on the learned model's marginals."""
         total = max(1, int(rows or self.total))
         domain = self.domain
