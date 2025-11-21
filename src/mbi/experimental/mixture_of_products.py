@@ -1,15 +1,3 @@
-from mbi import Dataset, Factor, CliqueVector, marginal_loss, estimation, Domain, LinearMeasurement
-from scipy.optimize import minimize
-from collections import defaultdict
-from jax import vjp
-import jax.nn
-from scipy.special import softmax
-from functools import reduce
-from scipy.sparse.linalg import lsmr
-import jax.numpy as jnp
-import optax
-import numpy as np
-
 """ This file is experimental.
 
 It is a close approximation to the method described in RAP (https://arxiv.org/abs/2103.06641)
@@ -23,6 +11,12 @@ Notable differences:
 (at least when softmax is used).
 - Added support for unbounded-DP, with automatic estimate of total.
 """
+
+import jax.nn
+import jax.numpy as jnp
+import numpy as np
+
+from mbi import Dataset, Factor, CliqueVector, marginal_loss, estimation, Domain, LinearMeasurement
 
 
 def adam(loss_and_grad, x0, iters=250):

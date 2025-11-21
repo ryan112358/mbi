@@ -24,7 +24,7 @@ from .clique_utils import clique_mapping
 from .clique_vector import CliqueVector
 from .domain import Domain
 from .factor import Factor
-from . import einsum
+
 _EINSUM_LETTERS = list(string.ascii_lowercase) + list(string.ascii_uppercase)
 
 
@@ -437,7 +437,7 @@ def calculate_many_marginals(
 
     # now iterate through pairs of cliques in order of distance
     # not sure why this API changed and why we need to do this hack.
-    nx.set_edge_attributes(jtree, values=1.0, name='weight')  # type: ignore
+    nx.set_edge_attributes(jtree, values=1.0, name="weight")  # type: ignore
     pred, dist = nx.floyd_warshall_predecessor_and_distance(jtree) #, weight=None)
 
     order_fn = lambda x: dist[x[0]][x[1]]

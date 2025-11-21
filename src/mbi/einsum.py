@@ -1,8 +1,9 @@
 """Prototype implementation of scan-based einsum implementation."""
 
+from collections.abc import Callable, Sequence
+
 import jax
 import jax.numpy as jnp
-from collections.abc import Callable, Sequence
 
 
 def custom_dot_general(
@@ -189,4 +190,3 @@ def scan_einsum(
     return jax.lax.scan(
         lambda carry, i: (carry + small_einsum(i), ()), init, loop
     )[0]
-    
