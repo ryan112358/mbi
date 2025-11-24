@@ -5,7 +5,7 @@ making them available for direct import. It simplifies access to functionalities
 like data representation (Domain, Dataset), factor manipulation (Factor),
 and various estimation and oracle modules.
 """
-from . import callbacks, estimation, junction_tree, marginal_oracles
+from . import callbacks, estimation, junction_tree, marginal_oracles, relaxed_projection
 from .clique_vector import CliqueVector
 from .dataset import Dataset
 from .domain import Domain
@@ -33,4 +33,5 @@ __all__ = [
     'callbacks',
     'junction_tree',
     'marginal_oracles',
+    'relaxed_projection'
 ]
