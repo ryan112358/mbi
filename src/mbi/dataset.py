@@ -12,18 +12,25 @@ import csv
 import functools
 import json
 from collections.abc import Sequence
+from typing import Any
 
 import attr
 import jax
 import jax.numpy as jnp
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 
 from .domain import Domain
 from .factor import Factor
 
 
 class Dataset:
-    def __init__(self, data, domain, weights=None):
+    def __init__(
+        self,
+        data: ArrayLike | dict[str, ArrayLike],
+        domain: Domain,
+        weights: np.ndarray | None = None,
+    ):
         """create a Dataset object
 
         :param data: a numpy array (n x d) OR a dictionary of 1d arrays (length n), keyed by attribute
@@ -45,12 +52,16 @@ class Dataset:
                 if n is None:
                     n = col.size
                 elif col.size != n:
-                    raise ValueError(f"All columns must have the same length. Attribute {attr} has {col.size}, expected {n}")
+                    raise ValueError(
+                        f"All columns must have the same length. Attribute {attr} has {col.size}, expected {n}"
+                    )
                 self._data[attr] = col
         else:
             data_arr = np.array(data)
             if data_arr.ndim != 2:
-                 raise ValueError(f"Data must be 2d array or dictionary, got {data_arr.shape}")
+                raise ValueError(
+                    f"Data must be 2d array or dictionary, got {data_arr.shape}"
+                )
 
             if data_arr.shape[1] != len(domain):
                 raise ValueError("data columns must match domain attributes")
@@ -59,9 +70,11 @@ class Dataset:
             self._data = {attr: data_arr[:, i] for i, attr in enumerate(domain.attrs)}
 
         if n is None:
-             if weights is None:
-                 raise ValueError("Weights must be provided if data is empty (cannot infer N)")
-             n = weights.size
+            if weights is None:
+                raise ValueError(
+                    "Weights must be provided if data is empty (cannot infer N)"
+                )
+            n = weights.size
 
         if weights is None:
             weights = np.ones(n)
@@ -70,15 +83,11 @@ class Dataset:
         self.weights = weights
         self._n = n
 
-    @property
-    def data(self):
-        """Returns the data as a 2D numpy array for backward compatibility."""
-        if not self._data:
-            return np.zeros((self.records, 0))
-        return np.column_stack([self._data[attr] for attr in self.domain.attrs])
+    def to_dict(self) -> dict[str, np.ndarray]:
+        return self._data
 
     @staticmethod
-    def synthetic(domain, N):
+    def synthetic(domain: Domain, N: int) -> Dataset:
         """Generate synthetic data conforming to the given domain
 
         :param domain: The domain object
@@ -89,25 +98,28 @@ class Dataset:
         return Dataset(values, domain)
 
     @staticmethod
-    def load(path, domain):
+    def load(path: str, domain: str | Domain) -> Dataset:
         """Load data into a dataset object
 
         :param path: path to csv file
         :param domain: path to json file encoding the domain information
         """
-        with open(domain, "r", encoding="utf-8") as f:
-            config = json.load(f)
-        domain = Domain(config.keys(), config.values())
+        if isinstance(domain, str):
+            with open(domain, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            domain_obj = Domain(config.keys(), config.values())
+        else:
+            domain_obj = domain
 
         with open(path, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
             header = next(reader)
             header_map = {name: i for i, name in enumerate(header)}
 
-            if not set(domain.attrs) <= set(header):
-                 raise ValueError("data must contain domain attributes")
+            if not set(domain_obj.attrs) <= set(header):
+                raise ValueError("data must contain domain attributes")
 
-            indices = [header_map[attr] for attr in domain.attrs]
+            indices = [header_map[attr] for attr in domain_obj.attrs]
 
             data = []
             for row in reader:
@@ -117,19 +129,19 @@ class Dataset:
                 except ValueError:
                     # Fallback or error if data is not numeric
                     # Assuming domain implies discrete/integer data
-                     mapped_row = [int(row[i]) for i in indices]
+                    mapped_row = [int(row[i]) for i in indices]
                 data.append(mapped_row)
 
-        return Dataset(np.array(data), domain)
+        return Dataset(np.array(data), domain_obj)
 
-    def project(self, cols):
+    def project(self, cols: int | str | Sequence[str] | Sequence[int]) -> Factor:
         """project dataset onto a subset of columns"""
-        if type(cols) in [str, int]:
+        if isinstance(cols, (str, int)):
             cols = [cols]
 
         # Handle integer indexing
         if all(isinstance(c, int) for c in cols):
-             cols = [self.domain.attrs[c] for c in cols]
+            cols = [self.domain.attrs[c] for c in cols]
 
         domain = self.domain.project(cols)
         proj_data = {col: self._data[col] for col in domain.attrs}
@@ -139,17 +151,17 @@ class Dataset:
     def supports(self, cols: str | Sequence[str]) -> bool:
         return self.domain.supports(cols)
 
-    def drop(self, cols):
+    def drop(self, cols: Sequence[str]) -> Factor:
         """Returns a new Dataset with the specified columns removed."""
         proj = [c for c in self.domain if c not in cols]
         return self.project(proj)
 
     @property
-    def records(self):
+    def records(self) -> int:
         """Returns the number of records (rows) in the dataset."""
         return self._n
 
-    def datavector(self, flatten=True):
+    def datavector(self, flatten: bool = True) -> NDArray:
         """return the database in vector-of-counts form"""
         bins = [range(n + 1) for n in self.domain.shape]
         if self._data:

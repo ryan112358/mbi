@@ -429,5 +429,5 @@ if __name__ == "__main__":
     )
 
     # Convert back to pandas for saving
-    df_synth = pd.DataFrame(synth.data, columns=synth.domain.attrs)
+    df_synth = pd.DataFrame(synth.to_dict(), columns=synth.domain.attrs)
     df_synth.to_csv(args.save, index=False)
