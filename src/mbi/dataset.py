@@ -26,19 +26,65 @@ class Dataset:
     def __init__(self, data, domain, weights=None):
         """create a Dataset object
 
-        :param data: a numpy array, columns aligned with domain.attrs
+        :param data: a numpy array (n x d) OR a dictionary of 1d arrays (length n), keyed by attribute
         :param domain: a domain object
         :param weight: weight for each row
         """
         self.domain = domain
-        self.data = np.array(data)
 
-        if self.data.ndim != 2:
-             raise ValueError(f"Data must be 2d array, got {self.data.shape}")
+        if isinstance(data, dict):
+            # Validate keys
+            if not set(data.keys()) == set(domain.attrs):
+                raise ValueError("Keys in data dictionary must match domain attributes")
 
-        assert self.data.shape[1] == len(domain), "data columns must match domain attributes"
-        assert weights is None or self.data.shape[0] == weights.size
+            # Validate lengths and convert to numpy arrays
+            n = None
+            self._data = {}
+            for attr in domain.attrs:
+                col = np.array(data[attr])
+                if col.ndim != 1:
+                    raise ValueError(f"Data for attribute {attr} must be 1D array")
+                if n is None:
+                    n = col.size
+                elif col.size != n:
+                    raise ValueError(f"All columns must have the same length. Attribute {attr} has {col.size}, expected {n}")
+                self._data[attr] = col
+            # Handle empty dictionary (0 attributes) case, though usually handled by not entering loop if attrs empty?
+            # If attrs is empty, n remains None.
+            if n is None:
+                 # If dict is empty, we don't know N unless implied by something else?
+                 # But typical usage with empty domain and dict input is likely rare or assumes N=0?
+                 # However, if passed data={}, we can't infer N.
+                 # If domain is empty, the loop over attrs doesn't run.
+                 # We should probably default N to 0 or check if user provided some indication?
+                 # But wait, earlier I said if domain is empty, we might lose N.
+                 # If data={} and domain is empty, we assume N=0 unless weights is provided?
+                 # But weights is checked against n.
+                 # Let's assume n=0 if attrs is empty and data is empty.
+                 # But if data was a 2D array of (N, 0), we get N.
+                 # With dict input {}, we don't have N.
+                 # For now, let's assume N=0 if no attributes in dict.
+                 n = 0
+        else:
+            # Assume array-like (n x d)
+            data_arr = np.array(data)
+            if data_arr.ndim != 2:
+                 raise ValueError(f"Data must be 2d array or dictionary, got {data_arr.shape}")
+
+            if data_arr.shape[1] != len(domain):
+                raise ValueError("data columns must match domain attributes")
+
+            n = data_arr.shape[0]
+            self._data = {attr: data_arr[:, i] for i, attr in enumerate(domain.attrs)}
+
+        assert weights is None or n == weights.size
         self.weights = weights
+        self._n = n
+
+    @property
+    def data(self):
+        """Returns the data as a 2D numpy array for backward compatibility."""
+        return np.column_stack([self._data[attr] for attr in self.domain.attrs])
 
     @staticmethod
     def synthetic(domain, N):
@@ -89,10 +135,45 @@ class Dataset:
         """project dataset onto a subset of columns"""
         if type(cols) in [str, int]:
             cols = [cols]
-        indices = self.domain.axes(cols)
-        data = self.data[:, indices]
+
+        if not cols:
+            # If projecting to empty set, return a factor with empty domain
+            # The value should be the total count (N)
+            # datavector() handles empty domain correctly now by using self.records
+            domain = Domain([], [])
+            data = Dataset({}, domain, self.weights)
+            # We need to manually set internal n because empty dict doesn't convey it
+            # But we passed weights, so init will check n == weights.size
+            # If weights is None, we need to ensure n is set correctly.
+            # But Dataset.__init__ sets self._n = 0 if data is empty dict.
+            # So data.records will be 0, unless we pass weights.
+            # If we want to support unweighted case, we might need to be careful.
+            # Actually, if we project onto empty set, we want a Factor representing the count.
+            # If self.weights is None, the sum is N.
+            # If we create a new Dataset({}, domain, weights), records will be 0 or weights.size.
+            # If weights is None, records is 0. That's WRONG if original N > 0.
+            # So we should pass a dummy array of length N? Or handle it?
+
+            # Better approach:
+            # Factor.datavector works by histogramdd.
+            # For empty domain, bins=[], sample=(N,0).
+            # histogramdd returns sum of weights (or count).
+            # So we need a Dataset that knows it has N records.
+            # But our Dataset handles empty dict as N=0.
+
+            # Let's fix this by allowing explicit N in init? Or just special case here.
+
+            # If cols is empty, we just want the total count.
+            total = self.records if self.weights is None else self.weights.sum()
+            return Factor(Domain([], []), total)
+
+        # Handle integer indexing
+        if all(isinstance(c, int) for c in cols):
+             cols = [self.domain.attrs[c] for c in cols]
+
         domain = self.domain.project(cols)
-        data = Dataset(data, domain, self.weights)
+        proj_data = {col: self._data[col] for col in domain.attrs}
+        data = Dataset(proj_data, domain, self.weights)
         return Factor(data.domain, data.datavector(flatten=False))
 
     def supports(self, cols: str | Sequence[str]) -> bool:
@@ -106,12 +187,21 @@ class Dataset:
     @property
     def records(self):
         """Returns the number of records (rows) in the dataset."""
-        return self.data.shape[0]
+        return self._n
 
     def datavector(self, flatten=True):
         """return the database in vector-of-counts form"""
         bins = [range(n + 1) for n in self.domain.shape]
-        ans = np.histogramdd(self.data, bins, weights=self.weights)[0]
+        if self._data:
+            sample = np.column_stack([self._data[attr] for attr in self.domain.attrs])
+        else:
+             # Handle empty domain case (should not happen usually given domain shape, but to be safe)
+             # If domain has 0 attributes, bins is [], sample should be (N, 0) array.
+             # N is records.
+             N = self.records
+             sample = np.zeros((N, 0))
+
+        ans = np.histogramdd(sample, bins, weights=self.weights)[0]
         return ans.flatten() if flatten else ans
 
 
