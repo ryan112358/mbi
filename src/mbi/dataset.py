@@ -6,6 +6,7 @@ structured representation of data, facilitating operations like projection onto
 subsets of attributes and conversion into a data vector format suitable for
 various statistical and machine learning tasks.
 """
+
 from __future__ import annotations
 
 import csv
@@ -27,23 +28,23 @@ import warnings
 
 def _validate_column(data: np.ndarray, size: int):
     if data.ndim != 1:
-    	raise ValueError(f"Expected column data to be 1D, found shape {data.shape}")
-    if not np.issubtype(data.dtype, np.integer):
+        raise ValueError(f"Expected column data to be 1D, found shape {data.shape}")
+    if not np.issubdtype(data.dtype, np.integer):
         raise ValueError(f"Expected integer data, got {data.dtype}")
     if not np.all((data >= 0) & (data < size)):
-    	raise ValueError(f"Expected data in range [0, {size})")
-    	
+        raise ValueError(f"Expected data in range [0, {size})")
+
 
 def _validate_data(data: dict[str, np.ndarray], domain: Domain):
     if set(data.keys()) != set(domain.attrs):
         raise ValueError("Keys in data dictionary must match domain attributes")
     n = None
     for col in data:
-    	_validate_column(data[col], domain.size(col))
-    	if n is None:
-    	    n = data[col].shape[0]
-    	if n != data[col].shape[0]:
-    	    raise ValueError("Expected data to have same size for each record.")
+        _validate_column(data[col], domain.size(col))
+        if n is None:
+            n = data[col].shape[0]
+        if n != data[col].shape[0]:
+            raise ValueError("Expected data to have same size for each record.")
 
 
 class Dataset:
@@ -59,24 +60,29 @@ class Dataset:
         :param domain: a domain object
         :param weight: weight for each row
         """
-        
+
         if isinstance(data, np.ndarray):
             if data.shape[1] != len(domain.attrs):
-                raise ValueError('Shape of data does not match shape of domain')
+                raise ValueError("Shape of data does not match shape of domain")
             n = data.shape[0]
             data = {attr: data[:, i] for i, attr in enumerate(domain.attrs)}
-        
-        elif hasattr(data, 'values'): # Pandas DataFrame
-            warnings.warn("Pandas dataframe inputs are deprecated, please pass in a dictionary of numpy arrays instead.")
-            n = data.shape[0]
-            data = {attr: data[attr].values for attr in domain.attrs}
-            
+
         elif isinstance(data, dict):
             if len(data) > 0:
-                 n = next(data.values()).shape[0]
+                n = list(data.values())[0].shape[0]
             else:
-                 n = None
-        
+                n = None
+
+        elif hasattr(data, "values"):  # Pandas DataFrame
+            warnings.warn(
+                "Pandas dataframe inputs are deprecated, please pass in a dictionary of numpy arrays instead."
+            )
+            n = data.shape[0]
+            data = {attr: data[attr].values for attr in domain.attrs}
+
+        else:
+            raise ValueError(f"Unrecognized data type {type(data)}")
+
         _validate_data(data, domain)
 
         if n == None:
@@ -90,7 +96,7 @@ class Dataset:
             weights = np.ones(n)
 
         assert n == weights.size
-        
+
         self.domain = domain
         self._data = data
         self.weights = weights
@@ -98,12 +104,12 @@ class Dataset:
 
     def to_dict(self) -> dict[str, np.ndarray]:
         return self._data
-        
+
     @property
     def df(self):
         import pandas
+
         return pandas.DataFrame(self._data)
-        
 
     @staticmethod
     def synthetic(domain: Domain, N: int) -> Dataset:
@@ -191,7 +197,7 @@ class Dataset:
 @functools.partial(
     jax.tree_util.register_dataclass,
     meta_fields=["domain"],
-    data_fields=["data", "weights"]
+    data_fields=["data", "weights"],
 )
 @attr.dataclass(frozen=True)
 class JaxDataset:
@@ -206,18 +212,21 @@ class JaxDataset:
             weight for each record in the dataset. If None, all records are
             assumed to have a weight of 1.
     """
+
     data: jax.Array = attr.field(converter=jnp.asarray)
     domain: Domain
     weights: jax.Array | None = None
 
     def __post_init__(self):
         if not jnp.issubdtype(self.data.dtype, jnp.integer):
-             raise ValueError(f"Data must be integral, got {self.data.dtype}.")
+            raise ValueError(f"Data must be integral, got {self.data.dtype}.")
 
         if self.data.ndim != 2:
             raise ValueError(f"Data must be 2d aray, got {self.data.shape}")
         if self.data.shape[1] != len(self.domain):
-            raise ValueError("Number of columns of data must equal the number of attributes in the domain.")
+            raise ValueError(
+                "Number of columns of data must equal the number of attributes in the domain."
+            )
         # This will not work in a jitted context, but not sure if this will be called from one normally.
         for i, ax in enumerate(self.domain):
             if self.data[:, i].min() < 0:
@@ -254,7 +263,7 @@ class JaxDataset:
         """Returns the number of records (rows) in the dataset."""
         return self.data.shape[0]
 
-    def datavector(self, flatten: bool=True) -> jax.Array:
+    def datavector(self, flatten: bool = True) -> jax.Array:
         """return the database in vector-of-counts form"""
         bins = [range(n + 1) for n in self.domain.shape]
         ans = jnp.histogramdd(self.data, bins, weights=self.weights)[0]
@@ -267,5 +276,9 @@ class JaxDataset:
         pspec = jax.sharding.PartitionSpec(mesh.axis_names)
         sharding = jax.sharding.NamedSharding(mesh, pspec)
         data = jax.lax.with_sharding_constraint(self.data, sharding)
-        weights = self.weights if self.weights is None else jax.lax.with_sharding_constraint(self.weights, sharding)
+        weights = (
+            self.weights
+            if self.weights is None
+            else jax.lax.with_sharding_constraint(self.weights, sharding)
+        )
         return JaxDataset(data, self.domain, weights)
