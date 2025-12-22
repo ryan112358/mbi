@@ -40,7 +40,7 @@ def _validate_data(data: dict[str, np.ndarray], domain: Domain):
         raise ValueError("Keys in data dictionary must match domain attributes")
     n = None
     for col in data:
-        _validate_column(data[col], domain.size(col))
+        _validate_column(data[col], domain[col])
         if n is None:
             n = data[col].shape[0]
         if n != data[col].shape[0]:
