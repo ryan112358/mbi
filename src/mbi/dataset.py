@@ -22,6 +22,28 @@ from numpy.typing import ArrayLike, NDArray
 
 from .domain import Domain
 from .factor import Factor
+import warnings
+
+
+def _validate_column(data: np.ndarray, size: int):
+    if data.ndim != 1:
+    	raise ValueError(f"Expected column data to be 1D, found shape {data.shape}")
+    if not np.issubtype(data.dtype, np.integer):
+        raise ValueError(f"Expected integer data, got {data.dtype}")
+    if not np.all((data >= 0) & (data < size)):
+    	raise ValueError(f"Expected data in range [0, {size})")
+    	
+
+def _validate_data(data: dict[str, np.ndarray], domain: Domain):
+    if set(data.keys()) != set(domain.attrs):
+        raise ValueError("Keys in data dictionary must match domain attributes")
+    n = None
+    for col in data:
+    	_validate_column(data[col], domain.size(col))
+    	if n is None:
+    	    n = data[col].shape[0]
+    	if n != data[col].shape[0]:
+    	    raise ValueError("Expected data to have same size for each record.")
 
 
 class Dataset:
@@ -33,43 +55,31 @@ class Dataset:
     ):
         """create a Dataset object
 
-        :param data: a numpy array (n x d) OR a dictionary of 1d arrays (length n), keyed by attribute
+        :param data: a numpy array (n x d) or a dictionary of 1d arrays (length n), keyed by attribute.
         :param domain: a domain object
         :param weight: weight for each row
         """
-        self.domain = domain
+        
+        if isinstance(data, np.ndarray):
+            if data.shape[1] != len(domain.attrs):
+                raise ValueError('Shape of data does not match shape of domain')
+            n = data.shape[0]
+            data = {attr: data[:, i] for i, attr in enumerate(domain.attrs)}
+        
+        elif hasattr(data, 'values'): # Pandas DataFrame
+            warnings.warn("Pandas dataframe inputs are deprecated, please pass in a dictionary of numpy arrays instead.")
+            n = data.shape[0]
+            data = {attr: data[attr].values for attr in domain.attrs}
+            
+        elif isinstance(data, dict):
+            if len(data) > 0:
+                 n = next(data.values()).shape[0]
+            else:
+                 n = None
+        
+        _validate_data(data, domain)
 
-        if isinstance(data, dict):
-            if not set(data.keys()) == set(domain.attrs):
-                raise ValueError("Keys in data dictionary must match domain attributes")
-
-            n = None
-            self._data = {}
-            for attr in domain.attrs:
-                col = np.array(data[attr])
-                if col.ndim != 1:
-                    raise ValueError(f"Data for attribute {attr} must be 1D array")
-                if n is None:
-                    n = col.size
-                elif col.size != n:
-                    raise ValueError(
-                        f"All columns must have the same length. Attribute {attr} has {col.size}, expected {n}"
-                    )
-                self._data[attr] = col
-        else:
-            data_arr = np.array(data)
-            if data_arr.ndim != 2:
-                raise ValueError(
-                    f"Data must be 2d array or dictionary, got {data_arr.shape}"
-                )
-
-            if data_arr.shape[1] != len(domain):
-                raise ValueError("data columns must match domain attributes")
-
-            n = data_arr.shape[0]
-            self._data = {attr: data_arr[:, i] for i, attr in enumerate(domain.attrs)}
-
-        if n is None:
+        if n == None:
             if weights is None:
                 raise ValueError(
                     "Weights must be provided if data is empty (cannot infer N)"
@@ -80,11 +90,20 @@ class Dataset:
             weights = np.ones(n)
 
         assert n == weights.size
+        
+        self.domain = domain
+        self._data = data
         self.weights = weights
         self._n = n
 
     def to_dict(self) -> dict[str, np.ndarray]:
         return self._data
+        
+    @property
+    def df(self):
+        import pandas
+        return pandas.DataFrame(self._data)
+        
 
     @staticmethod
     def synthetic(domain: Domain, N: int) -> Dataset:
@@ -139,13 +158,9 @@ class Dataset:
         if isinstance(cols, (str, int)):
             cols = [cols]
 
-        # Handle integer indexing
-        if all(isinstance(c, int) for c in cols):
-            cols = [self.domain.attrs[c] for c in cols]
-
         domain = self.domain.project(cols)
-        proj_data = {col: self._data[col] for col in domain.attrs}
-        data = Dataset(proj_data, domain, self.weights)
+        data = {col: self._data[col] for col in domain.attrs}
+        data = Dataset(data, domain, self.weights)
         return Factor(data.domain, data.datavector(flatten=False))
 
     def supports(self, cols: str | Sequence[str]) -> bool:
@@ -164,8 +179,8 @@ class Dataset:
     def datavector(self, flatten: bool = True) -> NDArray:
         """return the database in vector-of-counts form"""
         bins = [range(n + 1) for n in self.domain.shape]
-        if self._data:
-            sample = np.column_stack([self._data[attr] for attr in self.domain.attrs])
+        if len(self._data) >= 1:
+            sample = np.stack([self._data[attr] for attr in self.domain.attrs], axis=1)
             ans = np.histogramdd(sample, bins, weights=self.weights)[0]
         else:
             ans = np.array(self.weights.sum())
