@@ -105,7 +105,7 @@ def select(data, rho, measurement_log, cliques=[]):
 
 
 def transform_data(data, supports):
-  df = pd.DataFrame(data.data, columns=data.domain.attrs)
+  df = pd.DataFrame(data.to_dict(), columns=data.domain.attrs)
   newdom = {}
   for col in data.domain:
     support = supports[col]
@@ -127,7 +127,7 @@ def transform_data(data, supports):
 
 
 def reverse_data(data, supports):
-  df = pd.DataFrame(data.data, columns=data.domain.attrs)
+  df = pd.DataFrame(data.to_dict(), columns=data.domain.attrs)
   newdom = {}
   for col in data.domain:
     support = supports[col]
@@ -201,7 +201,7 @@ if __name__ == "__main__":
   synth = MST(data, args.epsilon, args.delta)
 
   if args.save is not None:
-    df = pd.DataFrame(synth.data, columns=synth.domain.attrs)
+    df = pd.DataFrame(synth.to_dict(), columns=synth.domain.attrs)
     df.to_csv(args.save, index=False)
 
   errors = []

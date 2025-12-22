@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import argparse
 import pickle
 from scipy import sparse
-import IPython
 import jax
 import pandas as pd
 
@@ -126,4 +125,3 @@ if __name__ == "__main__":
     stddev = args.stddev
     plt.savefig(f"{stddev=}.png")
 
-    # IPython.embed()
