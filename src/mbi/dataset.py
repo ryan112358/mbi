@@ -18,6 +18,7 @@ from typing import Any
 import attr
 import jax
 import jax.numpy as jnp
+import math
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
