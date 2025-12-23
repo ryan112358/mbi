@@ -184,14 +184,14 @@ class Dataset:
 
     def datavector(self, flatten: bool = True) -> NDArray:
         """return the database in vector-of-counts form"""
-        bins = [range(n + 1) for n in self.domain.shape]
-        if len(self._data) >= 1:
-            sample = np.stack([self._data[attr] for attr in self.domain.attrs], axis=1)
-            ans = np.histogramdd(sample, bins, weights=self.weights)[0]
-        else:
-            ans = np.array(self.weights.sum())
-
-        return ans.flatten() if flatten else ans
+        dims = self.domain.shape
+        if len(dims) == 0:
+            result = self.weights.sum()
+            return np.array([result]) if flatten else result
+        multi_index = tuple(self.df[a].values for a in self.domain.attrs)
+        linear_indices = np.ravel_multi_index(multi_index, dims, order='F')
+        counts = np.bincount(linear_indices, minlength=math.prod(dims), weights=self.weights)
+        return counts if flatten else counts.reshape(dims)
 
 
 @functools.partial(

@@ -611,11 +611,11 @@ def _universal_accelerated_method_step_init(
             new_value = fun(x)
             if norm == 1:
                 sq_norm_diff = (
-                    optax.tree_utils.tree_l1_norm(optax.tree_utils.tree_sub(x, y)) ** 2
+                    optax.tree.norm(optax.tree.sub(x, y), ord=1, squared=True)
                 )
             elif norm == 2:
-                sq_norm_diff = optax.tree_utils.tree_l2_norm(
-                    optax.tree_utils.tree_sub(x, y), squared=True
+                sq_norm_diff = optax.tree.norm(
+                    optax.tree_utils.tree_sub(x, y), ord=2, squared=True
                 )
             else:
                 raise ValueError(f"norm={norm} not supported")
