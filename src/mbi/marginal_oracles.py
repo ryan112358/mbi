@@ -95,10 +95,15 @@ def sum_product(factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum) -> Fac
         return "".join(mapping[a] for a in d.attributes)
 
     formula = ",".join(convert(f.domain) for f in factors) + "->" + convert(dom)
+    optimize = "dp"
+    # When many factors are involved, dp path optimization can be very slow.
+    if len(factors) > 10:
+        optimize = "greedy"
+
     values = einsum_fn(
         formula,
         *[f.values for f in factors],
-        optimize="dp",  # default setting broken in some cases
+        optimize=optimize,  # default setting broken in some cases
         precision=jax.lax.Precision.HIGHEST
     )
     return Factor(dom, values)
