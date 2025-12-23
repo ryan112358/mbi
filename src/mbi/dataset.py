@@ -190,7 +190,7 @@ class Dataset:
             result = self.weights.sum()
             return np.array([result]) if flatten else result
         multi_index = tuple(self.df[a].values for a in self.domain.attrs)
-        linear_indices = np.ravel_multi_index(multi_index, dims, order='F')
+        linear_indices = np.ravel_multi_index(multi_index, dims, order='C')
         counts = np.bincount(linear_indices, minlength=math.prod(dims), weights=self.weights)
         return counts if flatten else counts.reshape(dims)
 
