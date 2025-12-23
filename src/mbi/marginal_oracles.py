@@ -98,7 +98,7 @@ def sum_product(factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum) -> Fac
     values = einsum_fn(
         formula,
         *[f.values for f in factors],
-        optimize="dp",  # default setting broken in some cases
+        optimize="auto",
         precision=jax.lax.Precision.HIGHEST
     )
     return Factor(dom, values)
