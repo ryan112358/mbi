@@ -22,7 +22,7 @@ class MarkovRandomField:
 
     This class encapsulates the components of a Markov Random Field that has been
     learned from data. It stores the learned potentials, the resulting marginal
-    distributions over specified cliques, and the total count (e.g., number of
+    distributions over specified cliques, and the resulting total count (e.g., number of
     records or equivalent sample size) associated with the model.
 
     Attributes:
@@ -61,6 +61,12 @@ class MarkovRandomField:
         cliques = [set(cl) for cl in self.cliques]
         jtree, elimination_order = junction_tree.make_junction_tree(domain, cliques)
 
+        # Optimization Phase 1: Pre-compute marginals on maximal cliques
+        # This avoids repeated JAX compilation/inference in variable_elimination
+        max_cliques = junction_tree.maximal_cliques(jtree)
+        expanded_potentials = self.potentials.expand(max_cliques)
+        beliefs = marginal_oracles.message_passing_stable(expanded_potentials, self.total)
+
         def synthetic_col(counts, total):
             """Generates a synthetic column by sampling or rounding based on counts and total."""
             if total == 0:
@@ -82,7 +88,9 @@ class MarkovRandomField:
         order = elimination_order[::-1]
         col = order[0]
         col_idx = col_to_idx[col]
-        marg = self.project((col,)).datavector(flatten=False)
+
+        marg = beliefs.project((col,)).datavector(flatten=False)
+        marg = np.array(marg)
         data[:, col_idx] = synthetic_col(marg, total)
         used = {col}
 
@@ -93,32 +101,65 @@ class MarkovRandomField:
             used.add(col)
             col_idx = col_to_idx[col]
 
-            # Will this work without having the maximal cliques of the junction tree?
-            marg = self.project(proj + (col,)).datavector(flatten=False)
+            # Use beliefs to get marginal P(proj, col)
+            marg = beliefs.project(proj + (col,)).datavector(flatten=False)
+            marg = np.array(marg)
 
             if len(proj) >= 1:
                 proj_idxs = [col_to_idx[c] for c in proj]
-                # Get unique configurations of the projected columns in the current data
-                # We only care about the columns in 'proj'
                 current_proj_data = data[:, proj_idxs]
 
-                # Find unique rows and the inverse mapping (which row belongs to which unique config)
-                unique_rows, inverse = np.unique(current_proj_data, axis=0, return_inverse=True)
+                unique_rows, inverse, counts = np.unique(
+                    current_proj_data, axis=0, return_inverse=True, return_counts=True
+                )
 
-                # For each unique configuration, sample the new column
-                for i in range(len(unique_rows)):
-                    # Identify rows matching this configuration
-                    mask = (inverse == i)
-                    count = np.sum(mask)
+                # Fetch marginals for all unique configurations
+                indexer = tuple(unique_rows[:, i] for i in range(unique_rows.shape[1]))
+                W = marg[indexer] # Shape (G, col_dim)
 
-                    if count > 0:
-                        # Get the conditional marginal for this configuration
-                        # unique_rows[i] corresponds to the values of 'proj'
-                        # marg is indexed by (val_proj_1, val_proj_2, ..., val_col)
-                        # So marg[tuple(unique_rows[i])] gives the vector for 'col'
-                        idx = tuple(unique_rows[i])
-                        vals = synthetic_col(marg[idx], count)
-                        data[mask, col_idx] = vals
+                row_sums = W.sum(axis=1, keepdims=True)
+                probas = np.divide(W, row_sums, out=np.zeros_like(W, dtype=float), where=row_sums > 0)
+
+                if method == "sample":
+                    # Fallback to loop for sample method
+                    for i in range(len(unique_rows)):
+                         mask = (inverse == i)
+                         count = counts[i]
+                         if count > 0:
+                             p = probas[i]
+                             if p.sum() > 0:
+                                 p = p / p.sum()
+                                 vals = np.random.choice(p.size, count, True, p)
+                                 data[mask, col_idx] = vals
+                else:
+                    # Vectorized round
+                    target_float = probas * counts[:, None]
+                    target_integ = target_float.astype(int)
+                    frac = target_float - target_integ
+                    extra = counts - target_integ.sum(axis=1) # (G,)
+
+                    # Distribute extra
+                    scores = frac + np.random.uniform(0, 1e-6, size=frac.shape)
+                    max_extra = extra.max()
+                    sorted_indices = np.argsort(-scores, axis=1) # Descending
+
+                    for k in range(max_extra):
+                        mask = extra > k
+                        rows = np.where(mask)[0]
+                        cols = sorted_indices[rows, k]
+                        target_integ[rows, cols] += 1
+
+                    # Construct result column
+                    # Shuffle rows within groups using lexsort
+                    perm = np.lexsort((np.random.rand(len(inverse)), inverse))
+
+                    repeats = target_integ.flatten()
+                    values = np.tile(np.arange(W.shape[1]), (W.shape[0], 1)).flatten()
+
+                    generated_col_ordered = np.repeat(values, repeats)
+
+                    data[perm, col_idx] = generated_col_ordered
+
             else:
                 data[:, col_idx] = synthetic_col(marg, total)
 
