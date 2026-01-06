@@ -112,7 +112,9 @@ def make_junction_tree(
     cliques = [tuple(cl) for cl in cliques]
     graph = _make_graph(domain, cliques)
 
-    if elimination_order is None:
+    if elimination_order is None and nx.is_tree(graph):
+        elimination_order = list(nx.dfs_postorder_nodes(graph))
+    elif elimination_order is None:
         elimination_order = greedy_order(domain, cliques, stochastic=False)[0]
     elif isinstance(elimination_order, int):
         orders = [greedy_order(domain, cliques, stochastic=False)] + [
