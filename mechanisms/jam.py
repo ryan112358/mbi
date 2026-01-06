@@ -165,7 +165,7 @@ class JAM(Mechanism):
         rho_used = 0
 
         marg_l2_sensitivity = np.sqrt(2.0)  # L2 sensitivity for counts
-        score_sensitivity_exp_mech = 2.0  # L1 error sensitivity for scores
+        score_sensitivity_exp_mech = 4.0  # L1 error sensitivity for scores
 
         # --- Iterative Selection Loop ---
         t = 0
