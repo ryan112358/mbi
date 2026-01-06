@@ -122,13 +122,32 @@ class Factor:
         """Computes the log-sum-exp along specified attribute axes."""
         return self._aggregate(jax.scipy.special.logsumexp, attrs)
 
-    def project(self, attrs: str | Sequence[str], log: bool = False) -> Factor:
+    def project(self, attrs: str | Sequence[str], log: bool = False) -> "Factor":
         """Computes the marginal distribution by summing/logsumexp'ing out other attributes."""
         if isinstance(attrs, str):
             attrs = (attrs,)
         marginalized = self.domain.marginalize(attrs).attrs
         result = self.logsumexp(marginalized) if log else self.sum(marginalized)
         return result.transpose(attrs)
+
+    def slice(self, evidence: dict[str, int]) -> "Factor":
+        """Slices the factor by fixing specific attribute values.
+
+        Args:
+            evidence: A dictionary mapping attribute names to the values they should be fixed to.
+
+        Returns:
+            A new Factor with the specified attributes fixed and removed from the domain.
+        """
+        slices = [slice(None)] * len(self.domain)
+        for attr, val in evidence.items():
+            if attr in self.domain:
+                axis = self.domain.axes((attr,))[0]
+                slices[axis] = val
+
+        values = self.values[tuple(slices)]
+        domain = self.domain.marginalize([a for a in evidence if a in self.domain])
+        return Factor(domain, values)
 
     def supports(self, attrs: str | Sequence[str]) -> bool:
         return self.domain.supports(attrs)
