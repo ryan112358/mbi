@@ -81,17 +81,6 @@ class Domain:
         shape = tuple(self.config[a] for a in attributes)
         return Domain(attributes, shape)
 
-    def slice(self, evidence: dict[str, int]) -> "Domain":
-        """Return a new Domain with attributes in evidence removed.
-
-        Args:
-            evidence: a dictionary of { attr : value } to slice
-
-        Returns:
-            the sliced Domain object
-        """
-        return self.marginalize([a for a in evidence if a in self.attributes])
-
     def marginalize(self, attrs: Sequence[str]) -> "Domain":
         """Marginalize out some attributes from the domain (opposite of project).
 
