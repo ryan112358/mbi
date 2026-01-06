@@ -332,6 +332,8 @@ def variable_elimination(
     """
     clique = tuple(clique)
     evidence = evidence or {}
+    if set(clique) & set(evidence.keys()):
+        raise ValueError("Evidence attributes cannot be in the query clique.")
     target_clique = tuple(a for a in clique if a not in evidence)
 
     k = len(potentials.cliques)

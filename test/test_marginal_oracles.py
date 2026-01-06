@@ -106,68 +106,15 @@ class TestMarginalOracles(unittest.TestCase):
         evidence_val = 0
         evidence = {evidence_attr: evidence_val}
 
-        # Calculate with evidence
-        ans = marginal_oracles.variable_elimination(theta, query_clique, evidence=evidence)
-
-        # Calculate manually by slicing
-        # Manually slice the potentials
-        # CliqueVector doesn't have a slice method, so we must iterate
-        new_arrays = {}
-        for cl, factor in theta.arrays.items():
-            new_arrays[cl] = factor.slice(evidence)
-
-        # Sliced clique vector might have different domain?
-        # slice removes the attribute from the domain.
-        new_domain = theta.domain.marginalize([evidence_attr])
-
-        # Cliques also change
-        new_cliques = [tuple(a for a in cl if a != evidence_attr) for cl in theta.cliques]
-
-        # Construct sliced CliqueVector
-        # Note: keys of arrays must match cliques list. But slicing changes clique tuples.
-        # We need to reconstruct the CliqueVector properly.
-        # It's tricky because multiple cliques might map to the same sliced clique?
-        # Actually CliqueVector needs unique cliques.
-
-        # A simpler way to verify:
-        # Calculate marginal without evidence, then slice the result.
-        # BUT this is only valid if query_clique contains the evidence variable or we project later?
-        # If query_clique contains evidence_attr, then ans should be sliced.
-        # If query_clique does not contain evidence_attr, it's a bit more complex.
-
-        # Alternative verification as requested:
-        # "Test Case: Compare variable_elimination(..., evidence={'A': 0}) against variable_elimination(...).slice({'A': 0})."
-        # Wait, if I run VE without evidence, I get P(Q).
-        # If I slice P(Q) at A=0, I get P(Q, A=0) (unnormalized) or P(Q|A=0) depending on normalization?
-        # variable_elimination returns unnormalized factor if total is not strictly handled?
-        # The docstring says "sums to the input total".
-
-        # If I pass evidence to VE, I get P(Q \ E | E) * P(E)? No, usually just proportional to joint.
-        # The result of `variable_elimination` with evidence sums to `total`?
-        # Let's check code.
-        # It calls `normalize(total, log=True)`.
-        # So it normalizes the result over the target domain.
-
-        # So VE(evidence={'A':0}) returns a distribution over Q\A that sums to `total`.
-
-        # If I run VE(...) -> P(Q).
-        # Then P(Q).slice({'A':0}) gives P(Q, A=0).
-        # This sums to P(A=0).
-        # If I normalize this sliced result to `total`, it should match VE(evidence={'A':0}).
-
-        # NOTE: This only works if `evidence_attr` is in `query_clique`.
-        # If `evidence_attr` is NOT in `query_clique`, then `VE(...)` marginalizes out `A`.
-        # So `VE(...)` gives P(Q). `A` is gone.
-        # Slicing P(Q) with `A=0` is impossible/meaningless if A is not in Q.
-
-        # So the test case suggested: "Compare variable_elimination(..., evidence={'A': 0}) against variable_elimination(...).slice({'A': 0})."
-        # implies that we should ask for a marginal that INCLUDES 'A', then slice it.
-        # And compare to asking for marginal of 'A' (or superset) with evidence 'A=0'?
-        # No, if I provide evidence A=0, the result will NOT have A.
+        # If evidence_attr is in query_clique, it should raise ValueError now
+        if evidence_attr in query_clique:
+            with self.assertRaises(ValueError):
+                marginal_oracles.variable_elimination(theta, query_clique, evidence=evidence)
+            return
 
         # Correct comparison logic:
         # 1. Compute `res1 = variable_elimination(theta, query_clique, evidence=evidence)`.
-        #    `res1` is over `query_clique - evidence`. It sums to `total`.
+        #    `res1` is over `query_clique` (since we ensured evidence is not in query). It sums to `total`.
 
         # 2. Compute `res2 = variable_elimination(theta, query_clique + evidence_keys)`.
         #    `res2` is over `query_clique + evidence`.
@@ -176,19 +123,22 @@ class TestMarginalOracles(unittest.TestCase):
 
         #    Then `res1` should equal `res2_norm`.
 
-        target_clique = tuple(set(query_clique) | set(evidence.keys()))
+        target_clique_full = tuple(set(query_clique) | set(evidence.keys()))
 
         # Case 1: With evidence parameter
-        # Note: variable_elimination with evidence returns factor over query_clique - evidence.
-        ans1 = marginal_oracles.variable_elimination(theta, target_clique, evidence=evidence)
+        ans1 = marginal_oracles.variable_elimination(theta, query_clique, evidence=evidence)
 
         # Case 2: Without evidence parameter, then slice
-        ans2_full = marginal_oracles.variable_elimination(theta, target_clique)
+        ans2_full = marginal_oracles.variable_elimination(theta, target_clique_full)
         ans2 = ans2_full.slice(evidence)
 
         # Normalize both to same total (default 1) to compare distributions
         ans1 = ans1.normalize()
         ans2 = ans2.normalize()
+
+        # Ensure domains are in the same order before comparison
+        # ans1 determines the expected domain order for the query
+        ans2 = ans2.transpose(ans1.domain.attributes)
 
         # Compare values
         np.testing.assert_allclose(ans1.values, ans2.values, atol=1e-12)
