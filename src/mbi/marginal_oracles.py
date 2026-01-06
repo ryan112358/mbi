@@ -334,7 +334,6 @@ def variable_elimination(
     evidence = evidence or {}
     if set(clique) & set(evidence.keys()):
         raise ValueError("Evidence attributes cannot be in the query clique.")
-    target_clique = tuple(a for a in clique if a not in evidence)
 
     k = len(potentials.cliques)
     psi = dict(zip(range(k), potentials.arrays.values()))
@@ -343,9 +342,9 @@ def variable_elimination(
         for i in list(psi.keys()):
             psi[i] = psi[i].slice(evidence)
 
-    cliques = [psi[i].domain.attributes for i in psi] + [target_clique]
+    cliques = [psi[i].domain.attributes for i in psi] + [clique]
     domain = potentials.active_domain.marginalize(evidence.keys())
-    elim = domain.invert(target_clique)
+    elim = domain.invert(clique)
     elim_order, _ = junction_tree.greedy_order(domain, cliques, elim=elim)
 
     for z in elim_order:
@@ -353,7 +352,7 @@ def variable_elimination(
         psi[k] = sum(psi2).logsumexp([z]).apply_sharding(mesh)
         k += 1
     # this expand covers the case when clique is not in the active domain
-    newdom = potentials.domain.project(target_clique)
+    newdom = potentials.domain.project(clique)
     zero = Factor(Domain([], []), 0)
     return (
         sum(psi.values(), start=zero)
@@ -361,7 +360,7 @@ def variable_elimination(
         .apply_sharding(mesh)
         .normalize(total, log=True)
         .exp()
-        .project(target_clique)
+        .project(clique)
         .apply_sharding(mesh)
     )
 
