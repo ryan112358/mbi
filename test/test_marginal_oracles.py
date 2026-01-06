@@ -101,45 +101,26 @@ class TestMarginalOracles(unittest.TestCase):
     @parameterized.expand(itertools.product(_CLIQUE_SETS, _ALL_CLIQUES))
     def test_variable_elimination_evidence(self, model_cliques, query_clique):
         theta = CliqueVector.random(_DOMAIN, model_cliques)
-        # Select an attribute to be evidence, making sure it's in the domain
         evidence_attr = _DOMAIN.attributes[0]
         evidence_val = 0
         evidence = {evidence_attr: evidence_val}
 
-        # If evidence_attr is in query_clique, it should raise ValueError now
         if evidence_attr in query_clique:
             with self.assertRaises(ValueError):
                 marginal_oracles.variable_elimination(theta, query_clique, evidence=evidence)
             return
 
-        # Correct comparison logic:
-        # 1. Compute `res1 = variable_elimination(theta, query_clique, evidence=evidence)`.
-        #    `res1` is over `query_clique` (since we ensured evidence is not in query). It sums to `total`.
-
-        # 2. Compute `res2 = variable_elimination(theta, query_clique + evidence_keys)`.
-        #    `res2` is over `query_clique + evidence`.
-        #    Slice it: `res2_sliced = res2.slice(evidence)`.
-        #    Normalize it: `res2_norm = res2_sliced.normalize(total)`.
-
-        #    Then `res1` should equal `res2_norm`.
-
         target_clique_full = tuple(set(query_clique) | set(evidence.keys()))
 
-        # Case 1: With evidence parameter
         ans1 = marginal_oracles.variable_elimination(theta, query_clique, evidence=evidence)
 
-        # Case 2: Without evidence parameter, then slice
         ans2_full = marginal_oracles.variable_elimination(theta, target_clique_full)
         ans2 = ans2_full.slice(evidence)
 
-        # Normalize both to same total (default 1) to compare distributions
         ans1 = ans1.normalize()
         ans2 = ans2.normalize()
 
-        # Ensure domains are in the same order before comparison
-        # ans1 determines the expected domain order for the query
         ans2 = ans2.transpose(ans1.domain.attributes)
 
-        # Compare values
         np.testing.assert_allclose(ans1.values, ans2.values, atol=1e-12)
         self.assertEqual(ans1.domain, ans2.domain)
