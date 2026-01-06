@@ -59,9 +59,9 @@ _CLIQUE_SETS = [
     # [],  empty is currently not supported
 ]
 
-_ALL_CLIQUES = itertools.chain.from_iterable(
+_ALL_CLIQUES = list(itertools.chain.from_iterable(
     itertools.combinations(_DOMAIN.attrs, r) for r in range(5)
-)
+))
 
 
 class TestMarginalOracles(unittest.TestCase):
@@ -97,3 +97,30 @@ class TestMarginalOracles(unittest.TestCase):
         theta = CliqueVector.random(_DOMAIN, model_cliques)
         ans = marginal_oracles.variable_elimination(theta, query_clique)
         self.assertEqual(ans.domain.attributes, query_clique)
+
+    @parameterized.expand(itertools.product(_CLIQUE_SETS, _ALL_CLIQUES))
+    def test_variable_elimination_evidence(self, model_cliques, query_clique):
+        theta = CliqueVector.random(_DOMAIN, model_cliques)
+        evidence_attr = _DOMAIN.attributes[0]
+        evidence_val = 0
+        evidence = {evidence_attr: evidence_val}
+
+        if evidence_attr in query_clique:
+            with self.assertRaises(ValueError):
+                marginal_oracles.variable_elimination(theta, query_clique, evidence=evidence)
+            return
+
+        target_clique_full = tuple(set(query_clique) | set(evidence.keys()))
+
+        ans1 = marginal_oracles.variable_elimination(theta, query_clique, evidence=evidence)
+
+        ans2_full = marginal_oracles.variable_elimination(theta, target_clique_full)
+        ans2 = ans2_full.slice(evidence)
+
+        ans1 = ans1.normalize()
+        ans2 = ans2.normalize()
+
+        ans2 = ans2.transpose(ans1.domain.attributes)
+
+        np.testing.assert_allclose(ans1.values, ans2.values, atol=1e-12)
+        self.assertEqual(ans1.domain, ans2.domain)

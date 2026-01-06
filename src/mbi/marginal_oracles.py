@@ -315,6 +315,7 @@ def variable_elimination(
     clique: Clique,
     total: float = 1,
     mesh: jax.sharding.Mesh | None = None,
+    evidence: dict[str, int] | None = None,
 ) -> Factor:
     """Compute an out-of-model/unsupported marginal from the potentials.
 
@@ -323,19 +324,29 @@ def variable_elimination(
         clique: The subset of attributes whose marginal you want.
         total: The normalization factor.
         mesh: The mesh over which the computation should be sharded.
+        evidence: A dictionary mapping attribute names to observed values.
 
     Returns:
         The marginal defined over the domain of the input clique, where
         each entry is non-negative and sums to the input total.
     """
     clique = tuple(clique)
-    cliques = potentials.cliques + [clique]
-    domain = potentials.active_domain
-    elim = domain.invert(clique)
-    elim_order, _ = junction_tree.greedy_order(domain, cliques, elim=elim)
+    evidence = evidence or {}
+    if set(clique) & set(evidence.keys()):
+        raise ValueError("Evidence attributes cannot be in the query clique.")
 
     k = len(potentials.cliques)
     psi = dict(zip(range(k), potentials.arrays.values()))
+
+    if evidence:
+        for i in list(psi.keys()):
+            psi[i] = psi[i].slice(evidence)
+
+    cliques = [psi[i].domain.attributes for i in psi] + [clique]
+    domain = potentials.active_domain.marginalize(evidence.keys())
+    elim = domain.invert(clique)
+    elim_order, _ = junction_tree.greedy_order(domain, cliques, elim=elim)
+
     for z in elim_order:
         psi2 = [psi.pop(i) for i in list(psi.keys()) if z in psi[i].domain]
         psi[k] = sum(psi2).logsumexp([z]).apply_sharding(mesh)
