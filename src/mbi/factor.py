@@ -122,13 +122,56 @@ class Factor:
         """Computes the log-sum-exp along specified attribute axes."""
         return self._aggregate(jax.scipy.special.logsumexp, attrs)
 
-    def project(self, attrs: str | Sequence[str], log: bool = False) -> Factor:
+    def project(self, attrs: str | Sequence[str], log: bool = False) -> "Factor":
         """Computes the marginal distribution by summing/logsumexp'ing out other attributes."""
         if isinstance(attrs, str):
             attrs = (attrs,)
         marginalized = self.domain.marginalize(attrs).attrs
         result = self.logsumexp(marginalized) if log else self.sum(marginalized)
         return result.transpose(attrs)
+
+    def slice(self, evidence: dict[str, int]) -> "Factor":
+        """Slices the factor by fixing specific attribute values.
+
+        Args:
+            evidence: A dictionary mapping attribute names to the values they should be fixed to.
+
+        Returns:
+            A new Factor with the specified attributes fixed and removed from the domain.
+        """
+        values = self.values
+        domain = self.domain
+
+        # Sort evidence keys to ensure consistent order if that matters,
+        # but here we just need to be careful about axis indices shifting.
+        # We can iterate over the domain attributes to find which one to slice,
+        # or just handle the shifting indices carefully.
+
+        # Another approach: iterate over attributes in the domain.
+        # If an attribute is in evidence, slice it.
+        # This way we process from first axis to last, and subsequent axes shift.
+        # But wait, if we remove axis 0, axis 1 becomes axis 0.
+        # So we should process in reverse order of axes so that removal doesn't affect earlier axes?
+        # No, removing axis k affects axis > k.
+        # So reverse order seems safest if we look up indices based on original domain?
+        # But here we are creating a new factor at the end.
+
+        # Easiest correct way: iterate through domain attributes.
+        # Keep track of which axes we keep.
+
+        # Actually, let's just use the iterative approach updating the domain as we go.
+        # It's slightly inefficient to create intermediate domains but very safe.
+        # However, domain creation is cheap.
+
+        sorted_evidence = sorted([k for k in evidence.keys() if k in domain], key=lambda x: domain.axes((x,))[0], reverse=True)
+
+        for attr in sorted_evidence:
+            val = evidence[attr]
+            axis = domain.axes((attr,))[0]
+            values = jnp.take(values, val, axis=axis)
+            domain = domain.marginalize((attr,))
+
+        return Factor(domain, values)
 
     def supports(self, attrs: str | Sequence[str]) -> bool:
         return self.domain.supports(attrs)
