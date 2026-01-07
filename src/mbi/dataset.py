@@ -198,7 +198,7 @@ class Dataset:
         if len(dims) == 0:
             result = self.weights.sum()
             return np.array([result]) if flatten else result
-        multi_index = tuple(self.df[a].values for a in self.domain.attrs)
+        multi_index = tuple(self._data[a] for a in self.domain.attrs)
         linear_indices = np.ravel_multi_index(multi_index, dims, order='C')
         counts = np.bincount(linear_indices, minlength=math.prod(dims), weights=self.weights)
         return counts if flatten else counts.reshape(dims)
@@ -225,7 +225,8 @@ class Dataset:
             if map_array.shape[0] != self.domain[attr]:
                 raise ValueError(f"Mapping size {map_array.shape[0]} does not match domain size {self.domain[attr]} for attribute {attr}")
 
-            new_data[attr] = map_array[self._data[attr]]
+            new_col = map_array[self._data[attr]]
+            new_data[attr] = new_col.astype(np.min_scalar_type(np.max(new_col)))
 
             new_size = int(np.max(map_array) + 1)
             new_domain_config[attr] = new_size
@@ -275,7 +276,7 @@ class Dataset:
             lookup_indices = starts[current_col] + random_offsets
 
             new_col = permutation[lookup_indices]
-            new_data[attr] = new_col
+            new_data[attr] = new_col.astype(np.min_scalar_type(len(map_array) - 1))
 
             new_domain_config[attr] = len(map_array)
 
