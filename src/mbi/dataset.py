@@ -221,14 +221,12 @@ class Dataset:
             if attr not in self.domain:
                 continue
 
-            # Validation
             _validate_mapping(map_array, attr)
             if map_array.shape[0] != self.domain[attr]:
                 raise ValueError(f"Mapping size {map_array.shape[0]} does not match domain size {self.domain[attr]} for attribute {attr}")
 
             new_data[attr] = map_array[self._data[attr]]
 
-            # Update domain
             new_size = int(np.max(map_array) + 1)
             new_domain_config[attr] = new_size
 
@@ -254,46 +252,31 @@ class Dataset:
             if attr not in self.domain:
                 continue
 
-            # Validation (same as compress)
             _validate_mapping(map_array, attr)
 
-            # Efficient Inversion using argsort
-            # Sort the mapping to group indices by their target value
             permutation = np.argsort(map_array)
             sorted_map = map_array[permutation]
 
-            # Count occurrences of each target value
             compressed_domain_size = int(np.max(map_array) + 1)
             counts = np.bincount(sorted_map, minlength=compressed_domain_size)
 
-            # Calculate starting indices for each group in the sorted array
             starts = np.zeros(compressed_domain_size + 1, dtype=int)
             starts[1:] = np.cumsum(counts)
-            starts = starts[:-1] # Remove the last element which is total sum
+            starts = starts[:-1]
 
-            # Transform the data column
             current_col = self._data[attr]
 
-            # For each value in current_col, we need to pick a random index from its group
-            # We generate a random offset for each element
-            # offset[i] ~ Uniform(0, counts[current_col[i]])
-
-            # Check for invalid values in data (values that have no preimage in mapping)
-            # If counts[val] == 0, it's an error if that val appears in data
             col_counts = counts[current_col]
             if np.any(col_counts == 0):
                  raise ValueError(f"Data contains values for {attr} that have no preimage in the mapping.")
 
             random_offsets = np.floor(np.random.rand(self._n) * col_counts).astype(int)
 
-            # Calculate indices into the permutation array
             lookup_indices = starts[current_col] + random_offsets
 
-            # Retrieve original values
             new_col = permutation[lookup_indices]
             new_data[attr] = new_col
 
-            # Update domain to original size
             new_domain_config[attr] = len(map_array)
 
         new_domain = Domain(new_domain_config.keys(), new_domain_config.values())
