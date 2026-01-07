@@ -10,8 +10,6 @@ class TestVariableEliminationVectorEvidence(unittest.TestCase):
         dom = Domain(['X', 'Y'], [2, 2])
         # Values X (row), Y (col)
         # [[1, 2], [3, 4]] (as log inputs)
-        # X=0 -> [1, 2]
-        # X=1 -> [3, 4]
 
         linear_values = jnp.array([[1.0, 2.0], [3.0, 4.0]])
         f = Factor(dom, jnp.log(linear_values))
@@ -83,6 +81,28 @@ class TestVariableEliminationVectorEvidence(unittest.TestCase):
         ])
 
         np.testing.assert_array_almost_equal(res.values, expected)
+
+    def test_reproduction_case_consistency(self):
+        # Verify that marginal1 = marginal2 / sum(marginal2)
+        dom = Domain(['a','b','c','d'], [5, 10, 15, 20])
+        np.random.seed(42)
+        cliques = [('a', 'b'), ('b', 'c'), ('c', 'd')]
+        potentials = CliqueVector.random(dom, cliques)
+        evidence = {'a': np.array([0, 2, 4]) }
+
+        marginal1 = variable_elimination(potentials, ('c',), evidence=evidence)
+        marginal2 = variable_elimination(potentials, ('a', 'c',))
+
+        # Check index 2 (a=2). In marginal1, this is index 1.
+        val1 = marginal1.values[1]
+        val2 = marginal2.values[2]
+
+        # val1 should be normalized sum=1.
+        # val2 is P(c, a=2). Sum is P(a=2).
+        # So val1 = val2 / sum(val2).
+
+        expected = val2 / val2.sum()
+        np.testing.assert_array_almost_equal(val1, expected)
 
 if __name__ == '__main__':
     unittest.main()
