@@ -80,39 +80,22 @@ def run_benchmark():
     logger.info("Starting Benchmark...")
     for N in N_values:
         start_time = time.time()
-        # Ensure we use N in the model
-        model_N = mbi.MarkovRandomField(potentials=potentials, marginals=marginals, total=N)
-        synthetic_data = model_N.synthetic_data(rows=N)
+        synthetic = model.synthetic_data(rows=N)
         end_time = time.time()
         elapsed = end_time - start_time
         logger.info(f"N={N}: {elapsed:.4f} seconds")
         results.append((N, elapsed))
 
-    # Accuracy Check
-    logger.info("Running Accuracy Check (N=10000)...")
-    N = 10000
-    model_N = mbi.MarkovRandomField(potentials=potentials, marginals=marginals, total=N)
-    synthetic = model_N.synthetic_data(rows=N, method="round")
-
-    max_error = 0
-    errors = []
+    logger.info(f"Running Accuracy Check (N={N})...")
 
     for cl in cliques:
-        # Project synthetic data
         syn_factor = synthetic.project(cl)
         syn_counts = syn_factor.datavector(flatten=True)
 
-        # Expected counts
-        exp_factor = marginals.project(cl).normalize(total=N)
-        exp_counts = exp_factor.datavector(flatten=True)
+        exp_counts = marginals.project(cl).datavector() * N
 
         diff = np.abs(syn_counts - exp_counts)
-        current_max = np.max(diff)
-        errors.append(current_max)
-        if current_max > max_error:
-            max_error = current_max
-
-    logger.info(f"Maximum count error across all cliques: {max_error}")
+        print(cl, np.max(diff))
 
     return jit_time, results
 
