@@ -1,10 +1,10 @@
 """
 Benchmark Results:
 (run on Linux 6.8.0, x86_64, Python 3.12.12, JAX 0.8.2, CPU)
-N=1000: 28.9653 seconds
-N=10000: 1.8300 seconds
-N=100000: 5.0538 seconds
-N=1000000: 46.8701 seconds
+N=1000: 68.5843 seconds
+N=10000: 2.2505 seconds
+N=100000: 6.3800 seconds
+N=1000000: 51.6821 seconds
 """
 
 import sys
@@ -16,12 +16,10 @@ import logging
 import itertools
 import numpy as np
 
-# Add src to python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 import mbi
 
-# Setup logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger()
 
@@ -38,7 +36,6 @@ def get_system_info():
     except ImportError:
         info.append("RAM: (psutil not available)")
 
-    # Check device
     try:
         devices = jax.devices()
         info.append(f"JAX Devices: {devices}")
@@ -55,7 +52,6 @@ def run_benchmark():
     cliques = list(itertools.combinations(domain.attrs, 2))
     logger.info(f"Number of cliques (pairs): {len(cliques)}")
 
-    # Values of N to benchmark
     N_values = [1000, 10000, 100000, 1000000]
 
     results = []
@@ -63,34 +59,12 @@ def run_benchmark():
     logger.info("Starting Benchmark...")
     for N in N_values:
         logger.info(f"Generating data for N={N}...")
-        # Generate data outside the timing block
         data = mbi.Dataset.synthetic(domain, N=N)
-
-        # Force JAX compilation if involved, though Dataset is mostly numpy.
-        # But CliqueVector uses JAX.
-        # Wait, CliqueVector.from_projectable calls data.project -> Factor init -> data.datavector.
-        # data.datavector is numpy based (bincount).
-        # Factor wraps numpy array into JAX array eventually?
-        # Factor(..., values) -> self.values = jnp.array(values)
-        # So there is some JAX array creation.
 
         logger.info(f"Measuring CliqueVector.from_projectable for N={N}...")
         start_time = time.time()
-        mbi.CliqueVector.from_projectable(data, cliques)
-        # We might want to block until computation is done if JAX is async?
-        # Creating JAX arrays from numpy is usually sync or fast enough to trigger sync?
-        # JAX arrays are created in Factor.__init__.
-        # To be safe, we can inspect the result, but typically for this kind of CPU bound numpy work it's fine.
-        # If JAX is used, we should block.
-        # Let's verify if we need `jax.block_until_ready()`.
-        # CliqueVector.from_projectable returns a CliqueVector which has `arrays` (dict of Factors).
-        # Factor has `values` which is a JAX array.
-        # So yes, JAX is involved.
-        # However, `Dataset.project` -> `Factor` -> `jnp.array(numpy_array)`.
-        # The heavy lifting is `Dataset.datavector` which is numpy `bincount`.
-        # Converting to JAX array is just memory copy.
-        # So timing python time is mostly correct for the numpy part.
-
+        cv = mbi.CliqueVector.from_projectable(data, cliques)
+        jax.tree.map(lambda x: x.block_until_ready(), cv)
         end_time = time.time()
         elapsed = end_time - start_time
         logger.info(f"N={N}: {elapsed:.4f} seconds")
