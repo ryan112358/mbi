@@ -372,15 +372,21 @@ def variable_elimination(
         newdom = potentials.domain.project(clique)
 
     zero = Factor(Domain([], []), 0)
-    return (
-        sum(psi.values(), start=zero)
-        .expand(newdom)
-        .apply_sharding(mesh)
-        .normalize(total, log=True)
-        .exp()
-        .project(clique)
-        .apply_sharding(mesh)
-    )
+    unnormalized = sum(psi.values(), start=zero).expand(newdom).apply_sharding(mesh)
+
+    if has_vector_evidence:
+        sum_attrs = [a for a in unnormalized.domain.attributes if a != evidence_attr]
+        log_z = unnormalized.logsumexp(sum_attrs)
+        normalized = unnormalized + jnp.log(total) - log_z
+        return normalized.exp().project(clique).apply_sharding(mesh)
+    else:
+        return (
+            unnormalized
+            .normalize(total, log=True)
+            .exp()
+            .project(clique)
+            .apply_sharding(mesh)
+        )
 
 
 def bulk_variable_elimination(

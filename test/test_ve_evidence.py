@@ -9,13 +9,9 @@ class TestVariableEliminationVectorEvidence(unittest.TestCase):
     def test_vector_evidence_single_factor(self):
         dom = Domain(['X', 'Y'], [2, 2])
         # Values X (row), Y (col)
-        # [[1, 2], [3, 4]]
+        # [[1, 2], [3, 4]] (as log inputs)
         # X=0 -> [1, 2]
         # X=1 -> [3, 4]
-        # Wait. In test I used [[1, 2], [3, 4]].
-        # And evidence Y=[0, 1, 0].
-        # Y=0: X=0(1), X=1(3). Col 0.
-        # Y=1: X=0(2), X=1(4). Col 1.
 
         linear_values = jnp.array([[1.0, 2.0], [3.0, 4.0]])
         f = Factor(dom, jnp.log(linear_values))
@@ -24,15 +20,15 @@ class TestVariableEliminationVectorEvidence(unittest.TestCase):
 
         evidence = {'Y': np.array([0, 1, 0])}
 
-        # Expected:
-        # Row 0 (Y=0): [1, 3] -> 1/14, 3/14
-        # Row 1 (Y=1): [2, 4] -> 2/14, 4/14
-        # Row 2 (Y=0): [1, 3] -> 1/14, 3/14
+        # Expected (Conditional Normalization per slice):
+        # Row 0 (Y=0): [1, 3]. Sum 4. Norm: [0.25, 0.75]
+        # Row 1 (Y=1): [2, 4]. Sum 6. Norm: [1/3, 2/3]
+        # Row 2 (Y=0): [1, 3]. Sum 4. Norm: [0.25, 0.75]
 
         expected = np.array([
-            [1.0/14.0, 3.0/14.0],
-            [2.0/14.0, 4.0/14.0],
-            [1.0/14.0, 3.0/14.0]
+            [0.25, 0.75],
+            [1.0/3.0, 2.0/3.0],
+            [0.25, 0.75]
         ])
 
         res = variable_elimination(potentials, ('X',), evidence=evidence)
@@ -54,14 +50,13 @@ class TestVariableEliminationVectorEvidence(unittest.TestCase):
         evidence = {'Y': np.array([0, 1])}
 
         # Y=0: f1 col 0 [1, 3]. f2 row 0 [5, 6] -> sum 11.
-        # Joint [1*11, 3*11] = [11, 33]. Sum 44.
+        # Joint [1*11, 3*11] = [11, 33]. Sum 44. Norm: [0.25, 0.75]
         # Y=1: f1 col 1 [2, 4]. f2 row 1 [7, 8] -> sum 15.
-        # Joint [2*15, 4*15] = [30, 60]. Sum 90.
-        # Total 134.
+        # Joint [2*15, 4*15] = [30, 60]. Sum 90. Norm: [1/3, 2/3]
 
         expected = np.array([
-            [11.0/134.0, 33.0/134.0],
-            [30.0/134.0, 60.0/134.0]
+            [0.25, 0.75],
+            [1.0/3.0, 2.0/3.0]
         ])
         res = variable_elimination(potentials, ('X',), evidence=evidence)
         np.testing.assert_array_almost_equal(res.values, expected)
@@ -77,15 +72,14 @@ class TestVariableEliminationVectorEvidence(unittest.TestCase):
 
         evidence = {'Y': np.array([0, 1]), 'Z': np.array([0, 1])}
 
-        # Y=0, Z=0 -> X values at [:, 0, 0]. -> [1, 5]. Sum 6.
-        # Y=1, Z=1 -> X values at [:, 1, 1]. -> [4, 8]. Sum 12.
-        # Total 18.
+        # Y=0, Z=0 -> X values at [:, 0, 0]. -> [1, 5]. Sum 6. Norm: [1/6, 5/6]
+        # Y=1, Z=1 -> X values at [:, 1, 1]. -> [4, 8]. Sum 12. Norm: [1/3, 2/3]
 
         res = variable_elimination(potentials, ('X',), evidence=evidence)
 
         expected = np.array([
-            [1.0/18.0, 5.0/18.0],
-            [4.0/18.0, 8.0/18.0]
+            [1.0/6.0, 5.0/6.0],
+            [1.0/3.0, 2.0/3.0]
         ])
 
         np.testing.assert_array_almost_equal(res.values, expected)
