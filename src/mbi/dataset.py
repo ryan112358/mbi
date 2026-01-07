@@ -48,6 +48,15 @@ def _validate_data(data: dict[str, np.ndarray], domain: Domain):
             raise ValueError("Expected data to have same size for each record.")
 
 
+def _validate_mapping(map_array: np.ndarray, attr: str):
+    if map_array.ndim != 1:
+        raise ValueError(f"Mapping for {attr} must be 1D array")
+    if not np.issubdtype(map_array.dtype, np.integer):
+        raise ValueError(f"Mapping for {attr} must be integers")
+    if np.any(map_array < 0):
+        raise ValueError(f"Mapping for {attr} must be non-negative")
+
+
 class Dataset:
     def __init__(
         self,
@@ -213,14 +222,9 @@ class Dataset:
                 continue
 
             # Validation
-            if map_array.ndim != 1:
-                raise ValueError(f"Mapping for {attr} must be 1D array")
+            _validate_mapping(map_array, attr)
             if map_array.shape[0] != self.domain[attr]:
                 raise ValueError(f"Mapping size {map_array.shape[0]} does not match domain size {self.domain[attr]} for attribute {attr}")
-            if not np.issubdtype(map_array.dtype, np.integer):
-                raise ValueError(f"Mapping for {attr} must be integers")
-            if np.any(map_array < 0):
-                raise ValueError(f"Mapping for {attr} must be non-negative")
 
             new_data[attr] = map_array[self._data[attr]]
 
@@ -251,16 +255,7 @@ class Dataset:
                 continue
 
             # Validation (same as compress)
-            if map_array.ndim != 1:
-                raise ValueError(f"Mapping for {attr} must be 1D array")
-            # For decompress, map_array length is the target domain size (original domain size)
-            # The current domain size should match the range of map_array (roughly)
-            # But strictly, we are restoring TO the domain implied by len(map_array).
-
-            if not np.issubdtype(map_array.dtype, np.integer):
-                raise ValueError(f"Mapping for {attr} must be integers")
-            if np.any(map_array < 0):
-                raise ValueError(f"Mapping for {attr} must be non-negative")
+            _validate_mapping(map_array, attr)
 
             # Efficient Inversion using argsort
             # Sort the mapping to group indices by their target value
