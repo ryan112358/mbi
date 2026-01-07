@@ -222,11 +222,7 @@ class Dataset:
             if np.any(map_array < 0):
                 raise ValueError(f"Mapping for {attr} must be non-negative")
 
-            # Update data
-            # Use the mapping to transform the column
-            original_col = self._data[attr]
-            new_col = map_array[original_col]
-            new_data[attr] = new_col
+            new_data[attr] = map_array[self._data[attr]]
 
             # Update domain
             new_size = int(np.max(map_array) + 1)
