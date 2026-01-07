@@ -194,6 +194,120 @@ class Dataset:
         counts = np.bincount(linear_indices, minlength=math.prod(dims), weights=self.weights)
         return counts if flatten else counts.reshape(dims)
 
+    def compress(self, mapping: dict[str, np.ndarray]) -> Dataset:
+        """
+        Compresses the dataset by mapping domain elements to a smaller domain.
+
+        Args:
+            mapping: A dictionary where keys are attribute names and values are 1D arrays.
+                     mapping[attr][i] gives the new value for original value i.
+
+        Returns:
+            A new Dataset with transformed values and updated domain.
+        """
+        new_data = dict(self._data)
+        new_domain_config = self.domain.config.copy()
+
+        for attr, map_array in mapping.items():
+            if attr not in self.domain:
+                continue
+
+            # Validation
+            if map_array.ndim != 1:
+                raise ValueError(f"Mapping for {attr} must be 1D array")
+            if map_array.shape[0] != self.domain[attr]:
+                raise ValueError(f"Mapping size {map_array.shape[0]} does not match domain size {self.domain[attr]} for attribute {attr}")
+            if not np.issubdtype(map_array.dtype, np.integer):
+                raise ValueError(f"Mapping for {attr} must be integers")
+            if np.any(map_array < 0):
+                raise ValueError(f"Mapping for {attr} must be non-negative")
+
+            # Update data
+            # Use the mapping to transform the column
+            original_col = self._data[attr]
+            new_col = map_array[original_col]
+            new_data[attr] = new_col
+
+            # Update domain
+            new_size = int(np.max(map_array) + 1)
+            new_domain_config[attr] = new_size
+
+        new_domain = Domain(new_domain_config.keys(), new_domain_config.values())
+        return Dataset(new_data, new_domain, self.weights)
+
+    def decompress(self, mapping: dict[str, np.ndarray]) -> Dataset:
+        """
+        Decompresses the dataset by reversing the mapping.
+        Since the mapping is surjective, the reverse mapping is one-to-many.
+        We sample uniformly from the possible original values.
+
+        Args:
+            mapping: The same mapping dictionary used for compression.
+
+        Returns:
+            A new Dataset with restored domain size and sampled values.
+        """
+        new_data = dict(self._data)
+        new_domain_config = self.domain.config.copy()
+
+        for attr, map_array in mapping.items():
+            if attr not in self.domain:
+                continue
+
+            # Validation (same as compress)
+            if map_array.ndim != 1:
+                raise ValueError(f"Mapping for {attr} must be 1D array")
+            # For decompress, map_array length is the target domain size (original domain size)
+            # The current domain size should match the range of map_array (roughly)
+            # But strictly, we are restoring TO the domain implied by len(map_array).
+
+            if not np.issubdtype(map_array.dtype, np.integer):
+                raise ValueError(f"Mapping for {attr} must be integers")
+            if np.any(map_array < 0):
+                raise ValueError(f"Mapping for {attr} must be non-negative")
+
+            # Efficient Inversion using argsort
+            # Sort the mapping to group indices by their target value
+            permutation = np.argsort(map_array)
+            sorted_map = map_array[permutation]
+
+            # Count occurrences of each target value
+            compressed_domain_size = int(np.max(map_array) + 1)
+            counts = np.bincount(sorted_map, minlength=compressed_domain_size)
+
+            # Calculate starting indices for each group in the sorted array
+            starts = np.zeros(compressed_domain_size + 1, dtype=int)
+            starts[1:] = np.cumsum(counts)
+            starts = starts[:-1] # Remove the last element which is total sum
+
+            # Transform the data column
+            current_col = self._data[attr]
+
+            # For each value in current_col, we need to pick a random index from its group
+            # We generate a random offset for each element
+            # offset[i] ~ Uniform(0, counts[current_col[i]])
+
+            # Check for invalid values in data (values that have no preimage in mapping)
+            # If counts[val] == 0, it's an error if that val appears in data
+            col_counts = counts[current_col]
+            if np.any(col_counts == 0):
+                 raise ValueError(f"Data contains values for {attr} that have no preimage in the mapping.")
+
+            random_offsets = np.floor(np.random.rand(self._n) * col_counts).astype(int)
+
+            # Calculate indices into the permutation array
+            lookup_indices = starts[current_col] + random_offsets
+
+            # Retrieve original values
+            new_col = permutation[lookup_indices]
+            new_data[attr] = new_col
+
+            # Update domain to original size
+            new_domain_config[attr] = len(map_array)
+
+        new_domain = Domain(new_domain_config.keys(), new_domain_config.values())
+        return Dataset(new_data, new_domain, self.weights)
+
 
 @functools.partial(
     jax.tree_util.register_dataclass,
