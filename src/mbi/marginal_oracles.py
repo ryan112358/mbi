@@ -342,8 +342,19 @@ def variable_elimination(
         for i in list(psi.keys()):
             psi[i] = psi[i].slice(evidence)
 
+    evidence_attr = '_mbi_evidence'
+    has_vector_evidence = any(evidence_attr in psi[i].domain for i in psi)
+
+    if has_vector_evidence:
+        ev_size = next(psi[i].domain[evidence_attr] for i in psi if evidence_attr in psi[i].domain)
+        extra = Domain([evidence_attr], [ev_size])
+        domain = potentials.active_domain.marginalize(evidence.keys()).merge(extra)
+        if evidence_attr not in clique:
+            clique = (evidence_attr,) + clique
+    else:
+        domain = potentials.active_domain.marginalize(evidence.keys())
+
     cliques = [psi[i].domain.attributes for i in psi] + [clique]
-    domain = potentials.active_domain.marginalize(evidence.keys())
     elim = domain.invert(clique)
     elim_order, _ = junction_tree.greedy_order(domain, cliques, elim=elim)
 
@@ -352,17 +363,30 @@ def variable_elimination(
         psi[k] = sum(psi2).logsumexp([z]).apply_sharding(mesh)
         k += 1
     # this expand covers the case when clique is not in the active domain
-    newdom = potentials.domain.project(clique)
+    if has_vector_evidence:
+        vars_in_model = [v for v in clique if v != evidence_attr]
+        base_dom = potentials.domain.project(vars_in_model)
+        ev_size = domain[evidence_attr]
+        newdom = base_dom.merge(Domain([evidence_attr], [ev_size])).project(clique)
+    else:
+        newdom = potentials.domain.project(clique)
+
     zero = Factor(Domain([], []), 0)
-    return (
-        sum(psi.values(), start=zero)
-        .expand(newdom)
-        .apply_sharding(mesh)
-        .normalize(total, log=True)
-        .exp()
-        .project(clique)
-        .apply_sharding(mesh)
-    )
+    unnormalized = sum(psi.values(), start=zero).expand(newdom).apply_sharding(mesh)
+
+    if has_vector_evidence:
+        sum_attrs = [a for a in unnormalized.domain.attributes if a != evidence_attr]
+        log_z = unnormalized.logsumexp(sum_attrs)
+        normalized = unnormalized + jnp.log(total) - log_z
+        return normalized.exp().project(clique).apply_sharding(mesh)
+    else:
+        return (
+            unnormalized
+            .normalize(total, log=True)
+            .exp()
+            .project(clique)
+            .apply_sharding(mesh)
+        )
 
 
 def bulk_variable_elimination(
