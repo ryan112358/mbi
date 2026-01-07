@@ -92,25 +92,48 @@ class MarkovRandomField:
             proj = tuple(relevant)
             used.add(col)
 
-            # Will this work without having the maximal cliques of the junction tree?
-            marg = self.project(proj + (col,)).datavector(flatten=False)
-            data[col] = np.zeros(total, dtype=np.min_scalar_type(self.domain[col]))
-
             if len(proj) >= 1:
                 current_proj_data = np.stack(tuple(data[col] for col in proj), -1)
 
-                unique_rows, inverse = np.unique(current_proj_data, axis=0, return_inverse=True)
+                # Get the joint marginal for proj + col
+                # Ensure correct ordering: proj attributes, then col
+                # Note: self.project returns factor with attributes in the order requested.
+                marg = self.project(proj + (col,)).datavector(flatten=False)
 
-                for i in range(len(unique_rows)):
-                    mask = (inverse == i)
-                    count = np.sum(mask)
+                # Precompute conditional CDFs
+                # marg has shape (d_p1, d_p2, ..., d_col)
+                # Sum over the last axis (col) to get marginal of parents
+                marg_parents = marg.sum(axis=-1, keepdims=True)
 
-                    if count > 0:
-                        # Get the conditional marginal for this configuration
-                        idx = tuple(unique_rows[i])
-                        vals = synthetic_col(marg[idx], count)
-                        data[col][mask] = vals
+                # Compute conditional probabilities: P(col | parents)
+                # Handle division by zero where marginal of parents is 0
+                cond_probs = np.divide(marg, marg_parents, out=np.zeros_like(marg), where=marg_parents!=0)
+
+                # Compute CDFs along the last axis
+                cond_cdfs = cond_probs.cumsum(axis=-1)
+
+                # Verify that the last element of CDF is 1 (or close to it)
+                # This is naturally true due to normalization.
+
+                # Select CDFs corresponding to the parent configurations of the current rows
+                # indices is a tuple of arrays, one for each dimension of proj
+                indices = tuple(current_proj_data.T)
+
+                # vectorized lookup of CDFs for each row
+                # rows_cdfs has shape (N, d_col)
+                rows_cdfs = cond_cdfs[indices]
+
+                # Sample uniformly
+                u = np.random.rand(total, 1)
+
+                # Find indices where CDF > u
+                # argmax returns the first index where condition is true
+                # This corresponds to inverse CDF sampling
+                choices = (rows_cdfs > u).argmax(axis=1)
+
+                data[col] = choices.astype(np.min_scalar_type(self.domain[col]))
             else:
+                marg = self.project((col,)).datavector(flatten=False)
                 data[col] = synthetic_col(marg, total)
 
         return Dataset(data, domain)

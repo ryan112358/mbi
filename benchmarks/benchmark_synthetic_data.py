@@ -1,13 +1,13 @@
 """
 Benchmark Results (run on Linux 6.8.0, x86_64, Python 3.12.12, JAX 0.8.2, CPU):
 
-JIT Compilation Time (N=1): 16.0934 seconds
+JIT Compilation Time (N=1): 10.1889 seconds
 
 Generation Times:
-N=1000: 1.7285 seconds
-N=10000: 2.4065 seconds
-N=100000: 9.2099 seconds
-N=1000000: 91.3300 seconds
+N=1000: 0.0886 seconds
+N=10000: 0.1941 seconds
+N=100000: 1.2308 seconds
+N=1000000: 12.4818 seconds
 """
 
 import sys
