@@ -226,7 +226,7 @@ class Dataset:
                 raise ValueError(f"Mapping size {map_array.shape[0]} does not match domain size {self.domain[attr]} for attribute {attr}")
 
             new_col = map_array[self._data[attr]]
-            new_data[attr] = new_col.astype(np.min_scalar_type(np.max(new_col)))
+            new_data[attr] = new_col.astype(np.min_scalar_type(np.max(map_array)))
 
             new_size = int(np.max(map_array) + 1)
             new_domain_config[attr] = new_size
@@ -271,7 +271,7 @@ class Dataset:
             if np.any(col_counts == 0):
                  raise ValueError(f"Data contains values for {attr} that have no preimage in the mapping.")
 
-            random_offsets = np.floor(np.random.rand(self._n) * col_counts).astype(int)
+            random_offsets = np.floor(np.random.rand(len(current_col)) * col_counts).astype(int)
 
             lookup_indices = starts[current_col] + random_offsets
 

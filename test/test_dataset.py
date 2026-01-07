@@ -102,9 +102,6 @@ class TestDatasetDeterministic(unittest.TestCase):
         np.testing.assert_array_equal(proj.datavector(), expected)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 class TestDatasetCompression(unittest.TestCase):
     def test_compress(self):
         import numpy as np
@@ -213,3 +210,33 @@ class TestDatasetCompression(unittest.TestCase):
         # Non-integer
         with self.assertRaises(ValueError):
             dataset.compress({'a': np.array([0, 1.5, 1])})
+
+class TestDatasetEmpty(unittest.TestCase):
+    def test_compress_empty(self):
+        import numpy as np
+        domain = Domain(['a'], [3])
+        # Empty data
+        data = {'a': np.array([], dtype=int)}
+        dataset = Dataset(data, domain, weights=np.array([]))
+
+        mapping = {'a': np.array([0, 1, 1])}
+
+        # Should not raise
+        compressed = dataset.compress(mapping)
+        self.assertEqual(compressed.domain['a'], 2)
+        self.assertEqual(len(compressed.to_dict()['a']), 0)
+
+    def test_decompress_empty(self):
+        import numpy as np
+        domain = Domain(['a'], [2])
+        data = {'a': np.array([], dtype=int)}
+        dataset = Dataset(data, domain, weights=np.array([]))
+
+        mapping = {'a': np.array([0, 1, 1])}
+
+        decompressed = dataset.decompress(mapping)
+        self.assertEqual(decompressed.domain['a'], 3)
+        self.assertEqual(len(decompressed.to_dict()['a']), 0)
+
+if __name__ == "__main__":
+    unittest.main()
