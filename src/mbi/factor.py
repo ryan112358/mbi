@@ -130,8 +130,12 @@ class Factor:
         result = self.logsumexp(marginalized) if log else self.sum(marginalized)
         return result.transpose(attrs)
 
-    def slice(self, evidence: dict[str, int]) -> "Factor":
+    def slice(self, evidence: dict[str, int | np.ndarray | jax.Array]) -> "Factor":
         """Slices the factor by fixing specific attribute values.
+
+        If at least one attribute has numpy-valued evidence, the returned factor will
+        have a new leading dimension called '_mbi_evidence' corresponding to the
+        number of evidence points.
 
         Args:
             evidence: A dictionary mapping attribute names to the values they should be fixed to.
@@ -140,13 +144,18 @@ class Factor:
             A new Factor with the specified attributes fixed and removed from the domain.
         """
         slices = [slice(None)] * len(self.domain)
-        for attr, val in evidence.items():
-            if attr in self.domain:
-                axis = self.domain.axes((attr,))[0]
-                slices[axis] = val
+        relevant = [e for e in evidence if e in self.domain.attrs]
+        for attr in relevant:
+            axis = self.domain.axes((attr,))[0]
+            slices[axis] = evidence[attr]
 
         values = self.values[tuple(slices)]
-        domain = self.domain.marginalize([a for a in evidence if a in self.domain])
+        domain = self.domain.marginalize(relevant)
+
+        if values.ndim == len(self.domain) - len(relevant) + 1:
+            new = Domain(['_mbi_evidence'], [values.shape[0]])
+            domain = new.merge(domain)
+
         return Factor(domain, values)
 
     def supports(self, attrs: str | Sequence[str]) -> bool:
