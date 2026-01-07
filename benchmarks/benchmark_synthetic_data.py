@@ -1,13 +1,13 @@
 """
 Benchmark Results (run on Linux 6.8.0, x86_64, Python 3.12.12, JAX 0.8.2, CPU):
 
-JIT Compilation Time (N=1): 10.1889 seconds
+JIT Compilation Time (N=1): 11.6247 seconds
 
 Generation Times:
-N=1000: 0.0886 seconds
-N=10000: 0.1941 seconds
-N=100000: 1.2308 seconds
-N=1000000: 12.4818 seconds
+N=1000: 0.1692 seconds
+N=10000: 0.8960 seconds
+N=100000: 8.5813 seconds
+N=1000000: 99.5295 seconds
 """
 
 import sys
@@ -16,6 +16,7 @@ import time
 import platform
 import jax
 import logging
+import numpy as np
 
 # Add src to python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
@@ -55,8 +56,8 @@ def run_benchmark():
 
     domain = mbi.Domain.fromdict(domain_dict)
 
-    logger.info("Initializing Potentials...")
-    potentials = mbi.CliqueVector.zeros(domain, cliques)
+    logger.info("Initializing Potentials (Random)...")
+    potentials = mbi.CliqueVector.random(domain, cliques)
 
     logger.info("Calculating Marginals...")
     marginals = mbi.marginal_oracles.message_passing_stable(potentials)
@@ -79,11 +80,39 @@ def run_benchmark():
     logger.info("Starting Benchmark...")
     for N in N_values:
         start_time = time.time()
-        model.synthetic_data(rows=N)
+        # Ensure we use N in the model
+        model_N = mbi.MarkovRandomField(potentials=potentials, marginals=marginals, total=N)
+        synthetic_data = model_N.synthetic_data(rows=N)
         end_time = time.time()
         elapsed = end_time - start_time
         logger.info(f"N={N}: {elapsed:.4f} seconds")
         results.append((N, elapsed))
+
+    # Accuracy Check
+    logger.info("Running Accuracy Check (N=10000)...")
+    N = 10000
+    model_N = mbi.MarkovRandomField(potentials=potentials, marginals=marginals, total=N)
+    synthetic = model_N.synthetic_data(rows=N, method="round")
+
+    max_error = 0
+    errors = []
+
+    for cl in cliques:
+        # Project synthetic data
+        syn_factor = synthetic.project(cl)
+        syn_counts = syn_factor.datavector(flatten=True)
+
+        # Expected counts
+        exp_factor = marginals.project(cl).normalize(total=N)
+        exp_counts = exp_factor.datavector(flatten=True)
+
+        diff = np.abs(syn_counts - exp_counts)
+        current_max = np.max(diff)
+        errors.append(current_max)
+        if current_max > max_error:
+            max_error = current_max
+
+    logger.info(f"Maximum count error across all cliques: {max_error}")
 
     return jit_time, results
 

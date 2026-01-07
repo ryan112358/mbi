@@ -86,7 +86,6 @@ class MarkovRandomField:
         used = {col}
 
         for col in order[1:]:
-            # we only care about relevant columns for generating col
             relevant = [cl for cl in cliques if col in cl]
             relevant = used.intersection(set().union(*relevant))
             proj = tuple(relevant)
@@ -95,43 +94,40 @@ class MarkovRandomField:
             if len(proj) >= 1:
                 current_proj_data = np.stack(tuple(data[col] for col in proj), -1)
 
-                # Get the joint marginal for proj + col
-                # Ensure correct ordering: proj attributes, then col
-                # Note: self.project returns factor with attributes in the order requested.
                 marg = self.project(proj + (col,)).datavector(flatten=False)
 
-                # Precompute conditional CDFs
-                # marg has shape (d_p1, d_p2, ..., d_col)
-                # Sum over the last axis (col) to get marginal of parents
                 marg_parents = marg.sum(axis=-1, keepdims=True)
-
-                # Compute conditional probabilities: P(col | parents)
-                # Handle division by zero where marginal of parents is 0
                 cond_probs = np.divide(marg, marg_parents, out=np.zeros_like(marg), where=marg_parents!=0)
-
-                # Compute CDFs along the last axis
                 cond_cdfs = cond_probs.cumsum(axis=-1)
 
-                # Verify that the last element of CDF is 1 (or close to it)
-                # This is naturally true due to normalization.
-
-                # Select CDFs corresponding to the parent configurations of the current rows
-                # indices is a tuple of arrays, one for each dimension of proj
                 indices = tuple(current_proj_data.T)
-
-                # vectorized lookup of CDFs for each row
-                # rows_cdfs has shape (N, d_col)
                 rows_cdfs = cond_cdfs[indices]
 
-                # Sample uniformly
-                u = np.random.rand(total, 1)
+                if method == "sample":
+                    u = np.random.rand(total, 1)
+                else:
+                    _, inverse, counts = np.unique(current_proj_data, axis=0, return_inverse=True, return_counts=True)
 
-                # Find indices where CDF > u
-                # argmax returns the first index where condition is true
-                # This corresponds to inverse CDF sampling
+                    perm = np.argsort(inverse, kind='stable')
+                    inverse_sorted = inverse[perm]
+
+                    group_starts = np.zeros(len(counts), dtype=int)
+                    np.cumsum(counts[:-1], out=group_starts[1:])
+
+                    sorted_indices = np.arange(total)
+
+                    ranks_sorted = sorted_indices - group_starts[inverse_sorted]
+
+                    ranks = np.empty(total, dtype=int)
+                    ranks[perm] = ranks_sorted
+
+                    noise = np.random.rand(total)
+                    u = (ranks + noise) / counts[inverse]
+                    u = u.reshape(-1, 1)
+
                 choices = (rows_cdfs > u).argmax(axis=1)
-
                 data[col] = choices.astype(np.min_scalar_type(self.domain[col]))
+
             else:
                 marg = self.project((col,)).datavector(flatten=False)
                 data[col] = synthetic_col(marg, total)
