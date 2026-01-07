@@ -145,15 +145,39 @@ class Factor:
         """
         slices = [slice(None)] * len(self.domain)
         relevant = [e for e in evidence if e in self.domain.attrs]
+
+        adv_indices = []
+        has_vector = False
+        ev_size = None
+
         for attr in relevant:
             axis = self.domain.axes((attr,))[0]
-            slices[axis] = evidence[attr]
+            val = evidence[attr]
+            slices[axis] = val
+            adv_indices.append(axis)
+
+            is_arr = hasattr(val, 'ndim') and val.ndim > 0
+            if is_arr:
+                has_vector = True
+                if ev_size is None:
+                    ev_size = val.shape[0]
+                elif ev_size != val.shape[0]:
+                    raise ValueError("All vector evidence must have same size.")
 
         values = self.values[tuple(slices)]
         domain = self.domain.marginalize(relevant)
 
-        if values.ndim == len(self.domain) - len(relevant) + 1:
-            new = Domain(['_mbi_evidence'], [values.shape[0]])
+        if has_vector:
+            adv_indices.sort()
+            # If advanced indices are contiguous, numpy puts the new dimension at the start of the block
+            is_contiguous = (adv_indices[-1] - adv_indices[0] + 1) == len(adv_indices)
+            target_axis = adv_indices[0] if is_contiguous else 0
+
+            # We want the evidence dimension to be at axis 0
+            if target_axis != 0:
+                values = jnp.moveaxis(values, target_axis, 0)
+
+            new = Domain(['_mbi_evidence'], [ev_size])
             domain = new.merge(domain)
 
         return Factor(domain, values)
