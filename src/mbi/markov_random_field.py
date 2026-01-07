@@ -38,14 +38,17 @@ class MarkovRandomField:
     marginals: CliqueVector
     total: chex.Numeric = 1
 
-    def project(self, attrs: str | Sequence[str]) -> Factor:
+    def project(self, attrs: str | Sequence[str], evidence: dict | None = None) -> Factor:
         if isinstance(attrs, str):
             attrs = (attrs,)
         attrs = tuple(attrs)
         if self.marginals.supports(attrs):
-            return self.marginals.project(attrs)
+            result = self.marginals.project(attrs)
+            if evidence:
+                result = result.slice(evidence)
+            return result
         return marginal_oracles.variable_elimination(
-            self.potentials, attrs, self.total
+            self.potentials, attrs, self.total, evidence=evidence
         )
 
     def supports(self, attrs: str | Sequence[str]) -> bool:
@@ -60,6 +63,7 @@ class MarkovRandomField:
 
         def synthetic_col(counts, total):
             """Generates a synthetic column by sampling or rounding based on counts and total."""
+            counts = np.array(counts) # Ensure numpy array
             dtype = np.min_scalar_type(counts.size)
             options = np.arange(counts.size, dtype=dtype)
             if total == 0:
@@ -70,7 +74,7 @@ class MarkovRandomField:
             counts *= total / counts.sum()
             frac, integ = np.modf(counts)
             integ = integ.astype(int)
-            extra = total - integ.sum()
+            extra = int(total - integ.sum()) # Ensure int
             if extra > 0:
                 idx = np.random.choice(options, extra, False, frac / frac.sum())
                 integ[idx] += 1
@@ -92,25 +96,28 @@ class MarkovRandomField:
             proj = tuple(relevant)
             used.add(col)
 
-            # Will this work without having the maximal cliques of the junction tree?
-            marg = self.project(proj + (col,)).datavector(flatten=False)
-            data[col] = np.zeros(total, dtype=np.min_scalar_type(self.domain[col]))
-
             if len(proj) >= 1:
                 current_proj_data = np.stack(tuple(data[col] for col in proj), -1)
-
                 unique_rows, inverse = np.unique(current_proj_data, axis=0, return_inverse=True)
+
+                # construct evidence dictionary
+                evidence = dict(zip(proj, unique_rows.T))
+
+                # pass evidence to project (which uses variable_elimination or marginals)
+                marg = self.project(proj + (col,), evidence=evidence).values
+
+                # marg has shape (num_unique_rows, domain[col])
+                # we need to iterate over unique rows and generate data
+                data[col] = np.zeros(total, dtype=np.min_scalar_type(self.domain[col]))
 
                 for i in range(len(unique_rows)):
                     mask = (inverse == i)
                     count = np.sum(mask)
-
                     if count > 0:
-                        # Get the conditional marginal for this configuration
-                        idx = tuple(unique_rows[i])
-                        vals = synthetic_col(marg[idx], count)
-                        data[col][mask] = vals
+                         vals = synthetic_col(marg[i], count)
+                         data[col][mask] = vals
             else:
+                marg = self.project((col,)).datavector(flatten=False)
                 data[col] = synthetic_col(marg, total)
 
         return Dataset(data, domain)
