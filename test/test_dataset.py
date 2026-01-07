@@ -1,4 +1,5 @@
 import unittest
+import numpy as np
 from mbi.domain import Domain
 from mbi.dataset import Dataset
 
@@ -26,7 +27,6 @@ class TestDomain(unittest.TestCase):
 
 class TestDatasetDeterministic(unittest.TestCase):
     def setUp(self):
-        import numpy as np
         attrs = ['A', 'B']
         shape = [2, 3]
         self.domain = Domain(attrs, shape)
@@ -42,7 +42,6 @@ class TestDatasetDeterministic(unittest.TestCase):
         self.weighted_dataset = Dataset(self.data_dict, self.domain, self.weights)
 
     def test_datavector_unweighted(self):
-        import numpy as np
         # Expected: [2, 1, 0, 0, 0, 1]
         expected = np.array([2, 1, 0, 0, 0, 1])
         result = self.dataset.datavector(flatten=True)
@@ -54,7 +53,6 @@ class TestDatasetDeterministic(unittest.TestCase):
         np.testing.assert_array_equal(result_unflat, expected_unflat)
 
     def test_project_unweighted(self):
-        import numpy as np
         # Project A
         # Expected: [3, 1]
         expected_A = np.array([3, 1])
@@ -70,7 +68,6 @@ class TestDatasetDeterministic(unittest.TestCase):
         self.assertEqual(proj_B.domain.attrs, ('B',))
 
     def test_datavector_weighted(self):
-        import numpy as np
         # Weights: [1.0, 2.0, 0.5, 1.0] for indices [0, 1, 5, 0]
         # Expected: [2.0, 2.0, 0, 0, 0, 0.5]
         expected = np.array([2.0, 2.0, 0, 0, 0, 0.5])
@@ -78,7 +75,6 @@ class TestDatasetDeterministic(unittest.TestCase):
         np.testing.assert_array_equal(result, expected)
 
     def test_project_weighted(self):
-        import numpy as np
         # Project A
         # 0: 1.0 + 2.0 + 1.0 = 4.0
         # 1: 0.5
@@ -95,7 +91,6 @@ class TestDatasetDeterministic(unittest.TestCase):
         np.testing.assert_array_equal(proj_B.datavector(), expected_B)
 
     def test_project_multiple_columns(self):
-        import numpy as np
         # Project (A, B) - should be same as full datavector
         expected = np.array([2, 1, 0, 0, 0, 1])
         proj = self.dataset.project(['A', 'B'])
@@ -104,7 +99,6 @@ class TestDatasetDeterministic(unittest.TestCase):
 
 class TestDatasetCompression(unittest.TestCase):
     def test_compress(self):
-        import numpy as np
         # Domain: a:3, b:2
         domain = Domain(['a', 'b'], [3, 2])
         # Data
@@ -139,7 +133,6 @@ class TestDatasetCompression(unittest.TestCase):
         np.testing.assert_array_equal(compressed_dataset.weights, dataset.weights)
 
     def test_decompress(self):
-        import numpy as np
         # Initial Domain: a:3
         # Compressed Domain: a:2 (via mapping 0->0, 1->1, 2->1)
 
@@ -194,7 +187,6 @@ class TestDatasetCompression(unittest.TestCase):
         self.assertTrue(diff < large_N * 0.1, f"Difference {diff} is too large for uniform distribution")
 
     def test_validation(self):
-        import numpy as np
         domain = Domain(['a'], [3])
         data = {'a': np.array([0, 1, 2])}
         dataset = Dataset(data, domain)
@@ -213,7 +205,6 @@ class TestDatasetCompression(unittest.TestCase):
 
 class TestDatasetEmpty(unittest.TestCase):
     def test_compress_empty(self):
-        import numpy as np
         domain = Domain(['a'], [3])
         # Empty data
         data = {'a': np.array([], dtype=int)}
@@ -227,7 +218,6 @@ class TestDatasetEmpty(unittest.TestCase):
         self.assertEqual(len(compressed.to_dict()['a']), 0)
 
     def test_decompress_empty(self):
-        import numpy as np
         domain = Domain(['a'], [2])
         data = {'a': np.array([], dtype=int)}
         dataset = Dataset(data, domain, weights=np.array([]))
