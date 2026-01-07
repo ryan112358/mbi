@@ -130,15 +130,53 @@ class Factor:
         result = self.logsumexp(marginalized) if log else self.sum(marginalized)
         return result.transpose(attrs)
 
-    def slice(self, evidence: dict[str, int]) -> "Factor":
+    def slice(self, evidence: dict[str, int | jax.Array | np.ndarray]) -> "Factor":
         """Slices the factor by fixing specific attribute values.
 
         Args:
             evidence: A dictionary mapping attribute names to the values they should be fixed to.
+                Values can be integers or arrays. If arrays are provided, they must be 1D and
+                of the same size.
 
         Returns:
             A new Factor with the specified attributes fixed and removed from the domain.
+            If arrays are used, an additional leading dimension "_mbi_evidence" is added.
         """
+        # Separate scalar and array evidence
+        scalar_evidence = {}
+        array_evidence = {}
+        for k, v in evidence.items():
+            if hasattr(v, "ndim") and v.ndim > 0:
+                array_evidence[k] = v
+            else:
+                scalar_evidence[k] = v
+
+        if not array_evidence:
+            return self._slice_scalar(scalar_evidence)
+
+        # Check array sizes
+        sizes = [v.shape[0] for v in array_evidence.values()]
+        if len(set(sizes)) != 1:
+            raise ValueError("All evidence arrays must have the same size.")
+        N = sizes[0]
+
+        def get_values(ev_arrays):
+            return self._slice_scalar({**scalar_evidence, **ev_arrays}).values
+
+        values = jax.vmap(get_values)(array_evidence)
+
+        # Construct new domain
+        # Remove all evidence attributes from the domain
+        keys_to_remove = [k for k in evidence if k in self.domain]
+        inner_domain = self.domain.marginalize(keys_to_remove)
+
+        new_domain = Domain(
+            ("_mbi_evidence",) + inner_domain.attributes, (N,) + inner_domain.shape
+        )
+
+        return Factor(new_domain, values)
+
+    def _slice_scalar(self, evidence: dict[str, int]) -> "Factor":
         slices = [slice(None)] * len(self.domain)
         for attr, val in evidence.items():
             if attr in self.domain:
