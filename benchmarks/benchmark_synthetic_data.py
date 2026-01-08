@@ -17,6 +17,8 @@ import jax
 import logging
 import numpy as np
 import mbi
+import itertools
+import tqdm
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -63,7 +65,7 @@ def run_benchmark():
     logger.info(f"JIT Compilation Time: {jit_time:.4f} seconds")
 
     # Values of N to benchmark
-    N_values = [1000, 10000, 100000, 1000000]
+    N_values = [1000, 10000, 100000, 1000000, 10000000]
 
     results = []
 
@@ -78,18 +80,24 @@ def run_benchmark():
 
     logger.info(f"Running Accuracy Check (N={N})...")
 
-    cliques = [(c,) for c in domain.attributes] + cliques
-    error_avg = 0
-    error_max = 0
-    for cl in cliques:
+    in_model_errors = []
+    out_model_errors = []
+    all_2way = list(itertools.combinations(model.domain.attributes, 2))
+    out_model_cliques = list(set(all_2way) - set(cliques))
+    idx = np.random.choice(len(out_model_cliques), size=20, replace=False)
+    out_model_cliques = [out_model_cliques[i] for i in idx]
+    for cl in tqdm.tqdm(cliques + out_model_cliques):
         actual = synthetic.project(cl).datavector()
-        target = marginals.project(cl).datavector() * N
+        target = model.project(cl).datavector() * N
 
-        diff = np.abs(actual - target)
-        error_avg += diff.max()
-        error_max = max(error_max, diff.max())
+        diff = np.abs(actual - target).max()
+        if cl in cliques:
+            in_model_errors.append(diff)
+        else:
+            out_model_errors.append(diff)
     
-    print(f"Overall Deviation", error_avg / len(cliques), error_max)
+    print(f"In-Model Deviation", np.mean(in_model_errors), np.max(in_model_errors))
+    print(f"Out-Model Deviation", np.mean(out_model_errors), np.max(out_model_errors))
 
     return jit_time, results
 
