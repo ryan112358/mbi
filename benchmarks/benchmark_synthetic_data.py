@@ -79,16 +79,17 @@ def run_benchmark():
     logger.info(f"Running Accuracy Check (N={N})...")
 
     cliques = [(c,) for c in domain.attributes] + cliques
-    error = 0
+    error_avg = 0
+    error_max = 0
     for cl in cliques:
         actual = synthetic.project(cl).datavector()
         target = marginals.project(cl).datavector() * N
 
         diff = np.abs(actual - target)
-        error += diff.sum()
-        print(cl, np.max(diff))
+        error_avg += diff.max()
+        error_max = max(error_max, diff.max())
     
-    print(f"Overall Deviation", error / len(cliques))
+    print(f"Overall Deviation", error_avg / len(cliques), error_max)
 
     return jit_time, results
 

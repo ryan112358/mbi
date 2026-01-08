@@ -16,6 +16,55 @@ from .dataset import Dataset
 from .factor import Factor
 
 
+def _deterministic_round(counts):
+    """Rounds counts to integers while preserving the sum using largest remainder method."""
+    # This handles the case where sum(counts) is not an integer by rounding the sum first.
+    total = int(round(counts.sum()))
+    
+    floor_counts = np.floor(counts).astype(int)
+    remainder = counts - floor_counts
+    
+    current_sum = floor_counts.sum()
+    diff = total - current_sum
+    
+    if diff > 0:
+        indices = np.argsort(-remainder, kind='stable')
+        floor_counts[indices[:diff]] += 1
+
+    return floor_counts
+
+
+def _round_matrix(row_sums, col_probs, col_target):
+    """
+    Rounds a matrix of counts to integers such that:
+    1. Row i sums to row_sums[i]
+    2. Col j sums to col_target[j] (approximately/exactly via residual carryover)
+    3. Entries are close to row_sums[i] * col_probs[i, j]
+    """
+    total = row_sums.sum()
+    empirical_expected = row_sums.dot(col_probs)
+    global_adjustment_vector = (col_target - empirical_expected) / total
+    
+    residual = np.zeros_like(col_target)
+    
+    for i in range(len(row_sums)):
+        n_i = row_sums[i]
+        p_i = col_probs[i]
+        
+        target_i = n_i * (p_i + global_adjustment_vector)
+        target_with_residual = target_i + residual
+        
+        # Project to non-negative simplex to ensure valid counts
+        projected_target = np.maximum(0, target_with_residual)
+        current_sum = projected_target.sum()
+        if current_sum > 0:
+            projected_target *= n_i / current_sum
+        
+        c_i = _deterministic_round(projected_target)
+        residual = target_with_residual - c_i
+        yield c_i
+
+
 @chex.dataclass(frozen=True, kw_only=False)
 class MarkovRandomField:
     """Represents a learned graphical model.
@@ -67,15 +116,10 @@ class MarkovRandomField:
             if method == "sample":
                 probas = counts / counts.sum()
                 return np.random.choice(options, total, True, probas)
+            
             counts *= total / counts.sum()
-            frac, integ = np.modf(counts)
-            integ = integ.astype(int)
-            extra = total - integ.sum()
-            if extra > 0:
-                idx = np.random.choice(options, extra, False, frac / frac.sum())
-                integ[idx] += 1
+            integ = _deterministic_round(counts)
             vals = np.repeat(options, integ)
-            np.random.shuffle(vals)
             return vals
 
         data = {}
@@ -95,45 +139,50 @@ class MarkovRandomField:
                 current_proj_data = np.stack(tuple(data[col] for col in proj), -1)
 
                 marg = self.project(proj + (col,)).datavector(flatten=False)
-
                 marg_parents = marg.sum(axis=-1, keepdims=True)
                 cond_probs = np.divide(marg, marg_parents, out=np.zeros_like(marg), where=marg_parents!=0)
-                cond_cdfs = cond_probs.cumsum(axis=-1)
-
-                indices = tuple(current_proj_data.T)
-                rows_cdfs = cond_cdfs[indices]
 
                 if method == "sample":
+                    cond_cdfs = cond_probs.cumsum(axis=-1)
+                    indices = tuple(current_proj_data.T)
+                    rows_cdfs = cond_cdfs[indices]
                     u = np.random.rand(total, 1)
+                    choices = (rows_cdfs > u).argmax(axis=1)
+                    data[col] = choices.astype(np.min_scalar_type(self.domain[col]))
                 else:
+                    target_global = self.project((col,)).datavector(flatten=False)
+                    target_global = _deterministic_round(target_global * total / target_global.sum())
+                    
+                    # Group rows by parent configuration
                     _, inverse, counts = np.unique(current_proj_data, axis=0, return_inverse=True, return_counts=True)
-
                     perm = np.argsort(inverse, kind='stable')
-                    inverse_sorted = inverse[perm]
 
-                    group_starts = np.zeros(len(counts), dtype=int)
-                    np.cumsum(counts[:-1], out=group_starts[1:])
+                    global_error = target_global.astype(float)
+                    unique_parents = current_proj_data[perm[np.cumsum(counts) - 1]]
 
-                    sorted_indices = np.arange(total)
+                    parent_indices = tuple(unique_parents.T)
+                    group_cond_probs = cond_probs[parent_indices] # (N_groups, domain[col])
+                    
+                    output_col = np.zeros(total, dtype=int)
+                    
+                    rounded_rows = _round_matrix(counts, group_cond_probs, target_global)
+                    
+                    start_idx = 0
+                    for c_i in rounded_rows:
+                        n_i = c_i.sum()
+                        group_vals = np.repeat(np.arange(len(c_i)), c_i)
+                        group_indices = perm[start_idx : start_idx + n_i]
+                        output_col[group_indices] = group_vals
 
-                    ranks_sorted = sorted_indices - group_starts[inverse_sorted]
-
-                    ranks = np.empty(total, dtype=int)
-                    ranks[perm] = ranks_sorted
-
-                    noise = np.random.rand(total)
-                    u = (ranks + noise) / counts[inverse]
-                    u = u.reshape(-1, 1)
-
-                choices = (rows_cdfs > u).argmax(axis=1)
-                data[col] = choices.astype(np.min_scalar_type(self.domain[col]))
+                        start_idx += n_i
+                    
+                    data[col] = output_col
 
             else:
                 marg = self.project((col,)).datavector(flatten=False)
                 data[col] = synthetic_col(marg, total)
 
         return Dataset(data, domain)
-
 
     @property
     def domain(self):
