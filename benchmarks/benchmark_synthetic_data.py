@@ -11,16 +11,11 @@ N=1000000: 99.5295 seconds
 """
 
 import sys
-import os
 import time
 import platform
 import jax
 import logging
 import numpy as np
-
-# Add src to python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
-
 import mbi
 
 # Setup logging
@@ -40,12 +35,7 @@ def get_system_info():
     except ImportError:
         info.append("RAM: (psutil not available)")
 
-    # Check device
-    try:
-        devices = jax.devices()
-        info.append(f"JAX Devices: {devices}")
-    except Exception as e:
-        info.append(f"JAX Devices: Error getting devices: {e}")
+    info.append(f"JAX Devices: {jax.devices()}")
 
     return "\n".join(info)
 
@@ -88,14 +78,17 @@ def run_benchmark():
 
     logger.info(f"Running Accuracy Check (N={N})...")
 
+    cliques = [(c,) for c in domain.attributes] + cliques
+    error = 0
     for cl in cliques:
-        syn_factor = synthetic.project(cl)
-        syn_counts = syn_factor.datavector(flatten=True)
+        actual = synthetic.project(cl).datavector()
+        target = marginals.project(cl).datavector() * N
 
-        exp_counts = marginals.project(cl).datavector() * N
-
-        diff = np.abs(syn_counts - exp_counts)
+        diff = np.abs(actual - target)
+        error += diff.sum()
         print(cl, np.max(diff))
+    
+    print(f"Overall Deviation", error / len(cliques))
 
     return jit_time, results
 
@@ -103,9 +96,4 @@ if __name__ == "__main__":
     print("System Information:")
     print(get_system_info())
     print("-" * 20)
-    try:
-        run_benchmark()
-    except Exception as e:
-        logger.error(f"Benchmark failed: {e}")
-        import traceback
-        traceback.print_exc()
+    run_benchmark()
