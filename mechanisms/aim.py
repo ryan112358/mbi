@@ -15,7 +15,6 @@ from mbi import (
     estimation,
     junction_tree,
     LinearMeasurement,
-    LinearMeasurement,
 )
 from mechanism import Mechanism
 from collections import defaultdict
@@ -248,10 +247,14 @@ if __name__ == "__main__":
     if args.save is not None:
         synth.df.to_csv(args.save, index=False)
 
-    errors = []
+    synth_errors = []
+    model_errors = []
     for proj, wgt in workload:
         X = data.project(proj).datavector()
         Y = synth.project(proj).datavector()
+        Z = model.project(proj).datavector()
         e = 0.5 * wgt * np.linalg.norm(X / X.sum() - Y / Y.sum(), 1)
-        errors.append(e)
-    print("Average Error: ", np.mean(errors))
+        synth_errors.append(e)
+        e = 0.5 * wgt * np.linalg.norm(X / X.sum() - Z / Z.sum(), 1)
+        model_errors.append(e)
+    print("Average Error: ", np.mean(model_errors), np.mean(synth_errors))

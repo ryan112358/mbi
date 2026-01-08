@@ -190,14 +190,15 @@ class MarkovRandomField:
                     parent_domain_sizes = [self.domain[p] for p in proj]
                     parent_domain_size = np.prod(parent_domain_sizes, dtype=np.int64)
                     assert parent_domain_size < 2**63, "Parent domain size too large for linear indexing"
-                    strides = np.cumprod([1] + list(parent_domain_sizes)[:-1])
+                    
+                    strides = np.cumprod([1] + list(parent_domain_sizes[::-1])[:-1])[::-1]
                     flat_parents = np.dot(current_proj_data, strides)
                     
                     # Shuffle within groups to maximize entropy for out-of-model marginals
                     random_perm = np.random.permutation(total)
                     shuffled_parents = flat_parents[random_perm]
                     
-                    sort_idx = np.argsort(shuffled_parents) # Default is quicksort
+                    sort_idx = np.argsort(shuffled_parents)
                     perm = random_perm[sort_idx]
                     sorted_parents = shuffled_parents[sort_idx]
                     
