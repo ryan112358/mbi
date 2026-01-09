@@ -74,6 +74,39 @@ class TestDomain(unittest.TestCase):
         self.assertEqual(intersection.attributes, ())
         self.assertEqual(intersection.shape, ())
 
+    def test_labels(self):
+        attrs = ["a", "b"]
+        shape = [2, 3]
+        labels = [["yes", "no"], ["small", "medium", "large"]]
+        dom = Domain(attrs, shape, labels=labels)
+        self.assertIsNotNone(dom.labels)
+        self.assertEqual(dom.labels, tuple(tuple(l) for l in labels))
+
+        # Test project
+        proj = dom.project(["b"])
+        self.assertEqual(proj.labels, (("small", "medium", "large"),))
+
+        # Test merge
+        dom2 = Domain(["b", "c"], [3, 2], labels=[["small", "medium", "large"], ["up", "down"]])
+        merged = dom.merge(dom2)
+        # expected: a, b, c
+        self.assertEqual(merged.attributes, ("a", "b", "c"))
+        # labels should be preserved
+        expected_labels = (("yes", "no"), ("small", "medium", "large"), ("up", "down"))
+        self.assertEqual(merged.labels, expected_labels)
+
+        # Test merge mismatch
+        dom3 = Domain(["c"], [2]) # no labels
+        merged_mismatch = dom.merge(dom3)
+        self.assertIsNone(merged_mismatch.labels)
+
+        # Test invalid labels
+        with self.assertRaises(ValueError):
+            Domain(attrs, shape, labels=[["yes"], ["small", "medium", "large"]]) # wrong length for 'a'
+
+        with self.assertRaises(ValueError):
+            Domain(attrs, shape, labels=[["yes", "no"]]) # wrong number of label lists
+
 
 if __name__ == "__main__":
     unittest.main()
