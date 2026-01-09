@@ -40,7 +40,7 @@ class LinearMeasurement:
         a vector with the same shape and interpretation as `noisy_measurement`.
     """
 
-    noisy_measurement: jax.Array = attr.field(converter=jnp.array)
+    noisy_measurement: jax.Array
     clique: Clique = attr.field(converter=tuple)
     stddev: float = 1.0
     query: Callable[[Factor], jax.Array] = Factor.datavector
