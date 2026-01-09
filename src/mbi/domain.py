@@ -7,6 +7,7 @@ various operations like projection, marginalization, and merging of domains.
 """
 import functools
 from collections.abc import Iterator, Sequence
+from typing import Any
 
 import attr
 
@@ -24,6 +25,10 @@ class Domain:
         shape (tuple[int, ...]): A tuple containing the integer sizes
             (number of discrete values) for each corresponding attribute in
             the `attributes` tuple.
+        labels (tuple[tuple[Any, ...], ...] | None): An optional tuple of tuples
+            containing semantic information (labels) for each attribute's values.
+            Must be the same length as attributes, and each inner tuple must have
+            length corresponding to the attribute's size.
 
     Supported Operations:
         - Projection (`project`): Creates a new domain with a subset of attributes.
@@ -39,17 +44,36 @@ class Domain:
     """
     attributes: tuple[str, ...] = attr.field(converter=tuple)
     shape: tuple[int, ...] = attr.field(converter=lambda sh: tuple(int(n) for n in sh))
+    labels: tuple[tuple[Any, ...], ...] | None = attr.field(
+        default=None,
+        converter=lambda l: tuple(tuple(x) for x in l) if l is not None else None,
+    )
 
     def __attrs_post_init__(self):
         if len(self.attributes) != len(self.shape):
             raise ValueError("Dimensions must be equal.")
         if len(self.attributes) != len(set(self.attributes)):
             raise ValueError("Attributes must be unique.")
+        if self.labels is not None:
+            if len(self.labels) != len(self.attributes):
+                raise ValueError("Labels must be same length as attributes.")
+            for i, l in enumerate(self.labels):
+                if len(l) != self.shape[i]:
+                    raise ValueError(
+                        f"Labels for {self.attributes[i]} must have length {self.shape[i]}."
+                    )
 
     @functools.cached_property
     def config(self) -> dict[str, int]:
         """Returns a dictionary of { attr : size } values."""
         return dict(zip(self.attributes, self.shape))
+
+    @functools.cached_property
+    def labels_config(self) -> dict[str, tuple[Any, ...]] | None:
+        """Returns a dictionary of { attr : labels } values."""
+        if self.labels is None:
+            return None
+        return dict(zip(self.attributes, self.labels))
 
     @staticmethod
     def fromdict(config: dict[str, int]) -> "Domain":
@@ -79,7 +103,10 @@ class Domain:
         if not set(attributes) <= set(self.attributes):
             raise ValueError(f"Cannot project {self} onto {attributes}.")
         shape = tuple(self.config[a] for a in attributes)
-        return Domain(attributes, shape)
+        labels = None
+        if self.labels is not None:
+            labels = tuple(self.labels_config[a] for a in attributes)
+        return Domain(attributes, shape, labels=labels)
 
     def marginalize(self, attrs: Sequence[str]) -> "Domain":
         """Marginalize out some attributes from the domain (opposite of project).
@@ -153,7 +180,14 @@ class Domain:
           a new domain object covering the combined domain.
         """
         extra = other.marginalize(self.attributes)
-        return Domain(self.attributes + extra.attributes, self.shape + extra.shape)
+        new_labels = None
+        if self.labels is not None and other.labels is not None:
+            new_labels = self.labels + extra.labels
+        return Domain(
+            self.attributes + extra.attributes,
+            self.shape + extra.shape,
+            labels=new_labels,
+        )
 
     def size(self, attributes: Sequence[str] | None = None) -> int:
         """Return the total size of the domain.

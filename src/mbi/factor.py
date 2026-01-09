@@ -177,7 +177,11 @@ class Factor:
             if target_axis != 0:
                 values = jnp.moveaxis(values, target_axis, 0)
 
-            new = Domain(['_mbi_evidence'], [ev_size])
+            new_labels = None
+            if self.domain.labels is not None:
+                new_labels = (tuple(range(ev_size)),)
+
+            new = Domain(['_mbi_evidence'], [ev_size], labels=new_labels)
             domain = new.merge(domain)
 
         return Factor(domain, values)
