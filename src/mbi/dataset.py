@@ -289,13 +289,13 @@ class Dataset:
     meta_fields=["domain"],
     data_fields=["data", "weights"],
 )
-@attr.dataclass(frozen=True)
+@attr.dataclass(frozen=True, init=False)
 class JaxDataset:
-    """Represents a discrete dataset backed by a JAX Array.
+    """Represents a discrete dataset backed by JAX Arrays.
 
     Attributes:
-        data (jax.Array): A 2D JAX array where rows represent records and columns
-            represent attributes. The data should be integral.
+        data (dict[str, jax.Array]): A dictionary of 1D JAX arrays where keys are attributes
+            and values are columns of data.
         domain (Domain): A `Domain` object describing the attributes and their
             possible discrete values.
         weights (jax.Array | None): An optional 1D JAX array representing the
@@ -303,45 +303,69 @@ class JaxDataset:
             assumed to have a weight of 1.
     """
 
-    data: jax.Array = attr.field(converter=jnp.asarray)
+    data: dict[str, jax.Array]
     domain: Domain
     weights: jax.Array | None = None
 
-    def __post_init__(self):
-        if not jnp.issubdtype(self.data.dtype, jnp.integer):
-            raise ValueError(f"Data must be integral, got {self.data.dtype}.")
+    def __init__(self, data: dict[str, ArrayLike], domain: Domain, weights: ArrayLike | None = None):
+         if not isinstance(data, dict):
+             raise ValueError("Data must be a dictionary of arrays.")
 
-        if self.data.ndim != 2:
-            raise ValueError(f"Data must be 2d aray, got {self.data.shape}")
-        if self.data.shape[1] != len(self.domain):
-            raise ValueError(
-                "Number of columns of data must equal the number of attributes in the domain."
-            )
-        # This will not work in a jitted context, but not sure if this will be called from one normally.
-        for i, ax in enumerate(self.domain):
-            if self.data[:, i].min() < 0:
-                raise ValueError("Data must be non-negative.")
-            if self.data[:, i].max() >= self.domain[ax]:
-                raise ValueError("Data must be within the bounds of the domain.")
+         data_dict = {k: jnp.asarray(v) for k, v in data.items()}
+         weights = jnp.asarray(weights) if weights is not None else None
+         # We need to set attributes directly because it is frozen
+         object.__setattr__(self, "data", data_dict)
+         object.__setattr__(self, "domain", domain)
+         object.__setattr__(self, "weights", weights)
+         self.__post_init__()
+
+    def __post_init__(self):
+        if set(self.data.keys()) != set(self.domain.attrs):
+             raise ValueError("Keys in data dictionary must match domain attributes")
+
+        n = None
+        for attr, col in self.data.items():
+            if not jnp.issubdtype(col.dtype, jnp.integer):
+                raise ValueError(f"Data for {attr} must be integral, got {col.dtype}.")
+            if col.ndim != 1:
+                raise ValueError(f"Data for {attr} must be 1D, got shape {col.shape}")
+
+            if n is None:
+                n = col.shape[0]
+            elif col.shape[0] != n:
+                 raise ValueError("All columns must have the same length.")
+
+            # Bounds checking (skip in JIT? or use assert?)
+            pass
+
+        if self.weights is not None:
+             if self.weights.ndim != 1:
+                  raise ValueError("Weights must be 1D")
+             if n is not None and self.weights.shape[0] != n:
+                  raise ValueError("Weights length must match data length")
+
 
     @staticmethod
     def synthetic(domain: Domain, records: int) -> JaxDataset:
         """Generate synthetic data conforming to the given domain
 
         :param domain: The domain object
-        :param N: the number of individuals
+        :param records: the number of individuals
         """
-        arr = [np.random.randint(low=0, high=n, size=records) for n in domain.shape]
-        data = np.array(arr).T
+        data = {}
+        for attr, n in zip(domain.attrs, domain.shape):
+             # Dataset.synthetic uses numpy random.
+             data[attr] = jnp.array(np.random.randint(low=0, high=n, size=records))
+
         return JaxDataset(data, domain)
 
     def project(self, cols: str | Sequence[str]) -> Factor:
         """project dataset onto a subset of columns"""
-        if type(cols) in [str, int]:
+        if isinstance(cols, (str, int)):
             cols = [cols]
-        idx = self.domain.axes(cols)
-        data = self.data[:, idx]
+
         domain = self.domain.project(cols)
+        data = {col: self.data[col] for col in domain.attrs}
         data = JaxDataset(data, domain, self.weights)
         return Factor(data.domain, data.datavector(flatten=False))
 
@@ -351,24 +375,43 @@ class JaxDataset:
     @property
     def records(self) -> int:
         """Returns the number of records (rows) in the dataset."""
-        return self.data.shape[0]
+        if not self.data:
+             return 0
+        return list(self.data.values())[0].shape[0]
 
     def datavector(self, flatten: bool = True) -> jax.Array:
         """return the database in vector-of-counts form"""
-        bins = [range(n + 1) for n in self.domain.shape]
-        ans = jnp.histogramdd(self.data, bins, weights=self.weights)[0]
-        return ans.flatten() if flatten else ans
+        dims = self.domain.shape
+        if len(dims) == 0:
+             # scalar case
+             w = self.weights if self.weights is not None else jnp.ones(self.records)
+             result = w.sum()
+             return jnp.array([result]) if flatten else result
+
+        multi_index = tuple(self.data[a] for a in self.domain.attrs)
+        linear_indices = jnp.ravel_multi_index(multi_index, dims, mode='wrap', order='C')
+
+        # weights handling
+        w = self.weights
+
+        # jnp.bincount requires 1D integer array.
+        length = math.prod(dims)
+
+        counts = jnp.bincount(linear_indices, weights=w, minlength=length)
+
+        return counts if flatten else counts.reshape(dims)
 
     def apply_sharding(self, mesh: jax.sharding.Mesh) -> JaxDataset:
-        # Not sure if this function makes sense.  This sharding strategy is what we want,
-        # but we will most likely have to read the data in sharded, so I don't
-        # know if this will actually be used.
         pspec = jax.sharding.PartitionSpec(mesh.axis_names)
         sharding = jax.sharding.NamedSharding(mesh, pspec)
-        data = jax.lax.with_sharding_constraint(self.data, sharding)
+
+        new_data = {}
+        for k, v in self.data.items():
+             new_data[k] = jax.lax.with_sharding_constraint(v, sharding)
+
         weights = (
             self.weights
             if self.weights is None
             else jax.lax.with_sharding_constraint(self.weights, sharding)
         )
-        return JaxDataset(data, self.domain, weights)
+        return JaxDataset(new_data, self.domain, weights)
