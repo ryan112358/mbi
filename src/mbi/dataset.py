@@ -316,7 +316,6 @@ class JaxDataset:
         """
         data = {}
         for attr, n in zip(domain.attrs, domain.shape):
-             # Dataset.synthetic uses numpy random.
              data[attr] = jnp.array(np.random.randint(low=0, high=n, size=records))
 
         return JaxDataset(data, domain)
@@ -327,32 +326,19 @@ class JaxDataset:
             cols = [cols]
 
         domain = self.domain.project(cols)
-        # Extract relevant data columns
-        # Assume self.data has keys for all domain attrs (checked implicitly or by user)
-        # We don't construct intermediate JaxDataset anymore
 
         dims = domain.shape
         if len(dims) == 0:
-             # scalar case
              w = self.weights if self.weights is not None else jnp.ones(self.records)
              result = w.sum()
              return Factor(domain, jnp.array([result]))
 
         multi_index = tuple(self.data[a] for a in domain.attrs)
-        # mode='wrap' is safe if data is valid. User assumes valid input.
         linear_indices = jnp.ravel_multi_index(multi_index, dims, mode='wrap', order='C')
 
-        # weights handling
-        w = self.weights
-
-        # jnp.bincount requires 1D integer array.
         length = math.prod(dims)
 
-        counts = jnp.bincount(linear_indices, weights=w, minlength=length)
-        # Factor expects original shape?
-        # Dataset.project -> Factor(data.domain, data.datavector(flatten=False))
-        # datavector(flatten=False) returns reshaped counts.
-        # Factor stores values as array matching domain shape.
+        counts = jnp.bincount(linear_indices, weights=self.weights, minlength=length)
 
         return Factor(domain, counts.reshape(dims))
 
