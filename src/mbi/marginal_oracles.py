@@ -371,7 +371,7 @@ def variable_elimination(
     else:
         newdom = potentials.domain.project(clique)
 
-    zero = Factor(Domain([], []), 0)
+    zero = Factor(Domain([], []), jnp.asarray(0.0))
     unnormalized = sum(psi.values(), start=zero).expand(newdom).apply_sharding(mesh)
 
     if has_vector_evidence:

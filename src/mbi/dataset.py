@@ -177,7 +177,7 @@ class Dataset:
         domain = self.domain.project(cols)
         data = {col: self._data[col] for col in domain.attrs}
         data = Dataset(data, domain, self.weights)
-        return Factor(data.domain, data.datavector(flatten=False))
+        return Factor(data.domain, jnp.asarray(data.datavector(flatten=False)))
 
     def supports(self, cols: str | Sequence[str]) -> bool:
         return self.domain.supports(cols)

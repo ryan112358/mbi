@@ -14,13 +14,6 @@ from .domain import Domain
 
 jax.config.update("jax_enable_x64", True)
 
-def _try_convert(values):
-    """Attempts to convert input to a JAX array, returning original if it fails."""
-    try:
-        return jnp.array(values)
-    except:
-        return values  # useful if values is a Jax tracer object
-
 @functools.partial(
     jax.tree_util.register_dataclass, meta_fields=["domain"], data_fields=["values"]
 )
@@ -52,7 +45,7 @@ class Factor:
         Domain(X: 2, Y: 3)
     """
     domain: Domain
-    values: jax.Array = attr.field(converter=_try_convert)
+    values: jax.Array
 
     def __post_init__(self):
         if self.values.shape != self.domain.shape:
@@ -72,7 +65,7 @@ class Factor:
     @classmethod
     def random(cls, domain: Domain) -> Factor:
         """Creates a Factor object with random values (uniform 0-1)."""
-        return cls(domain, np.random.rand(*domain.shape))
+        return cls(domain, jnp.asarray(np.random.rand(*domain.shape)))
 
     @classmethod
     def abstract(cls, domain: Domain) -> Factor:
@@ -217,7 +210,7 @@ class Factor:
     def _binaryop(self, fn: Callable, other: Factor | chex.Numeric) -> Factor:
         """Helper for applying binary operations between this factor and another factor or scalar."""
         if isinstance(other, chex.Numeric) and jnp.ndim(other) == 0:
-            other = Factor(Domain([], []), other)
+            other = Factor(Domain([], []), jnp.asarray(other))
         newdom = self.domain.merge(other.domain)
         factor1 = self.expand(newdom)
         factor2 = other.expand(newdom)
