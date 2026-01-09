@@ -289,7 +289,7 @@ class Dataset:
     meta_fields=["domain"],
     data_fields=["data", "weights"],
 )
-@attr.dataclass(frozen=True, init=False)
+@attr.dataclass(frozen=True)
 class JaxDataset:
     """Represents a discrete dataset backed by JAX Arrays.
 
@@ -306,44 +306,6 @@ class JaxDataset:
     data: dict[str, jax.Array]
     domain: Domain
     weights: jax.Array | None = None
-
-    def __init__(self, data: dict[str, ArrayLike], domain: Domain, weights: ArrayLike | None = None):
-         if not isinstance(data, dict):
-             raise ValueError("Data must be a dictionary of arrays.")
-
-         data_dict = {k: jnp.asarray(v) for k, v in data.items()}
-         weights = jnp.asarray(weights) if weights is not None else None
-         # We need to set attributes directly because it is frozen
-         object.__setattr__(self, "data", data_dict)
-         object.__setattr__(self, "domain", domain)
-         object.__setattr__(self, "weights", weights)
-         self.__post_init__()
-
-    def __post_init__(self):
-        if set(self.data.keys()) != set(self.domain.attrs):
-             raise ValueError("Keys in data dictionary must match domain attributes")
-
-        n = None
-        for attr, col in self.data.items():
-            if not jnp.issubdtype(col.dtype, jnp.integer):
-                raise ValueError(f"Data for {attr} must be integral, got {col.dtype}.")
-            if col.ndim != 1:
-                raise ValueError(f"Data for {attr} must be 1D, got shape {col.shape}")
-
-            if n is None:
-                n = col.shape[0]
-            elif col.shape[0] != n:
-                 raise ValueError("All columns must have the same length.")
-
-            # Bounds checking (skip in JIT? or use assert?)
-            pass
-
-        if self.weights is not None:
-             if self.weights.ndim != 1:
-                  raise ValueError("Weights must be 1D")
-             if n is not None and self.weights.shape[0] != n:
-                  raise ValueError("Weights length must match data length")
-
 
     @staticmethod
     def synthetic(domain: Domain, records: int) -> JaxDataset:
@@ -365,30 +327,19 @@ class JaxDataset:
             cols = [cols]
 
         domain = self.domain.project(cols)
-        data = {col: self.data[col] for col in domain.attrs}
-        data = JaxDataset(data, domain, self.weights)
-        return Factor(data.domain, data.datavector(flatten=False))
+        # Extract relevant data columns
+        # Assume self.data has keys for all domain attrs (checked implicitly or by user)
+        # We don't construct intermediate JaxDataset anymore
 
-    def supports(self, cols: str | Sequence[str]) -> bool:
-        return self.domain.supports(cols)
-
-    @property
-    def records(self) -> int:
-        """Returns the number of records (rows) in the dataset."""
-        if not self.data:
-             return 0
-        return list(self.data.values())[0].shape[0]
-
-    def datavector(self, flatten: bool = True) -> jax.Array:
-        """return the database in vector-of-counts form"""
-        dims = self.domain.shape
+        dims = domain.shape
         if len(dims) == 0:
              # scalar case
              w = self.weights if self.weights is not None else jnp.ones(self.records)
              result = w.sum()
-             return jnp.array([result]) if flatten else result
+             return Factor(domain, jnp.array([result]))
 
-        multi_index = tuple(self.data[a] for a in self.domain.attrs)
+        multi_index = tuple(self.data[a] for a in domain.attrs)
+        # mode='wrap' is safe if data is valid. User assumes valid input.
         linear_indices = jnp.ravel_multi_index(multi_index, dims, mode='wrap', order='C')
 
         # weights handling
@@ -398,8 +349,22 @@ class JaxDataset:
         length = math.prod(dims)
 
         counts = jnp.bincount(linear_indices, weights=w, minlength=length)
+        # Factor expects original shape?
+        # Dataset.project -> Factor(data.domain, data.datavector(flatten=False))
+        # datavector(flatten=False) returns reshaped counts.
+        # Factor stores values as array matching domain shape.
 
-        return counts if flatten else counts.reshape(dims)
+        return Factor(domain, counts.reshape(dims))
+
+    def supports(self, cols: str | Sequence[str]) -> bool:
+        return self.domain.supports(cols)
+
+    @property
+    def records(self) -> int:
+        """Returns the number of records (rows) in the dataset."""
+        if not self.data:
+             raise ValueError("Dataset is empty (no columns).")
+        return list(self.data.values())[0].shape[0]
 
     def apply_sharding(self, mesh: jax.sharding.Mesh) -> JaxDataset:
         pspec = jax.sharding.PartitionSpec(mesh.axis_names)
