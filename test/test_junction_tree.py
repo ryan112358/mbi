@@ -38,5 +38,11 @@ class TestJunctionTree(unittest.TestCase):
         for cl in cliques:
             self.assertTrue(any(set(cl) <= set(mx) for mx in max_cliques), f"Clique {cl} not supported in disconnected case")
 
+
+        # Null graphs
+        _ = make_junction_tree(domain, [(a,) for a in attrs])
+        _ = make_junction_tree(domain, [])
+        _ = make_junction_tree(Domain([], []), [])
+
 if __name__ == '__main__':
     unittest.main()
