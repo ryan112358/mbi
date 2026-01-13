@@ -14,6 +14,7 @@ from .domain import Domain
 
 jax.config.update("jax_enable_x64", True)
 
+
 @functools.partial(
     jax.tree_util.register_dataclass, meta_fields=["domain"], data_fields=["values"]
 )
@@ -44,6 +45,7 @@ class Factor:
         >>> print(factor.domain)
         Domain(X: 2, Y: 3)
     """
+
     domain: Domain
     values: jax.Array
 
@@ -69,7 +71,7 @@ class Factor:
 
     @classmethod
     def abstract(cls, domain: Domain) -> Factor:
-      return cls(domain, jax.ShapeDtypeStruct(domain.shape, jnp.float64))
+        return cls(domain, jax.ShapeDtypeStruct(domain.shape, jnp.float64))
 
     # Reshaping operations
     def transpose(self, attrs: Sequence[str]) -> Factor:
@@ -93,9 +95,7 @@ class Factor:
         return Factor(domain, values)
 
     # Functions that aggregate along some subset of axes
-    def _aggregate(
-        self, fn: Callable, attrs: Sequence[str] | None = None
-    ) -> Factor:
+    def _aggregate(self, fn: Callable, attrs: Sequence[str] | None = None) -> Factor:
         """Helper for aggregating values along specified attribute axes."""
         attrs = self.domain.attrs if attrs is None else attrs
         axes = self.domain.axes(attrs)
@@ -149,7 +149,7 @@ class Factor:
             slices[axis] = val
             adv_indices.append(axis)
 
-            is_arr = hasattr(val, 'ndim') and val.ndim > 0
+            is_arr = hasattr(val, "ndim") and val.ndim > 0
             if is_arr:
                 has_vector = True
                 if ev_size is None:
@@ -174,7 +174,7 @@ class Factor:
             if self.domain.labels is not None:
                 new_labels = (tuple(range(ev_size)),)
 
-            new = Domain(['_mbi_evidence'], [ev_size], labels=new_labels)
+            new = Domain(["_mbi_evidence"], [ev_size], labels=new_labels)
             domain = new.merge(domain)
 
         return Factor(domain, values)
@@ -261,10 +261,12 @@ class Factor:
         """Returns the factor's values as a flattened vector or original array."""
         return self.values.flatten() if flatten else self.values
 
-    def pad(self, mesh: jax.sharding.Mesh | None, pad_value: Literal[0, "-inf"]) -> Factor:
+    def pad(
+        self, mesh: jax.sharding.Mesh | None, pad_value: Literal[0, "-inf"]
+    ) -> Factor:
         if mesh is None:
             return self
-        pad_amounts = [0]*len(self.domain)
+        pad_amounts = [0] * len(self.domain)
         for i, ax in enumerate(self.domain):
             if ax in mesh.axis_names:
                 size = self.domain[ax]
@@ -274,7 +276,7 @@ class Factor:
         values = jnp.pad(
             self.values,
             pad_width=tuple((0, w) for w in pad_amounts),
-            constant_values=0.0 if pad_value==0 else -jnp.inf
+            constant_values=0.0 if pad_value == 0 else -jnp.inf,
         )
         # We keep the domain as-is here, even though values is now larger.
         # We have a couple of options
@@ -283,9 +285,6 @@ class Factor:
         #   3. Allow values to be an array where each dim is >= the domain implies, and truncate
         #       when necessary.
         return Factor(self.domain, values)
-
-
-
 
     def apply_sharding(self, mesh: jax.sharding.Mesh | None) -> Factor:
         """Apply sharding constraint to the factor values.
@@ -301,7 +300,7 @@ class Factor:
         """
         if mesh is None:
             return self
-        pspec = [None]*len(self.domain)
+        pspec = [None] * len(self.domain)
         for i, ax in enumerate(self.domain):
             if ax in mesh.axis_names:
                 pspec[i] = ax
@@ -309,8 +308,9 @@ class Factor:
 
         return Factor(
             domain=self.domain,
-            values=jax.lax.with_sharding_constraint(self.values, sharding)
+            values=jax.lax.with_sharding_constraint(self.values, sharding),
         )
+
 
 class Projectable(Protocol):
     """A projectable is an object that can be projected onto a subset of attributes to compute a marginal.
@@ -321,6 +321,7 @@ class Projectable(Protocol):
         * CliqueVector
         * MarkovRandomField
     """
+
     @property
     def domain(self) -> Domain:
         """Returns the domain over which this projectable is defined."""

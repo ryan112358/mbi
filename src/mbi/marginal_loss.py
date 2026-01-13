@@ -8,6 +8,7 @@ measurements and the `MarginalLossFn` class to define loss functions over
 or noisy data. Utilities for clique manipulation and feasibility checks are also
 included.
 """
+
 import functools
 from collections.abc import Callable
 
@@ -70,7 +71,11 @@ class MarginalLossFn:
         return self.loss_fn(marginals)
 
 
-def calculate_l2_lipschitz(domain: Domain, cliques: list[Clique], loss_fn: Callable[[CliqueVector], chex.Numeric]) -> float:
+def calculate_l2_lipschitz(
+    domain: Domain,
+    cliques: list[Clique],
+    loss_fn: Callable[[CliqueVector], chex.Numeric],
+) -> float:
     """Estimate the Lipschitz constant of L(x) = || f(x) - y ||_2^2 where f is a linear function.
 
     The Lipschitz constant can usually be obtained via the largest eigenvalue of the Hessian, which
@@ -85,9 +90,11 @@ def calculate_l2_lipschitz(domain: Domain, cliques: list[Clique], loss_fn: Calla
         An estimate of the Lipschitz constant of the grad(L).
     """
     x0 = CliqueVector.zeros(domain, cliques)
+
     @jax.jit
     def compute_Hv(v: CliqueVector) -> CliqueVector:
         return jax.jvp(jax.grad(loss_fn), (x0,), (v,))[1]
+
     v = CliqueVector.ones(domain, cliques)
     v = v / optax.global_norm(v)
     for _ in range(50):
@@ -98,7 +105,10 @@ def calculate_l2_lipschitz(domain: Domain, cliques: list[Clique], loss_fn: Calla
 
 
 def from_linear_measurements(
-    measurements: list[LinearMeasurement], norm: str = "l2", normalize: bool = False, domain: Domain | None = None,
+    measurements: list[LinearMeasurement],
+    norm: str = "l2",
+    normalize: bool = False,
+    domain: Domain | None = None,
 ) -> MarginalLossFn:
     """Construct a MarginalLossFn from a list of LinearMeasurements.
 

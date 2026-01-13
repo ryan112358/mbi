@@ -5,6 +5,7 @@ such as finding maximal subsets and creating mappings between cliques and
 their maximal counterparts. Cliques are typically represented as tuples of
 attribute names (strings).
 """
+
 from typing import TypeAlias
 
 Clique: TypeAlias = tuple[str, ...]

@@ -5,6 +5,7 @@ attributes and their corresponding discrete sizes (shapes). It facilitates
 representing the structure of datasets and graphical models and supports
 various operations like projection, marginalization, and merging of domains.
 """
+
 import functools
 from collections.abc import Iterator, Sequence
 from typing import Any
@@ -42,6 +43,7 @@ class Domain:
         >>> print(domain)
         Domain(a: 2, b: 3)
     """
+
     attributes: tuple[str, ...] = attr.field(converter=tuple)
     shape: tuple[int, ...] = attr.field(converter=lambda sh: tuple(int(n) for n in sh))
     labels: tuple[tuple[Any, ...], ...] | None = attr.field(
@@ -212,7 +214,7 @@ class Domain:
     def attrs(self):
         """Alias for the `attributes` tuple."""
         return self.attributes
-    
+
     def supports(self, attrs: str | Sequence[str]) -> bool:
         if isinstance(attrs, str):
             attrs = [attrs]

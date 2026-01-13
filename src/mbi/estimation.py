@@ -38,7 +38,7 @@ class Estimator(Protocol):
     Defines the callable signature for marginal-based estimators.
 
     An estimator estimates a discrete distribution, or more generally
-    a `Projectable' object from a loss function defined over it's 
+    a `Projectable' object from a loss function defined over it's
     low-dimensional marginals.
 
     Examples of conforming functions from `mbi.estimation`:
@@ -56,7 +56,7 @@ class Estimator(Protocol):
         loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
         *,
         known_total: float | None = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> Projectable:
         """
         Estimate a Projectable from noisy marginal measurements.
@@ -224,6 +224,7 @@ def mirror_descent(
 
 def _optimize(loss_and_grad_fn, params, iters=250, callback_fn=lambda _: None):
     """Runs an optimization loop using Optax L-BFGS."""
+
     def loss_fn(theta):
         return loss_and_grad_fn(theta)[0]
 
@@ -610,8 +611,8 @@ def _universal_accelerated_method_step_init(
         if linesearch:
             new_value = fun(x)
             if norm == 1:
-                sq_norm_diff = (
-                    optax.tree.norm(optax.tree.sub(x, y), ord=1, squared=True)
+                sq_norm_diff = optax.tree.norm(
+                    optax.tree.sub(x, y), ord=1, squared=True
                 )
             elif norm == 2:
                 sq_norm_diff = optax.tree.norm(

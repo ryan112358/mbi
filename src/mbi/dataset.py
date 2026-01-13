@@ -199,8 +199,10 @@ class Dataset:
             result = self.weights.sum()
             return np.array([result]) if flatten else result
         multi_index = tuple(self._data[a] for a in self.domain.attrs)
-        linear_indices = np.ravel_multi_index(multi_index, dims, order='C')
-        counts = np.bincount(linear_indices, minlength=math.prod(dims), weights=self.weights)
+        linear_indices = np.ravel_multi_index(multi_index, dims, order="C")
+        counts = np.bincount(
+            linear_indices, minlength=math.prod(dims), weights=self.weights
+        )
         return counts if flatten else counts.reshape(dims)
 
     def compress(self, mapping: dict[str, np.ndarray]) -> Dataset:
@@ -223,7 +225,9 @@ class Dataset:
 
             _validate_mapping(map_array, attr)
             if map_array.shape[0] != self.domain[attr]:
-                raise ValueError(f"Mapping size {map_array.shape[0]} does not match domain size {self.domain[attr]} for attribute {attr}")
+                raise ValueError(
+                    f"Mapping size {map_array.shape[0]} does not match domain size {self.domain[attr]} for attribute {attr}"
+                )
 
             new_col = map_array[self._data[attr]]
             new_data[attr] = new_col.astype(np.min_scalar_type(np.max(map_array)))
@@ -269,9 +273,13 @@ class Dataset:
 
             col_counts = counts[current_col]
             if np.any(col_counts == 0):
-                 raise ValueError(f"Data contains values for {attr} that have no preimage in the mapping.")
+                raise ValueError(
+                    f"Data contains values for {attr} that have no preimage in the mapping."
+                )
 
-            random_offsets = np.floor(np.random.rand(len(current_col)) * col_counts).astype(int)
+            random_offsets = np.floor(
+                np.random.rand(len(current_col)) * col_counts
+            ).astype(int)
 
             lookup_indices = starts[current_col] + random_offsets
 
@@ -316,7 +324,7 @@ class JaxDataset:
         """
         data = {}
         for attr, n in zip(domain.attrs, domain.shape):
-             data[attr] = jnp.array(np.random.randint(low=0, high=n, size=records))
+            data[attr] = jnp.array(np.random.randint(low=0, high=n, size=records))
 
         return JaxDataset(data, domain)
 
@@ -328,13 +336,15 @@ class JaxDataset:
         domain = self.domain.project(cols)
 
         dims = domain.shape
-        if len(dims) == 0:
-             w = self.weights if self.weights is not None else jnp.ones(self.records)
-             result = w.sum()
-             return Factor(domain, jnp.array([result]))
+        if not dims:
+            w = self.weights if self.weights is not None else jnp.ones(self.records)
+            result = w.sum()
+            return Factor(domain, jnp.array([result]))
 
         multi_index = tuple(self.data[a] for a in domain.attrs)
-        linear_indices = jnp.ravel_multi_index(multi_index, dims, mode='wrap', order='C')
+        linear_indices = jnp.ravel_multi_index(
+            multi_index, dims, mode="wrap", order="C"
+        )
 
         length = math.prod(dims)
 
@@ -349,7 +359,7 @@ class JaxDataset:
     def records(self) -> int:
         """Returns the number of records (rows) in the dataset."""
         if not self.data:
-             raise ValueError("Dataset is empty (no columns).")
+            raise ValueError("Dataset is empty (no columns).")
         return list(self.data.values())[0].shape[0]
 
     def apply_sharding(self, mesh: jax.sharding.Mesh) -> JaxDataset:
@@ -358,7 +368,7 @@ class JaxDataset:
 
         new_data = {}
         for k, v in self.data.items():
-             new_data[k] = jax.lax.with_sharding_constraint(v, sharding)
+            new_data[k] = jax.lax.with_sharding_constraint(v, sharding)
 
         weights = (
             self.weights

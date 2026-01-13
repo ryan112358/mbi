@@ -6,6 +6,7 @@ inference, enabling efficient message passing algorithms. Functions include
 finding maximal cliques, determining message passing orders, graph triangulation,
 computing greedy elimination orders, and estimating model size.
 """
+
 import itertools
 from collections import OrderedDict
 from collections.abc import Collection
@@ -27,9 +28,7 @@ def maximal_cliques(junction_tree: nx.Graph) -> list[Clique]:
 def message_passing_order(junction_tree: nx.Graph) -> list[tuple[Clique, Clique]]:
     """Return a valid message passing order."""
     edges = set()
-    messages = list(junction_tree.edges()) + [
-        (b, a) for a, b in junction_tree.edges()
-    ]
+    messages = list(junction_tree.edges()) + [(b, a) for a, b in junction_tree.edges()]
     for m1 in messages:
         for m2 in messages:
             if m1[1] == m2[0] and m1[0] != m2[1]:
@@ -133,6 +132,7 @@ def make_junction_tree(
     spanning = nx.minimum_spanning_tree(complete)
     return spanning, elimination_order
 
+
 def hypothetical_model_size(domain: Domain, cliques: list[Clique]) -> float:
     """Size of the full junction tree parameters, measured in megabytes."""
     jtree, _ = make_junction_tree(domain, cliques)
@@ -140,4 +140,3 @@ def hypothetical_model_size(domain: Domain, cliques: list[Clique]) -> float:
     cells = sum(domain.size(cl) for cl in max_cliques)
     size_mb = cells * 8 / 2**20
     return size_mb
-

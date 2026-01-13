@@ -38,12 +38,13 @@ class StatefulMarginalOracle(Protocol):
     for optimization in iterative algorithms (e.g., preserving messages
     in message passing).
     """
+
     def __call__(
         self,
         potentials: CliqueVector,
         total: float = 1.0,
         state: Any = None,
-        mesh: jax.sharding.Mesh | None = None
+        mesh: jax.sharding.Mesh | None = None,
     ) -> tuple[CliqueVector, Any]:
         """
         Computes marginals from log-space potentials and manages state.
@@ -132,9 +133,11 @@ def build_graph(domain: Domain, cliques: list[tuple[str, ...]]):
 
     return regions, cliques, messages, message_order, parents, children
 
+
 _State = dict[tuple[Clique, Clique], Factor]
 
-@functools.partial(jax.jit, static_argnames=['mesh', 'iters'])
+
+@functools.partial(jax.jit, static_argnames=["mesh", "iters"])
 def convex_generalized_belief_propagation(
     potentials: CliqueVector,
     total: float = 1,
@@ -197,14 +200,18 @@ def convex_generalized_belief_propagation(
         for r in regions:
             for p in parents[r]:
                 new[r, p] = (
-                    cc[p, r]
-                    * (
-                        pot[r]
-                        + sum(messages[c, r] for c in children[r])
-                        + sum(messages[p1, r] for p1 in parents[r])
+                    (
+                        cc[p, r]
+                        * (
+                            pot[r]
+                            + sum(messages[c, r] for c in children[r])
+                            + sum(messages[p1, r] for p1 in parents[r])
+                        )
+                        - messages[p, r]
                     )
-                    - messages[p, r]
-                ).normalize(log=True).apply_sharding(mesh)
+                    .normalize(log=True)
+                    .apply_sharding(mesh)
+                )
 
         # Damping is not described in paper, but is needed to get convergence for dense graphs
         rho = damping

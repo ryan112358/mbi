@@ -6,6 +6,7 @@ and manipulate sets of `Factor` objects, each associated with a specific clique
 graphical models, such as projecting onto sub-cliques, expanding to larger cliques,
 and performing arithmetic operations on these collections.
 """
+
 from __future__ import annotations
 
 import functools
@@ -76,9 +77,9 @@ class CliqueVector:
 
     @classmethod
     def abstract(cls, domain: Domain, cliques: list[Clique]) -> CliqueVector:
-      cliques = [tuple(cl) for cl in cliques]
-      arrays = { cl : Factor.abstract(domain.project(cl)) for cl in cliques }
-      return cls(domain, cliques, arrays)
+        cliques = [tuple(cl) for cl in cliques]
+        arrays = {cl: Factor.abstract(domain.project(cl)) for cl in cliques}
+        return cls(domain, cliques, arrays)
 
     @classmethod
     def from_projectable(cls, data: Projectable, cliques: list[Clique]):
@@ -139,7 +140,9 @@ class CliqueVector:
 
     def normalize(self, total: float = 1, log: bool = True):
         """Normalizes each factor within the CliqueVector."""
-        return jax.tree.map(lambda f: f.normalize(total, log), self, is_leaf=Factor.__instancecheck__)
+        return jax.tree.map(
+            lambda f: f.normalize(total, log), self, is_leaf=Factor.__instancecheck__
+        )
 
     def __mul__(self, const: chex.Numeric) -> CliqueVector:
         """Multiplies each factor in the vector by a constant."""
@@ -204,5 +207,5 @@ class CliqueVector:
             A new CliqueVector identical to self with sharding constraints applied to
             the underlying factors.
         """
-        arrays = { cl: self.arrays[cl].apply_sharding(mesh) for cl in self.cliques }
+        arrays = {cl: self.arrays[cl].apply_sharding(mesh) for cl in self.cliques}
         return CliqueVector(self.domain, self.cliques, arrays)
