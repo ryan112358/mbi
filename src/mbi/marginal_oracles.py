@@ -244,6 +244,66 @@ def message_passing_stable(
     )
 
 
+@functools.partial(jax.jit, static_argnums=[2, 3])
+def message_passing_shafer_shenoy(
+    potentials: CliqueVector,
+    total: float = 1,
+    mesh: jax.sharding.Mesh | None = None,
+    jtree: nx.Graph | None = None,
+) -> CliqueVector:
+    """Compute marginals from (log-space) potentials using the Shafer-Shenoy algorithm.
+
+    This implementation operates completely in logspace, and is more stable than
+    message_passing_stable when potentials contain -inf values.  It avoids
+    subtraction of log-probabilities (division in probability space) which can
+    lead to NaNs when dealing with zero probabilities.
+
+    Args:
+        potentials: The (log-space) potentials of a graphical model.
+        total: The normalization factor.
+        mesh: The mesh over which the computation should be sharded.
+        jtree: An optional junction tree that defines the message passing order.
+
+    Returns:
+        The marginals of the graphical model, defined over the same set of cliques
+        as the input potentials.  Each marginal is non-negative and sums to "total".
+    """
+    potentials = potentials.apply_sharding(mesh)
+    domain, cliques = potentials.domain, potentials.cliques
+
+    if jtree is None:
+        jtree = junction_tree.make_junction_tree(domain, cliques)[0]
+    message_order = junction_tree.message_passing_order(jtree)
+    maximal_cliques = junction_tree.maximal_cliques(jtree)
+
+    initial_beliefs = potentials.expand(maximal_cliques).apply_sharding(mesh)
+
+    messages = {}
+    neighbors = {cl: list(jtree.neighbors(cl)) for cl in maximal_cliques}
+
+    for i, j in message_order:
+        tau = initial_beliefs[i]
+        for k in neighbors[i]:
+            if k == j:
+                continue
+            tau = tau + messages[(k, i)]
+
+        sep = tau.domain.invert(tuple(set(i) & set(j)))
+        messages[(i, j)] = tau.logsumexp(sep)
+
+    beliefs = {}
+    for cl in maximal_cliques:
+        b = initial_beliefs[cl]
+        for k in neighbors[cl]:
+            b = b + messages[(k, cl)]
+        beliefs[cl] = b
+
+    beliefs = CliqueVector(potentials.domain, maximal_cliques, beliefs)
+    return (
+        beliefs.normalize(total, log=True).exp().contract(cliques).apply_sharding(mesh)
+    )
+
+
 @functools.partial(jax.jit, static_argnums=[2, 3, 4, 5])
 def message_passing_fast(
     potentials: CliqueVector,

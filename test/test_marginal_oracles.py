@@ -3,6 +3,7 @@ from mbi.domain import Domain
 from mbi.factor import Factor
 from mbi.clique_vector import CliqueVector
 from mbi import marginal_oracles
+import jax.numpy as jnp
 import numpy as np
 from parameterized import parameterized
 import itertools
@@ -40,11 +41,17 @@ _ORACLES = [
     marginal_oracles.brute_force_marginals,
     marginal_oracles.einsum_marginals,
     marginal_oracles.message_passing_stable,
+    marginal_oracles.message_passing_shafer_shenoy,
     marginal_oracles.message_passing_fast,
     message_passing_fast_v1,
     _variable_elimination_oracle,
     _calculate_many_oracle,
     _bulk_variable_elimination_oracle
+]
+
+_STABLE_ORACLES = [
+    marginal_oracles.brute_force_marginals,
+    marginal_oracles.message_passing_shafer_shenoy
 ]
 
 _DOMAIN = Domain(["a", "b", "c", "d"], [2, 3, 4, 5])
@@ -125,3 +132,29 @@ class TestMarginalOracles(unittest.TestCase):
 
         np.testing.assert_allclose(ans1.values, ans2.values, atol=1e-12)
         self.assertEqual(ans1.domain, ans2.domain)
+
+    @parameterized.expand(_STABLE_ORACLES)
+    def test_nan_potentials(self, oracle):
+        """Test that -inf potentials are handled correctly without NaNs."""
+        cliques = [('A','B','C'),
+         ('A',),
+         ('D',),
+         ('D', 'A'),
+         ('D', 'A', 'C'),
+         ('A', 'B')]
+
+        dom = Domain(['A', 'B', 'C', 'D'], [2,2,2,2])
+        potentials = CliqueVector.zeros(dom, cliques)
+
+        con = Factor(dom.project(['A', 'C']), jnp.array([[0, -np.inf], [-np.inf, 0]]))
+        potentials.arrays[('A', 'C')] = con
+        potentials.cliques.append(('A', 'C'))
+
+        marginals = oracle(potentials)
+
+        for cl, factor in marginals.arrays.items():
+            self.assertFalse(jnp.isnan(factor.values).any(), f"NaNs found in clique {cl}")
+            # With normalize(total=1), we expect sums to be 1.0 (or very close)
+            # The domain is A,C correlated perfectly (A=C). A=0,C=1 and A=1,C=0 are impossible.
+            # This is a valid graphical model configuration.
+            self.assertTrue(jnp.allclose(factor.sum().values, 1.0), f"Marginal for {cl} does not sum to 1")
