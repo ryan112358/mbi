@@ -128,7 +128,8 @@ def make_junction_tree(
     complete.add_nodes_from(cliques)
     for c1, c2 in itertools.combinations(cliques, 2):
         wgt = len(set(c1) & set(c2))
-        complete.add_edge(c1, c2, weight=-wgt)
+        if wgt > 0:
+            complete.add_edge(c1, c2, weight=-wgt)
     spanning = nx.minimum_spanning_tree(complete)
     return spanning, elimination_order
 
