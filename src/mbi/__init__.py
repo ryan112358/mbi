@@ -13,7 +13,7 @@ from .domain import Domain
 from .estimation import Estimator
 from .factor import Factor, Projectable
 from .marginal_loss import LinearMeasurement, MarginalLossFn
-from .marginal_oracles import MarginalOracle
+from .marginal_oracles import MarginalOracle, message_passing_shafer_shenoy
 from .markov_random_field import MarkovRandomField
 
 Clique = tuple[str, ...]
@@ -29,6 +29,7 @@ __all__ = [
     "MarkovRandomField",
     "Projectable",
     "MarginalOracle",
+    "message_passing_shafer_shenoy",
     "Estimator",
     "estimation",
     "callbacks",
