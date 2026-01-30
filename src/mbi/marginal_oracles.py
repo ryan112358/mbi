@@ -227,18 +227,29 @@ def message_passing_stable(
     maximal_cliques = junction_tree.maximal_cliques(jtree)
 
     mapping = clique_mapping(maximal_cliques, cliques)
-    beliefs = potentials.expand(maximal_cliques).apply_sharding(mesh)
+    initial_beliefs = potentials.expand(maximal_cliques).apply_sharding(mesh)
 
     messages = {}
-    for i, j in message_order:
-        sep = beliefs[i].domain.invert(tuple(set(i) & set(j)))
-        if (j, i) in messages:
-            tau = beliefs[i] - messages[(j, i)]
-        else:
-            tau = beliefs[i]
-        messages[(i, j)] = tau.logsumexp(sep)
-        beliefs[j] = beliefs[j] + messages[(i, j)]
+    neighbors = {cl: list(jtree.neighbors(cl)) for cl in maximal_cliques}
 
+    for i, j in message_order:
+        tau = initial_beliefs[i]
+        for k in neighbors[i]:
+            if k == j:
+                continue
+            tau = tau + messages[(k, i)]
+
+        sep = tau.domain.invert(tuple(set(i) & set(j)))
+        messages[(i, j)] = tau.logsumexp(sep)
+
+    beliefs = {}
+    for cl in maximal_cliques:
+        b = initial_beliefs[cl]
+        for k in neighbors[cl]:
+            b = b + messages[(k, cl)]
+        beliefs[cl] = b
+
+    beliefs = CliqueVector(potentials.domain, maximal_cliques, beliefs)
     return (
         beliefs.normalize(total, log=True).exp().contract(cliques).apply_sharding(mesh)
     )
