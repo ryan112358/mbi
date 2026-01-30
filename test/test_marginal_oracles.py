@@ -56,6 +56,7 @@ _CLIQUE_SETS = [
     [("a", "b", "c", "d")],  # full materialization
     [("d",)],  # singleton
     [("a", "b", "c"), ("c", "b", "a"), ("b", "d")],  # (permuted) duplicates
+    [("a", "b"), ("c", "d")],  # disconnected
     # [],  empty is currently not supported
 ]
 
