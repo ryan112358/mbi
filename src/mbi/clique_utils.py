@@ -32,7 +32,7 @@ def downward_closure(
     ans = set()
     for proj in marginal_queries:
         ans.update(more_itertools.powerset(proj))
-    if include_empty:
+    if not include_empty:
         ans = ans - {()}
     return list(sorted(ans, key=len))
 
