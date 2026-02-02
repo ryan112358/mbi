@@ -11,6 +11,32 @@ from typing import TypeAlias
 Clique: TypeAlias = tuple[str, ...]
 
 
+def downward_closure(
+    cliques: list[Clique], include_empty: bool = False
+) -> list[Clique]:
+    """Returns the downward closure of the given cliques.
+
+    Given a collection of sets, the downward closure is the set of all sets that
+    are subsets of any of the given sets.
+
+    Example Usage:
+    >>> _downward_closure([('a', 'b'), ('a', 'c')])
+    [('a',), ('b',), ('c',), ('a', 'b'), ('a', 'c')]
+
+    Args:
+      cliques: The cliques to compute the downward closure of.
+
+    Returns:
+      The downward closure of the given cliques, without the empty tuple.
+    """
+    ans = set()
+    for proj in marginal_queries:
+        ans.update(more_itertools.powerset(proj))
+    if include_empty:
+        ans = ans - {()}
+    return list(sorted(ans, key=len))
+
+
 def reverse_clique_mapping(
     maximal_cliques: list[Clique], all_cliques: list[Clique]
 ) -> dict[Clique, list[Clique]]:
