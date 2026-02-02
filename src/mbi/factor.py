@@ -209,7 +209,7 @@ class Factor:
     # Binary operations between two factors
     def _binaryop(self, fn: Callable, other: Factor | chex.Numeric) -> Factor:
         """Helper for applying binary operations between this factor and another factor or scalar."""
-        if isinstance(other, chex.Numeric) and jnp.ndim(other) == 0:
+        if not isinstance(other, Factor) and jnp.ndim(other) == 0:
             other = Factor(Domain([], []), jnp.asarray(other))
         newdom = self.domain.merge(other.domain)
         factor1 = self.expand(newdom)
