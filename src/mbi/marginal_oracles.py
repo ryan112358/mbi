@@ -19,7 +19,7 @@ import jax
 import jax.numpy as jnp
 import networkx as nx
 
-from . import junction_tree
+from . import junction_tree as junction_tree_lib
 from .clique_utils import clique_mapping
 from .clique_vector import CliqueVector
 from .domain import Domain
@@ -222,9 +222,9 @@ def message_passing_stable(
     domain, cliques = potentials.domain, potentials.cliques
 
     if jtree is None:
-        jtree = junction_tree.make_junction_tree(domain, cliques)[0]
-    message_order = junction_tree.message_passing_order(jtree)
-    maximal_cliques = junction_tree.maximal_cliques(jtree)
+        jtree = junction_tree_lib.make_junction_tree(domain, cliques)[0]
+    message_order = junction_tree_lib.message_passing_order(jtree)
+    maximal_cliques = junction_tree_lib.maximal_cliques(jtree)
 
     mapping = clique_mapping(maximal_cliques, cliques)
     beliefs = potentials.expand(maximal_cliques).apply_sharding(mesh)
@@ -272,9 +272,9 @@ def message_passing_shafer_shenoy(
     domain, cliques = potentials.domain, potentials.cliques
 
     if jtree is None:
-        jtree = junction_tree.make_junction_tree(domain, cliques)[0]
-    message_order = junction_tree.message_passing_order(jtree)
-    maximal_cliques = junction_tree.maximal_cliques(jtree)
+        jtree = junction_tree_lib.make_junction_tree(domain, cliques)[0]
+    message_order = junction_tree_lib.message_passing_order(jtree)
+    maximal_cliques = junction_tree_lib.maximal_cliques(jtree)
 
     initial_beliefs = potentials.expand(maximal_cliques).apply_sharding(mesh)
 
@@ -338,9 +338,9 @@ def message_passing_fast(
     potentials = potentials.apply_sharding(mesh)
     domain, cliques = potentials.active_domain, potentials.cliques
 
-    jtree = junction_tree.make_junction_tree(domain, cliques)[0]
-    message_order = junction_tree.message_passing_order(jtree)
-    maximal_cliques = junction_tree.maximal_cliques(jtree)
+    jtree = junction_tree_lib.make_junction_tree(domain, cliques)[0]
+    message_order = junction_tree_lib.message_passing_order(jtree)
+    maximal_cliques = junction_tree_lib.maximal_cliques(jtree)
 
     mapping = clique_mapping(maximal_cliques, cliques)
     inverse_mapping = collections.defaultdict(list)
@@ -442,7 +442,7 @@ def variable_elimination(
 
     cliques = [psi[i].domain.attributes for i in psi] + [clique]
     elim = domain.invert(clique)
-    elim_order, _ = junction_tree.greedy_order(domain, cliques, elim=elim)
+    elim_order, _ = junction_tree_lib.greedy_order(domain, cliques, elim=elim)
 
     for z in elim_order:
         psi2 = [psi.pop(i) for i in list(psi.keys()) if z in psi[i].domain]
@@ -539,8 +539,8 @@ def calculate_many_marginals(
     """
 
     domain = potentials.domain
-    jtree = junction_tree.make_junction_tree(potentials.domain, potentials.cliques)[0]
-    max_cliques = junction_tree.maximal_cliques(jtree)
+    jtree = junction_tree_lib.make_junction_tree(potentials.domain, potentials.cliques)[0]
+    max_cliques = junction_tree_lib.maximal_cliques(jtree)
     neighbors = {i: tuple(jtree.neighbors(i)) for i in max_cliques}
 
     # TODO: let's see if we can get rid of this similar to message_passing_fast
@@ -595,6 +595,141 @@ def calculate_many_marginals(
             answers[cl] = variable_elimination(potentials, cl, total, mesh)
 
     return CliqueVector(domain, marginal_queries, answers)
+
+
+def _find_covering_node(attrs, nodes):
+    attr_set = set(attrs)
+    for node in nodes:
+        if attr_set.issubset(set(node)):
+            return node
+    return None
+
+
+def _find_covering_pair(
+    target: Clique, jtree: nx.Graph
+) -> tuple[Clique, Clique | None, str]:
+    # 1. Check nodes
+    target_set = set(target)
+    for node in jtree.nodes:
+        if target_set.issubset(set(node)):
+            return node, None, "node"
+
+    # 2. Check edges
+    for u, v in jtree.edges:
+        if target_set.issubset(set(u) | set(v)):
+            return u, v, "edge"
+
+    # 3. Check disjoint components
+    components = list(nx.connected_components(jtree))
+    # Map attributes to components
+    attr_to_comp = {}
+    for i, comp in enumerate(components):
+        for node in comp:
+            for attr in node:
+                attr_to_comp[attr] = i
+
+    target_comps = set()
+    target_parts = collections.defaultdict(list)
+    for attr in target:
+        c = attr_to_comp.get(attr)
+        if c is not None:
+            target_comps.add(c)
+            target_parts[c].append(attr)
+
+    if len(target_comps) == 2:
+        c1, c2 = list(target_comps)
+        # Find covering node for each part in its component
+        u = _find_covering_node(target_parts[c1], components[c1])
+        v = _find_covering_node(target_parts[c2], components[c2])
+        if u and v:
+            return u, v, "disjoint"
+
+    raise ValueError(
+        f"Could not find covering pair for clique {target}. "
+        "Input clique must be a subset of a junction tree node, edge, or union of two nodes in disjoint components."
+    )
+
+
+def message_passing_dime(
+    potentials: CliqueVector,
+    known_total: float,
+    *,
+    junction_tree: nx.Graph,
+    cliques: list[Clique] | tuple[Clique, ...],
+    mesh: jax.sharding.Mesh | None = None,
+) -> CliqueVector:
+    """Computes marginals for the given cliques using message passing.
+
+    The input cliques are guaranteed to be covered by either a single node,
+    an edge, or two nodes in disjoint components of the junction tree.
+    """
+    if isinstance(cliques, list):
+        cliques = tuple(cliques)
+    return _message_passing_dime_jit(
+        potentials, known_total, junction_tree=junction_tree, cliques=cliques, mesh=mesh
+    )
+
+
+@functools.partial(jax.jit, static_argnames=["junction_tree", "cliques", "mesh"])
+def _message_passing_dime_jit(
+    potentials: CliqueVector,
+    known_total: float,
+    *,
+    junction_tree: nx.Graph,
+    cliques: tuple[Clique, ...],
+    mesh: jax.sharding.Mesh | None = None,
+) -> CliqueVector:
+    potentials = potentials.apply_sharding(mesh)
+    domain = potentials.domain
+
+    jtree = junction_tree
+    message_order = junction_tree_lib.message_passing_order(jtree)
+    maximal_cliques = junction_tree_lib.maximal_cliques(jtree)
+
+    initial_beliefs = potentials.expand(maximal_cliques).apply_sharding(mesh)
+
+    messages = {}
+    neighbors = {cl: list(jtree.neighbors(cl)) for cl in maximal_cliques}
+
+    for i, j in message_order:
+        tau = initial_beliefs[i]
+        for k in neighbors[i]:
+            if k == j:
+                continue
+            tau = tau + messages[(k, i)]
+
+        sep = tau.domain.invert(tuple(set(i) & set(j)))
+        messages[(i, j)] = tau.logsumexp(sep)
+
+    beliefs = {}
+    for cl in maximal_cliques:
+        b = initial_beliefs[cl]
+        for k in neighbors[cl]:
+            b = b + messages[(k, cl)]
+        beliefs[cl] = b
+
+    results = {}
+
+    for target in cliques:
+        u, v, type_ = _find_covering_pair(target, jtree)
+
+        if type_ == "node":
+            log_prob = beliefs[u].project(target, log=True)
+        elif type_ == "edge":
+            sep = tuple(set(u) & set(v))
+            log_sep = beliefs[u].logsumexp(beliefs[u].domain.invert(sep))
+            log_joint = beliefs[u] + beliefs[v] - log_sep
+            log_prob = log_joint.project(target, log=True)
+        elif type_ == "disjoint":
+            log_joint = beliefs[u] + beliefs[v]
+            log_prob = log_joint.project(target, log=True)
+        else:
+            raise ValueError(f"Unknown type {type_}")
+
+        norm_log_prob = log_prob + jnp.log(known_total) - log_prob.logsumexp(target)
+        results[target] = norm_log_prob.exp().apply_sharding(mesh)
+
+    return CliqueVector(domain, cliques, results)
 
 
 def kron_query(

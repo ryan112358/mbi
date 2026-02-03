@@ -4,6 +4,7 @@ from mbi.factor import Factor
 from mbi.clique_vector import CliqueVector
 from mbi import marginal_oracles
 import jax.numpy as jnp
+import networkx as nx
 import numpy as np
 from parameterized import parameterized
 import itertools
@@ -158,3 +159,41 @@ class TestMarginalOracles(unittest.TestCase):
             # The domain is A,C correlated perfectly (A=C). A=0,C=1 and A=1,C=0 are impossible.
             # This is a valid graphical model configuration.
             self.assertTrue(jnp.allclose(factor.sum().values, 1.0), f"Marginal for {cl} does not sum to 1")
+
+
+class TestMessagePassingDime(unittest.TestCase):
+    def test_dime(self):
+        dom = Domain(['A', 'B', 'C', 'D'], [2, 2, 2, 2])
+        f_ab = Factor(dom.project(['A', 'B']), jnp.array([[0.1, 0.2], [0.3, 0.4]])).log()
+        f_bc = Factor(dom.project(['B', 'C']), jnp.array([[0.5, 0.6], [0.7, 0.8]])).log()
+        cliques = [('A', 'B'), ('B', 'C')]
+        potentials = CliqueVector(dom, cliques, {('A', 'B'): f_ab, ('B', 'C'): f_bc})
+
+        jt = nx.Graph()
+        jt.add_edges_from([(('A', 'B'), ('B', 'C'))])
+
+        targets = [('A', 'C'), ('A', 'B', 'C')]
+        results = marginal_oracles.message_passing_dime(potentials, 1.0, junction_tree=jt, cliques=targets)
+
+        for t in targets:
+            exp = marginal_oracles.variable_elimination(potentials, t).normalize()
+            res = results[t].transpose(exp.domain.attributes)
+            np.testing.assert_allclose(res.values, exp.values)
+
+    def test_dime_disjoint(self):
+        dom = Domain(['A', 'B', 'C', 'D'], [2, 2, 2, 2])
+        f_ab = Factor(dom.project(['A', 'B']), jnp.array([[0.1, 0.2], [0.3, 0.4]])).log()
+        f_cd = Factor(dom.project(['C', 'D']), jnp.array([[0.9, 0.1], [0.2, 0.8]])).log()
+        cliques = [('A', 'B'), ('C', 'D')]
+        potentials = CliqueVector(dom, cliques, {('A', 'B'): f_ab, ('C', 'D'): f_cd})
+
+        jt = nx.Graph()
+        jt.add_nodes_from([('A', 'B'), ('C', 'D')])
+
+        targets = [('A', 'C')]
+        results = marginal_oracles.message_passing_dime(potentials, 1.0, junction_tree=jt, cliques=targets)
+
+        for t in targets:
+            exp = marginal_oracles.variable_elimination(potentials, t).normalize()
+            res = results[t].transpose(exp.domain.attributes)
+            np.testing.assert_allclose(res.values, exp.values)
