@@ -611,13 +611,19 @@ def _find_covering_pair(
     # 1. Check nodes
     target_set = set(target)
     for node in jtree.nodes:
+        node: Clique  # type checking hack
         if target_set.issubset(set(node)):
             return node, None, "node"
 
     # 2. Check edges
     for u, v in jtree.edges:
+        u: Clique  # type checking hack
+        v: Clique  # type checking hack
         if target_set.issubset(set(u) | set(v)):
             return u, v, "edge"
+
+    u: Clique | None
+    v: Clique | None
 
     # 3. Check disjoint components
     components = list(nx.connected_components(jtree))
@@ -641,7 +647,7 @@ def _find_covering_pair(
         # Find covering node for each part in its component
         u = _find_covering_node(target_parts[c1], components[c1])
         v = _find_covering_node(target_parts[c2], components[c2])
-        if u and v:
+        if u is not None and v is not None:
             return u, v, "disjoint"
 
     raise ValueError(
