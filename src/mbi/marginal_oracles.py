@@ -193,7 +193,7 @@ def einsum_marginals(
     )
 
 
-@functools.partial(jax.jit, static_argnums=[2])
+@functools.partial(jax.jit, static_argnums=[2, 3])
 def message_passing_stable(
     potentials: CliqueVector,
     total: float = 1,

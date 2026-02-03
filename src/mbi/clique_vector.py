@@ -57,34 +57,29 @@ class CliqueVector:
     @classmethod
     def zeros(cls, domain: Domain, cliques: list[Clique]) -> CliqueVector:
         """Creates a CliqueVector initialized with zero factors for each clique."""
-        cliques = [tuple(cl) for cl in cliques]
         arrays = {cl: Factor.zeros(domain.project(cl)) for cl in cliques}
         return cls(domain, cliques, arrays)
 
     @classmethod
     def ones(cls, domain: Domain, cliques: list[Clique]) -> CliqueVector:
         """Creates a CliqueVector initialized with one factors for each clique."""
-        cliques = [tuple(cl) for cl in cliques]
         arrays = {cl: Factor.ones(domain.project(cl)) for cl in cliques}
         return cls(domain, cliques, arrays)
 
     @classmethod
     def random(cls, domain: Domain, cliques: list[Clique]) -> CliqueVector:
         """Creates a CliqueVector initialized with random factors for each clique."""
-        cliques = [tuple(cl) for cl in cliques]
         arrays = {cl: Factor.random(domain.project(cl)) for cl in cliques}
         return cls(domain, cliques, arrays)
 
     @classmethod
     def abstract(cls, domain: Domain, cliques: list[Clique]) -> CliqueVector:
-        cliques = [tuple(cl) for cl in cliques]
         arrays = {cl: Factor.abstract(domain.project(cl)) for cl in cliques}
         return cls(domain, cliques, arrays)
 
     @classmethod
     def from_projectable(cls, data: Projectable, cliques: list[Clique]):
         """Creates a CliqueVector by projecting a data source onto the specified cliques."""
-        cliques = [tuple(cl) for cl in cliques]
         arrays = {cl: data.project(cl) for cl in cliques}
         return cls(data.domain, cliques, arrays)
 
@@ -106,6 +101,8 @@ class CliqueVector:
         return self.parent(clique) is not None
 
     def project(self, clique: Clique, log: bool = False) -> Factor:
+        if clique in self.arrays:
+            return self[clique]
         if self.supports(clique):
             return self[self.parent(clique)].project(clique, log=log)
         raise ValueError(f"Cannot project onto unsupported clique {clique}.")
