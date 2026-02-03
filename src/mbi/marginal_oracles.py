@@ -226,7 +226,7 @@ def message_passing_stable(
     message_order = junction_tree.message_passing_order(jtree)
     maximal_cliques = junction_tree.maximal_cliques(jtree)
 
-    mapping = clique_mapping(maximal_cliques, cliques)
+    mapping = clique_mapping(maximal_cliques, cliques, domain=domain)
     beliefs = potentials.expand(maximal_cliques).apply_sharding(mesh)
 
     messages = {}
@@ -342,7 +342,7 @@ def message_passing_fast(
     message_order = junction_tree.message_passing_order(jtree)
     maximal_cliques = junction_tree.maximal_cliques(jtree)
 
-    mapping = clique_mapping(maximal_cliques, cliques)
+    mapping = clique_mapping(maximal_cliques, cliques, domain=domain)
     inverse_mapping = collections.defaultdict(list)
     incoming_messages = collections.defaultdict(list)
     potential_mapping = collections.defaultdict(list)

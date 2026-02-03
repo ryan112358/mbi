@@ -38,23 +38,32 @@ def downward_closure(
 
 
 def reverse_clique_mapping(
-    maximal_cliques: list[Clique], all_cliques: list[Clique]
+    maximal_cliques: list[Clique], all_cliques: list[Clique], domain=None
 ) -> dict[Clique, list[Clique]]:
     """Creates a mapping from maximal cliques to a list of cliques they contain.
 
     Args:
       maximal_cliques: A list of maximal cliques.
       all_cliques: A list of all cliques.
+      domain: Optional Domain object. If provided, links cliques to the
+              supporting maximal clique with the smallest domain size.
+              Otherwise, links to the one with fewest elements.
 
     Returns:
       A mapping from maximal cliques to cliques they contain.
     """
     mapping = {cl: [] for cl in maximal_cliques}
     for cl in all_cliques:
-        for cl2 in maximal_cliques:
-            if set(cl) <= set(cl2):
-                mapping[cl2].append(cl)
-                break
+        candidates = [m for m in maximal_cliques if set(cl) <= set(m)]
+        if not candidates:
+            continue
+
+        if domain is None:
+            best = min(candidates, key=len)
+        else:
+            best = min(candidates, key=lambda m: domain.size(m))
+
+        mapping[best].append(cl)
     return mapping
 
 
@@ -83,7 +92,7 @@ def maximal_subset(cliques: list[Clique]) -> list[Clique]:
 
 
 def clique_mapping(
-    maximal_cliques: list[Clique], all_cliques: list[Clique]
+    maximal_cliques: list[Clique], all_cliques: list[Clique], domain=None
 ) -> dict[Clique, Clique]:
     """Creates a mapping from cliques to their corresponding maximal clique.
 
@@ -97,6 +106,9 @@ def clique_mapping(
     Args:
       maximal_cliques: A list of maximal cliques.
       all_cliques: A list of all cliques.
+      domain: Optional Domain object. If provided, links cliques to the
+              supporting maximal clique with the smallest domain size.
+              Otherwise, links to the one with fewest elements.
 
     Returns:
       A mapping from cliques to their maximal clique.
@@ -104,8 +116,14 @@ def clique_mapping(
     """
     mapping = {}
     for cl in all_cliques:
-        for cl2 in maximal_cliques:
-            if set(cl) <= set(cl2):
-                mapping[cl] = cl2
-                break
+        candidates = [m for m in maximal_cliques if set(cl) <= set(m)]
+        if not candidates:
+            continue
+
+        if domain is None:
+            best = min(candidates, key=len)
+        else:
+            best = min(candidates, key=lambda m: domain.size(m))
+
+        mapping[cl] = best
     return mapping
