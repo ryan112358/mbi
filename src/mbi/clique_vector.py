@@ -123,7 +123,7 @@ class CliqueVector:
         Returns:
             An expanded CliqueVector defined over the given set of cliques.
         """
-        mapping = reverse_clique_mapping(cliques, self.cliques)
+        mapping = reverse_clique_mapping(cliques, self.cliques, domain=self.domain)
         arrays = {}
         for cl in cliques:
             dom = self.domain.project(cl)
