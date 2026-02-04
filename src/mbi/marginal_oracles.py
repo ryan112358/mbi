@@ -233,6 +233,8 @@ def message_passing_stable(
     for i, j in message_order:
         sep = beliefs[i].domain.invert(tuple(set(i) & set(j)))
         if (j, i) in messages:
+            # Note: The subtraction below is unstable if beliefs[i] and messages[(j, i)]
+            # are both -inf. Use message_passing_shafer_shenoy for -inf potentials.
             tau = beliefs[i] - messages[(j, i)]
         else:
             tau = beliefs[i]
@@ -558,7 +560,10 @@ def calculate_many_marginals(
             ]  # networkx does not seem to have the right type annotation.
             Sij = tuple(set(Cj) & set(Ci))
             Z = marginals.project(Cj)
-            conditional[(Cj, Ci)] = Z / Z.project(Sij)
+            Z_sep = Z.project(Sij)
+            denom = Z_sep.expand(Z.domain)
+            safe_div = jnp.where(denom.values != 0, Z.values / denom.values, 0.0)
+            conditional[(Cj, Ci)] = Factor(Z.domain, safe_div)
 
     # now iterate through pairs of cliques in order of distance
     # not sure why this API changed and why we need to do this hack.

@@ -75,19 +75,19 @@ class TestMarkovRandomField(unittest.TestCase):
         model = MarkovRandomField(potentials=marginals, marginals=marginals, total=N)
         
         synthetic = model.synthetic_data(rows=N, method="round")
-        df = synthetic.df
+        data = synthetic.to_dict()
         
         # Filter rows where B=1, C=0
-        mask = (df['B'] == 1) & (df['C'] == 0)
-        subset = df[mask]
+        mask = (data['B'] == 1) & (data['C'] == 0)
+        subset_A = data['A'][mask]
         
-        self.assertGreater(len(subset), 0, "Should have generated rows with B=1, C=0")
+        self.assertGreater(len(subset_A), 0, "Should have generated rows with B=1, C=0")
         
         # Check A values
         # Should be all 1s
-        a_ones = subset['A'].sum()
-        self.assertEqual(a_ones, len(subset), 
-                         f"Expected all A=1 for B=1, C=0. Found {a_ones}/{len(subset)} A=1s. "
+        a_ones = subset_A.sum()
+        self.assertEqual(a_ones, len(subset_A),
+                         f"Expected all A=1 for B=1, C=0. Found {a_ones}/{len(subset_A)} A=1s. "
                          "This indicates linear indexing stride mismatch.")
 
 if __name__ == '__main__':
