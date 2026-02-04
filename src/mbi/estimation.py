@@ -19,6 +19,7 @@ import functools
 from collections.abc import Callable
 from typing import Any, NamedTuple, Protocol
 
+import attr
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -133,6 +134,58 @@ def _get_stateful_oracle(
     return wrapper
 
 
+@functools.partial(
+    jax.tree_util.register_dataclass,
+    data_fields=["theta", "alpha", "mu", "loss", "oracle_state"],
+    meta_fields=["stepsize_cfg"],
+)
+@attr.dataclass(frozen=True)
+class _MirrorDescentState:
+    theta: CliqueVector
+    alpha: float
+    mu: CliqueVector
+    loss: float
+    oracle_state: Any
+    stepsize_cfg: float  # < 0 means None (use line search)
+
+    @functools.partial(jax.jit, static_argnums=(1, 2))
+    def update_fn(self, marginal_oracle, loss_fn):
+        theta, alpha, state = self.theta, self.alpha, self.oracle_state
+        # marginal_oracle should be (theta, state) -> (mu, state)
+        mu, state = marginal_oracle(theta, state)
+        loss, dL = jax.value_and_grad(loss_fn)(mu)
+
+        theta2 = theta - alpha * dL
+
+        def fixed_step():
+            return theta2, loss, alpha, mu, state
+
+        def line_search():
+             mu2, _ = marginal_oracle(theta2, state)
+             loss2 = loss_fn(mu2)
+             sufficient_decrease = loss - loss2 >= 0.5 * alpha * dL.dot(mu - mu2)
+
+             new_alpha = jax.lax.select(sufficient_decrease, 1.01 * alpha, 0.5 * alpha)
+             new_theta = jax.lax.cond(sufficient_decrease, lambda: theta2, lambda: theta)
+             new_loss = jax.lax.select(sufficient_decrease, loss2, loss)
+             # Note: we return mu from the beginning of step
+             return new_theta, new_loss, new_alpha, mu, state
+
+        if self.stepsize_cfg >= 0.0:
+            new_theta, new_loss, new_alpha, new_mu, new_state = fixed_step()
+        else:
+            new_theta, new_loss, new_alpha, new_mu, new_state = line_search()
+
+        return attr.evolve(
+            self,
+            theta=new_theta,
+            alpha=new_alpha,
+            mu=new_mu,
+            loss=new_loss,
+            oracle_state=new_state
+        )
+
+
 def mirror_descent(
     domain: Domain,
     loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
@@ -168,7 +221,7 @@ def mirror_descent(
         iters: The maximum number of optimization iterations.
         stepsize: The step size for the optimization.  If not provided, this algorithm
             will use a line search to automatically choose appropriate step sizes.
-        callback_fn: A function to call at each iteration with the iteration number.
+        callback_fn: A function to call at each iteration with the current marginals.
         mesh: Determines how the marginal oracle and loss calculation
                 will be sharded across devices.
 
@@ -186,70 +239,88 @@ def mirror_descent(
     marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
     marginal_oracle = _get_stateful_oracle(marginal_oracle, stateful)
 
-    @jax.jit
-    def update(theta, alpha, state=None):
-        mu, state = marginal_oracle(theta, known_total, state)
-        loss, dL = jax.value_and_grad(loss_fn)(mu)
+    bound_oracle = lambda theta, state: marginal_oracle(theta, known_total, state)
 
-        theta2 = theta - alpha * dL
-        if stepsize is not None:
-            return theta2, loss, alpha, mu, state
-
-        mu2, _ = marginal_oracle(theta2, known_total, state)
-        loss2 = loss_fn(mu2)
-
-        sufficient_decrease = loss - loss2 >= 0.5 * alpha * dL.dot(mu - mu2)
-        alpha = jax.lax.select(sufficient_decrease, 1.01 * alpha, 0.5 * alpha)
-        theta = jax.lax.cond(sufficient_decrease, lambda: theta2, lambda: theta)
-        loss = jax.lax.select(sufficient_decrease, loss2, loss)
-
-        return theta, loss, alpha, mu, state
-
-    # A reasonable initial learning rate seems to be 2.0 L / known_total,
-    # where L is the Lipschitz constant.  Starting from a value too high
-    # can be fine in some cases, but lead to incorrect behavior in others.
-    # We don't currently take L as an argument, but for the most common case,
-    # where our loss function is || mu - y ||_2^2, we have L = 1.
     alpha = 2.0 / known_total if stepsize is None else stepsize
-    mu, state = marginal_oracle(potentials, known_total, state=None)
-    for t in range(iters):
-        potentials, loss, alpha, mu, state = update(potentials, alpha, state)
-        callback_fn(mu)
+    mu, state = bound_oracle(potentials, None)
 
-    marginals, _ = marginal_oracle(potentials, known_total, state)
-    return MarkovRandomField(
-        potentials=potentials, marginals=marginals, total=known_total
+    state_obj = _MirrorDescentState(
+        theta=potentials,
+        alpha=alpha,
+        mu=mu,
+        loss=0.0,
+        oracle_state=state,
+        stepsize_cfg=-1.0 if stepsize is None else stepsize
     )
+
+    for t in range(iters):
+        state_obj = state_obj.update_fn(bound_oracle, loss_fn)
+        callback_fn(state_obj.mu)
+
+    marginals, _ = bound_oracle(state_obj.theta, state_obj.oracle_state)
+    return MarkovRandomField(
+        potentials=state_obj.theta, marginals=marginals, total=known_total
+    )
+
+
+@functools.partial(
+    jax.tree_util.register_dataclass,
+    data_fields=["params", "opt_state", "loss"],
+    meta_fields=[],
+)
+@attr.dataclass(frozen=True)
+class _LBFGSState:
+    params: CliqueVector
+    opt_state: Any
+    loss: float
+
+    @functools.partial(jax.jit, static_argnums=(1, 2))
+    def update_fn(self, marginal_oracle, loss_fn):
+        # loss_fn here is loss_and_grad_fn(theta) -> (loss, grad)
+        optimizer = optax.lbfgs(
+            memory_size=1,
+            linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
+        )
+
+        def value_fn(theta):
+            return loss_fn(theta)[0]
+
+        params, opt_state = self.params, self.opt_state
+        loss, grad = loss_fn(params)
+
+        updates, new_opt_state = optimizer.update(
+            grad, opt_state, params, value=loss, grad=grad, value_fn=value_fn
+        )
+
+        new_params = optax.apply_updates(params, updates)
+
+        return attr.evolve(
+            self,
+            params=new_params,
+            opt_state=new_opt_state,
+            loss=loss
+        )
 
 
 def _optimize(loss_and_grad_fn, params, iters=250, callback_fn=lambda _: None):
     """Runs an optimization loop using Optax L-BFGS."""
-
-    def loss_fn(theta):
-        return loss_and_grad_fn(theta)[0]
-
-    @jax.jit
-    def update(params, opt_state):
-        loss, grad = loss_and_grad_fn(params)
-
-        updates, opt_state = optimizer.update(
-            grad, opt_state, params, value=loss, grad=grad, value_fn=loss_fn
-        )
-
-        return optax.apply_updates(params, updates), opt_state, loss
-
     optimizer = optax.lbfgs(
         memory_size=1,
         linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
     )
-    state = optimizer.init(params)
-    prev_loss = float("inf")
+    opt_state = optimizer.init(params)
+
+    state_obj = _LBFGSState(
+        params=params,
+        opt_state=opt_state,
+        loss=float("inf")
+    )
+
     for t in range(iters):
-        params, state, loss = update(params, state)
-        callback_fn(params)
-        # if loss == prev_loss: break
-        prev_loss = loss
-    return params
+        state_obj = state_obj.update_fn(None, loss_and_grad_fn)
+        callback_fn(state_obj.params)
+
+    return state_obj.params
 
 
 def lbfgs(
@@ -289,7 +360,7 @@ def lbfgs(
         that supports the cliques in the loss_fn.
       marginal_oracle: The function to use to compute marginals from potentials.
       iters: The maximum number of optimization iterations.
-      callback_fn: ...
+      callback_fn: A function to call at each iteration with the current marginals.
       mesh: Determines how the marginal oracle and loss calculation
                 will be sharded across devices.
     """
@@ -347,6 +418,40 @@ def mle_from_marginals(
     )
 
 
+@functools.partial(
+    jax.tree_util.register_dataclass,
+    data_fields=["w", "v", "gbar", "t"],
+    meta_fields=["gamma", "L", "known_total"],
+)
+@attr.dataclass(frozen=True)
+class _DualAveragingState:
+    w: CliqueVector
+    v: CliqueVector
+    gbar: CliqueVector
+    t: int
+    gamma: float
+    L: float
+    known_total: float
+
+    @functools.partial(jax.jit, static_argnums=(1, 2))
+    def update_fn(self, marginal_oracle, loss_fn):
+        w, v, gbar, t = self.w, self.v, self.gbar, self.t
+        gamma, L, known_total = self.gamma, self.L, self.known_total
+
+        c = 2.0 / (t + 1)
+        beta = gamma * (t + 1) ** 1.5 / 2
+
+        u = (1 - c) * w + c * v
+        g = jax.grad(loss_fn)(u) / known_total
+        gbar = (1 - c) * gbar + c * g
+        theta = -t * (t + 1) / (4 * L + beta) * gbar
+
+        v = marginal_oracle(theta)
+        w = (1 - c) * w + c * v
+
+        return attr.evolve(self, w=w, v=v, gbar=gbar, t=t+1)
+
+
 def dual_averaging(
     domain: Domain,
     loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
@@ -367,7 +472,6 @@ def dual_averaging(
     Args:
         domain: The domain over which the model should be defined.
         loss_fn: A MarginalLossFn or a list of Linear Measurements.
-        lipschitz: The Lipschitz constant of the gradient of the loss function.
         known_total: The known or estimated number of records in the data.
         potentials: The initial potentials.  Must be defind over a set of cliques
             that supports the cliques in the loss_fn.
@@ -394,25 +498,51 @@ def dual_averaging(
 
     L = loss_fn.lipschitz / known_total
 
-    @jax.jit
-    def update(w, v, gbar, c, beta, t):
-        u = (1 - c) * w + c * v
-        g = jax.grad(loss_fn)(u) / known_total
-        gbar = (1 - c) * gbar + c * g
-        theta = -t * (t + 1) / (4 * L + beta) * gbar
-        v = marginal_oracle(theta, known_total, mesh)
-        w = (1 - c) * w + c * v
-        return w, v, gbar
+    bound_oracle = lambda theta: marginal_oracle(theta, known_total, mesh)
 
-    w = v = marginal_oracle(potentials, known_total, mesh)
+    w = v = bound_oracle(potentials)
     gbar = CliqueVector.zeros(domain, loss_fn.cliques)
-    for t in range(1, iters + 1):
-        c = 2.0 / (t + 1)
-        beta = gamma * (t + 1) ** 1.5 / 2
-        w, v, gbar = update(w, v, gbar, c, beta, t)
-        callback_fn(w)
 
-    return mle_from_marginals(w, known_total)
+    state = _DualAveragingState(
+        w=w, v=v, gbar=gbar, t=1, gamma=gamma, L=L, known_total=known_total
+    )
+
+    for t in range(iters):
+        state = state.update_fn(bound_oracle, loss_fn)
+        callback_fn(state.w)
+
+    return mle_from_marginals(state.w, known_total)
+
+
+@functools.partial(
+    jax.tree_util.register_dataclass,
+    data_fields=["theta", "c", "x", "y", "z"],
+    meta_fields=["l", "known_total"],
+)
+@attr.dataclass(frozen=True)
+class _InteriorGradientState:
+    theta: CliqueVector
+    c: float
+    x: CliqueVector
+    y: CliqueVector
+    z: CliqueVector
+    l: float
+    known_total: float
+
+    @functools.partial(jax.jit, static_argnums=(1, 2))
+    def update_fn(self, marginal_oracle, loss_fn):
+        theta, c, x, y, z = self.theta, self.c, self.x, self.y, self.z
+        l, known_total = self.l, self.known_total
+
+        a = (((c * l) ** 2 + 4 * c * l) ** 0.5 - l * c) / 2
+        y = (1 - a) * x + a * z
+        c = c * (1 - a)
+        g = jax.grad(loss_fn)(y)
+        theta = theta - a / c / known_total * g
+        z = marginal_oracle(theta)
+        x = (1 - a) * x + a * z
+
+        return attr.evolve(self, theta=theta, c=c, x=x, y=y, z=z)
 
 
 def interior_gradient(
@@ -437,7 +567,6 @@ def interior_gradient(
     Args:
         domain: The domain over which the model should be defined.
         loss_fn: A MarginalLossFn or a list of Linear Measurements.
-        lipschitz: The Lipschitz constant of the gradient of the loss function.
         known_total: The known or estimated number of records in the data.
         potentials: The initial potentials.  Must be defind over a set of cliques
             that supports the cliques in the loss_fn.
@@ -459,59 +588,34 @@ def interior_gradient(
         )
 
     # Algorithm parameters
-    c = 1
-    sigma = 1
+    c = 1.0
+    sigma = 1.0
     l = sigma / loss_fn.lipschitz
 
-    @jax.jit
-    def update(theta, c, x, y, z):
-        a = (((c * l) ** 2 + 4 * c * l) ** 0.5 - l * c) / 2
-        y = (1 - a) * x + a * z
-        c = c * (1 - a)
-        g = jax.grad(loss_fn)(y)
-        theta = theta - a / c / known_total * g
-        z = marginal_oracle(theta, known_total, mesh)
-        x = (1 - a) * x + a * z
-        return theta, c, x, y, z
+    bound_oracle = lambda theta: marginal_oracle(theta, known_total, mesh)
 
-    # If we remove jit from marginal oracle, then we'll need to wrap this in
-    # a jitted "init" function.
-    x = y = z = marginal_oracle(potentials, known_total, mesh)
+    x = y = z = bound_oracle(potentials)
     theta = potentials
-    for t in range(1, iters + 1):
-        theta, c, x, y, z = update(theta, c, x, y, z)
-        callback_fn(x)
 
-    return mle_from_marginals(x, known_total)
+    state = _InteriorGradientState(
+        theta=theta, c=c, x=x, y=y, z=z, l=l, known_total=known_total
+    )
+
+    for t in range(iters):
+        state = state.update_fn(bound_oracle, loss_fn)
+        callback_fn(state.x)
+
+    return mle_from_marginals(state.x, known_total)
 
 
-class _AcceleratedStepSearchState(NamedTuple):
-    """State of the step search.
-
-    Attributes:
-        x: parameters defining the optimization algorithm (see Roulet and
-        d'Aspremont Algorithm 2).
-        z: same as x, see ref.
-        u: dual variable corresponding to z.
-        prev_stepsize: reciprocal of the estimate of the Lipshitz-continuity
-        parameter of the gradient of the objective at the previous iteration of
-        the algorithm.
-        stepsize: reciprocal of the estimate of the Lipshitz-continuity parameter
-        of the gradient of the objective at the current iteration of the
-        algorithm.
-        prev_theta: numerical value decreasing along iterates at the previous
-        iteration of the algorithm, see ref.
-        accept: whether the step is accepted or not.
-        iter_search: iteration count of the search.
-
-    References:
-        Nesterov, [Universal Gradient Methods for Convex Optimization
-        Problems](https://optimization-online.org/wp-content/uploads/2013/04/3833.pdf)
-
-        Roulet and d'Aspremont, [Sharpness, Restart and
-        Acceleration](https://arxiv.org/pdf/1702.03828)
-    """
-
+@functools.partial(
+    jax.tree_util.register_dataclass,
+    data_fields=["x", "z", "u", "prev_stepsize", "stepsize", "prev_theta", "accept", "iter_search"],
+    meta_fields=["target_acc", "norm", "linesearch", "max_iter_search"],
+)
+@attr.dataclass(frozen=True)
+class _UniversalAcceleratedMethodState:
+    """State of the step search."""
     x: CliqueVector
     z: CliqueVector
     u: CliqueVector
@@ -520,143 +624,97 @@ class _AcceleratedStepSearchState(NamedTuple):
     prev_theta: jnp.ndarray | float
     accept: jnp.ndarray | bool
     iter_search: jnp.ndarray | int
+    # Configuration
+    target_acc: float
+    norm: int
+    linesearch: bool
+    max_iter_search: int
 
+    @functools.partial(jax.jit, static_argnums=(1, 2))
+    def update_fn(self, marginal_oracle, loss_fn):
+        # marginal_oracle: (theta) -> mu (which corresponds to dual_proj)
+        # loss_fn: fun
 
-def _universal_accelerated_method_step_init(
-    fun: Callable[[CliqueVector], jnp.ndarray],
-    dual_init_params,
-    dual_proj: Callable[..., Any],
-    max_iter_search: int = 30,
-    target_acc: float = 0.0,
-    stepsize: float = 1.0,
-    norm: int = 2,
-    linesearch=True,
-) -> tuple[
-    _AcceleratedStepSearchState,
-    Callable[[_AcceleratedStepSearchState], bool],
-    Callable[[_AcceleratedStepSearchState], _AcceleratedStepSearchState],
-]:
-    """Accelerated first order method adapted to any smoothness.
+        # We need to construct the loop functions
+        dual_proj = marginal_oracle
+        fun = loss_fn
 
-    Minimizes fun(x) over a constraint set M.
+        # Capture config from self (static)
+        max_iter_search = self.max_iter_search
+        target_acc = self.target_acc
+        norm = self.norm
+        linesearch = self.linesearch
 
-    The algorithm requires an oracle "dual_proj(g)" that computes
-    argmin_y <g, y> + h(y)
-    s.t. y in M
-    where h is a distance generating function.
-
-    This method is inspired from ref 1 and the algorithm is described in
-    essentially described in Algorithm 2 of ref 2. One difference is that we
-    keep track of the dual variable returned by the dual_proj to avoid mapping
-    back and forth between the primal and dual spaces.
-
-    This function provides the initial state and the continuation and body
-    functions for the step the method (which searches for a valid stepsize each
-    time).
-
-    Args:
-        fun: objective to minimize.
-        dual_init_params: initial parameters in dual space.
-        dual_proj: projection onto some constraint set according to a bregman
-        divergence.
-        max_iter_search: maximal number of iterations to run the search.
-        target_acc: target accuracy of the method. If `fun` is non-smooth, this
-        needs to be set > 0. Convergence beyond that target accuracy is not
-        guaranteed. If the function is smooth, set `target_acc=0`.
-        stepsize: initial estimate of the stepsize.
-        norm: type of norm measuring the smoothness of `fun`.
-        linesearch: if true, uses linesearch to determine acceptance of step,
-        otherwise use constant stepsize given by `stepsize`.
-
-    Returns:
-        (init_carry, cond_fun, body_fun) where
-        init_carry: initial state of the step search.
-        cond_fun: continuation criterion when searching for next step.
-        body_fun: step when searching step.
-
-    References:
-        1 Nesterov, [Universal Gradient Methods for Convex Optimization
-        Problems](https://optimization-online.org/wp-content/uploads/2013/04/3833.pdf)
-
-        2 Roulet and d'Aspremont, [Sharpness, Restart and
-        Acceleration](https://arxiv.org/pdf/1702.03828)
-    """
-
-    def cond_fun(carry: _AcceleratedStepSearchState) -> bool | jnp.ndarray:
-        """Continuation criterion when searching for next step."""
-        return jnp.logical_not(
-            jnp.logical_or(carry.accept, carry.iter_search >= max_iter_search),
-        )
-
-    def body_fun(
-        carry: _AcceleratedStepSearchState,
-    ) -> _AcceleratedStepSearchState:
-        """Step when searching step."""
-        # Computes new theta
-        prev_theta, prev_smooth_estim = carry.prev_theta, 1 / carry.prev_stepsize
-        smooth_estim, stepsize = 1 / carry.stepsize, carry.stepsize
-        aux = 1 + 4 * smooth_estim / (prev_theta**2 * prev_smooth_estim)
-        new_theta = 2 / (1 + jnp.sqrt(aux))
-        # We hardcode the first iteration to be prev_theta=-1
-        theta = jnp.where(carry.prev_theta < 0.0, 1.0, new_theta)
-
-        # Computes sequences of params
-        y = (1 - theta) * carry.x + theta * carry.z
-        value_y, grad_y = jax.value_and_grad(fun)(y)
-        u = carry.u - stepsize / theta * grad_y
-        z = dual_proj(u)
-        x = (1 - theta) * carry.x + theta * z
-
-        # Check condition
-        if linesearch:
-            new_value = fun(x)
-            if norm == 1:
-                sq_norm_diff = optax.tree.norm(
-                    optax.tree.sub(x, y), ord=1, squared=True
-                )
-            elif norm == 2:
-                sq_norm_diff = optax.tree.norm(
-                    optax.tree_utils.tree_sub(x, y), ord=2, squared=True
-                )
-            else:
-                raise ValueError(f"norm={norm} not supported")
-            taylor_approx = (
-                value_y + grad_y.dot(x - y) + 0.5 * smooth_estim * sq_norm_diff
+        def cond_fun(carry: _UniversalAcceleratedMethodState) -> bool | jnp.ndarray:
+            """Continuation criterion when searching for next step."""
+            return jnp.logical_not(
+                jnp.logical_or(carry.accept, carry.iter_search >= max_iter_search),
             )
-            accept = new_value <= (taylor_approx + 0.5 * target_acc * theta)
-            new_stepsize = 1.1 * stepsize
-        else:
-            accept = True
-            new_stepsize = stepsize
 
-        candidate = _AcceleratedStepSearchState(
-            x=x,
-            z=z,
-            u=u,
-            prev_stepsize=stepsize,
-            stepsize=new_stepsize,
-            prev_theta=theta,
-            accept=accept,
-            iter_search=jnp.asarray(0),
-        )
-        base = carry._replace(
-            stepsize=0.5 * carry.stepsize, iter_search=carry.iter_search + 1
-        )
-        return jax.tree.map(lambda x, y: jnp.where(accept, x, y), candidate, base)
+        def body_fun(
+            carry: _UniversalAcceleratedMethodState,
+        ) -> _UniversalAcceleratedMethodState:
+            """Step when searching step."""
+            # Computes new theta
+            prev_theta, prev_smooth_estim = carry.prev_theta, 1 / carry.prev_stepsize
+            smooth_estim, stepsize = 1 / carry.stepsize, carry.stepsize
+            aux = 1 + 4 * smooth_estim / (prev_theta**2 * prev_smooth_estim)
+            new_theta = 2 / (1 + jnp.sqrt(aux))
+            # We hardcode the first iteration to be prev_theta=-1
+            theta = jnp.where(carry.prev_theta < 0.0, 1.0, new_theta)
 
-    x = z = dual_proj(dual_init_params)
-    u = dual_init_params
-    init_carry = _AcceleratedStepSearchState(
-        x=x,
-        z=z,
-        u=u,
-        prev_stepsize=stepsize,
-        stepsize=stepsize,
-        prev_theta=jnp.asarray(-1.0),
-        accept=jnp.asarray(False),
-        iter_search=jnp.asarray(0),
-    )
-    return init_carry, cond_fun, body_fun
+            # Computes sequences of params
+            y = (1 - theta) * carry.x + theta * carry.z
+            value_y, grad_y = jax.value_and_grad(fun)(y)
+            u = carry.u - stepsize / theta * grad_y
+            z = dual_proj(u)
+            x = (1 - theta) * carry.x + theta * z
+
+            # Check condition
+            if linesearch:
+                new_value = fun(x)
+                if norm == 1:
+                    sq_norm_diff = optax.tree.norm(
+                        optax.tree.sub(x, y), ord=1, squared=True
+                    )
+                elif norm == 2:
+                    sq_norm_diff = optax.tree.norm(
+                        optax.tree_utils.tree_sub(x, y), ord=2, squared=True
+                    )
+                else:
+                    # Not raising ValueError inside JIT
+                    sq_norm_diff = 0.0 # Should not happen if config is correct
+
+                taylor_approx = (
+                    value_y + grad_y.dot(x - y) + 0.5 * smooth_estim * sq_norm_diff
+                )
+                accept = new_value <= (taylor_approx + 0.5 * target_acc * theta)
+                new_stepsize = 1.1 * stepsize
+            else:
+                accept = True
+                new_stepsize = stepsize
+
+            candidate = attr.evolve(
+                carry,
+                x=x,
+                z=z,
+                u=u,
+                prev_stepsize=stepsize,
+                stepsize=new_stepsize,
+                prev_theta=theta,
+                accept=accept,
+                iter_search=jnp.asarray(0),
+            )
+            base = attr.evolve(
+                carry,
+                stepsize=0.5 * carry.stepsize, iter_search=carry.iter_search + 1
+            )
+            return jax.tree.map(lambda x, y: jnp.where(accept, x, y), candidate, base)
+
+        # Run loop
+        carry = jax.lax.while_loop(cond_fun, body_fun, self)
+        # Reset accept for next outer iteration
+        return attr.evolve(carry, accept=jnp.asarray(False))
 
 
 def universal_accelerated_method(
@@ -676,20 +734,34 @@ def universal_accelerated_method(
     )
     marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
 
-    carry, cond_fun, body_fun = _universal_accelerated_method_step_init(
-        fun=loss_fn,
-        dual_init_params=potentials,
-        dual_proj=lambda x: marginal_oracle(x, known_total),
-        max_iter_search=30,
+    bound_oracle = lambda x: marginal_oracle(x, known_total)
+
+    # Initialize state
+    stepsize = 1.0 / known_total
+    dual_init_params = potentials
+
+    # Init logic
+    x = z = bound_oracle(dual_init_params)
+    u = dual_init_params
+
+    state = _UniversalAcceleratedMethodState(
+        x=x,
+        z=z,
+        u=u,
+        prev_stepsize=stepsize,
+        stepsize=stepsize,
+        prev_theta=jnp.asarray(-1.0),
+        accept=jnp.asarray(False),
+        iter_search=jnp.asarray(0),
         target_acc=0.0,
-        stepsize=1.0 / known_total,
         norm=2,
         linesearch=True,
+        max_iter_search=30
     )
+
     for _ in range(iters):
-        # jax.lax.while_loop traces the body function, so no need to jit it.
-        carry = jax.lax.while_loop(cond_fun, body_fun, carry)
-        carry = carry._replace(accept=jnp.asarray(False))
-        callback_fn(carry.x)
-    sol = carry.x
+        state = state.update_fn(bound_oracle, loss_fn)
+        callback_fn(state.x)
+
+    sol = state.x
     return mle_from_marginals(sol, known_total)

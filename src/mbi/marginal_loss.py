@@ -63,7 +63,7 @@ class MarginalLossFn:
             gradient of the loss function. This is used for optimization algorithms.
     """
 
-    cliques: list[Clique]
+    cliques: tuple[Clique, ...] = attr.field(converter=tuple)
     loss_fn: Callable[[CliqueVector], chex.Numeric]
     lipschitz: float | None = None
 
@@ -101,7 +101,7 @@ def calculate_l2_lipschitz(
         Hv = compute_Hv(v)
         estimate = optax.tree.norm(Hv)
         v = Hv / (estimate + 1e-12)
-    return estimate
+    return float(estimate)
 
 
 def from_linear_measurements(
