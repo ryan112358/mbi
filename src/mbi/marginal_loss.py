@@ -96,10 +96,10 @@ def calculate_l2_lipschitz(
         return jax.jvp(jax.grad(loss_fn), (x0,), (v,))[1]
 
     v = CliqueVector.ones(domain, cliques)
-    v = v / optax.global_norm(v)
+    v = v / optax.tree.norm(v)
     for _ in range(50):
         Hv = compute_Hv(v)
-        estimate = optax.global_norm(Hv)
+        estimate = optax.tree.norm(Hv)
         v = Hv / (estimate + 1e-12)
     return estimate
 
