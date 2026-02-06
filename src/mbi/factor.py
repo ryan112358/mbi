@@ -252,10 +252,13 @@ class Factor:
     def __rmul__(self, other: chex.Numeric) -> Factor:
         return self * other
 
-    def dot(self, other: Factor) -> Factor:
+    def dot(self, other: Factor) -> chex.Numeric:
         if self.domain != other.domain:
             raise ValueError(f"Domains do not match {self.domain} != {other.domain}")
-        return jnp.sum(self.values * other.values)
+        return jnp.sum(
+            self.values * other.values,
+            where=(self.values != 0) & (other.values != 0),
+        )
 
     def datavector(self, flatten: bool = True) -> jax.Array:
         """Returns the factor's values as a flattened vector or original array."""
