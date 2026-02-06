@@ -48,55 +48,86 @@ def _deterministic_round(counts):
     return floor_counts + to_add
 
 
-def _round_matrix(row_sums, col_probs, col_target):
-    """
-    Rounds a matrix of counts to integers such that:
-    1. Row i sums to row_sums[i]
-    2. Col j sums to col_target[j] (approximately/exactly via cumulative rounding)
-    3. Entries are close to row_sums[i] * col_probs[i, j]
-    """
-    expected = row_sums[:, None] * col_probs
-    total = row_sums.sum()
-    empirical_col_sums = expected.sum(axis=0)
-    adjustment = (col_target - empirical_col_sums) / total
+def _controlled_round(counts):
+    """Rounds counts to integers using stochastic rounding (controlled rounding)."""
+    # Handle 1D case
+    if counts.ndim == 1:
+        total = int(round(counts.sum()))
+        frac, integ = np.modf(counts)
+        integ = integ.astype(int)
+        extra = total - integ.sum()
+        if extra > 0:
+            # We must normalize frac to use as probabilities
+            probs = frac / frac.sum()
+            idx = np.random.choice(counts.size, extra, replace=False, p=probs)
+            integ[idx] += 1
+        return integ
 
-    targets = row_sums[:, None] * (col_probs + adjustment)
-    targets = np.maximum(0, targets)
+    # Handle 2D case (axis=1)
+    total = np.round(counts.sum(axis=1)).astype(int)
+    frac, integ = np.modf(counts)
+    integ = integ.astype(int)
+    extra = total - integ.sum(axis=1)
 
-    current_row_sums = targets.sum(axis=1)
-    mask = current_row_sums > 0
-    targets[mask] *= (row_sums[mask] / current_row_sums[mask])[:, None]
+    # We need to perform the random choice per row.
+    # Vectorizing np.random.choice with variable p per row is tricky.
+    # However, since we are doing controlled rounding, we can implement it
+    # by adding a random number to the fractional part and thresholding,
+    # or by using Gumbel-max trick for 'replace=False' sampling?
+    # Actually, simpler: for each row, we need to pick 'extra' indices based on 'frac'.
+    # A vectorized way to do "weighted sampling without replacement" is
+    # to sort by (log(p) + Gumbel_noise).
+    # Here p = frac.
 
-    cum_targets = np.cumsum(targets, axis=0)
-    cum_rounded = _deterministic_round(cum_targets)
-    counts = np.diff(cum_rounded, axis=0, prepend=0)
+    # Add small epsilon to avoid log(0)
+    noise = np.random.rand(*counts.shape)
+    # The reference implementation uses `frac` as weights.
+    # Sampling k items with prob p_i is not exactly trivial to vectorize perfectly
+    # if we want to match np.random.choice(..., replace=False, p=p) exactly.
+    # However, "systematic sampling" or sorting by (frac + noise) might be close enough.
 
-    if np.any(counts < 0):
-        counts = np.maximum(0, counts)
+    # Let's verify the reference implementation logic:
+    # idx = np.random.choice(counts.size, extra, False, frac / frac.sum())
 
-    current_sum = counts.sum()
-    diff = int(total - current_sum)
+    # We can use the same logic as _deterministic_round but with randomized keys
+    # Instead of sorting by -remainder, we sort by something else.
+    # We want to select indices with probability proportional to remainder.
+    # Efroymson's method / weighted sampling without replacement.
 
-    if diff != 0:
-        rows_cnt, cols_cnt = counts.shape
-        row_idx = 0
+    # A simple approximation for controlled rounding:
+    # Sort by (remainder + random_noise) ? No.
+    # Sort by (remainder / random_exponential) ? (E.g. top-k Gumbel)
+    # Yes, Gumbel-max trick gives weighted sampling without replacement.
+    # keys = log(probs) + Gumbel(0,1)
+    # probs = frac / sum(frac)
 
-        while diff != 0:
-            r = row_idx % rows_cnt
+    # Avoid div by zero
+    sum_frac = frac.sum(axis=1, keepdims=True)
+    probs = np.divide(frac, sum_frac, out=np.zeros_like(frac), where=sum_frac!=0)
 
-            if diff > 0:
-                c = np.argmax(counts[r])
-                counts[r, c] += 1
-                diff -= 1
-            elif diff < 0:
-                c = np.argmax(counts[r])
-                if counts[r, c] > 0:
-                    counts[r, c] -= 1
-                    diff += 1
+    # Gumbel noise: -log(-log(u))
+    u = np.random.rand(*counts.shape)
+    gumbel = -np.log(-np.log(u))
 
-            row_idx += 1
+    # keys = log(probs) + gumbel = log(probs) - log(-log(u)) = -log(-log(u)/probs)
+    # We want to select the top 'extra' indices.
+    # Note: if prob is 0, key should be -inf.
 
-    return counts.astype(int)
+    with np.errstate(divide='ignore'):
+        keys = np.log(probs) + gumbel
+
+    # Where extra is 0, it doesn't matter.
+    # Sort indices by keys descending.
+    indices = np.argsort(-keys, axis=1, kind="stable")
+
+    rows = np.arange(counts.shape[0])
+    cols = np.arange(counts.shape[1])
+    mask = cols < extra[:, None]
+
+    to_add = np.zeros_like(integ)
+    np.put_along_axis(to_add, indices, mask.astype(int), axis=1)
+
+    return integ + to_add
 
 
 @chex.dataclass(frozen=True, kw_only=False)
@@ -151,7 +182,7 @@ class MarkovRandomField:
                 return np.random.choice(options, total, True, probas)
 
             counts *= total / counts.sum()
-            integ = _deterministic_round(counts)
+            integ = _controlled_round(counts)
             vals = np.repeat(options, integ)
             return vals
 
@@ -193,11 +224,6 @@ class MarkovRandomField:
                     choices = (rows_cdfs > u).argmax(axis=1)
                     data[col] = choices.astype(dtype)
                 else:
-                    target_global = self.project((col,)).datavector(flatten=False)
-                    target_global = _deterministic_round(
-                        target_global * total / target_global.sum()
-                    )
-
                     # Group rows by parent configuration
                     parent_sizes = [self.domain[p] for p in proj]
                     assert math.prod(parent_sizes) < 2**63, "Parent domain size too large."
@@ -222,8 +248,8 @@ class MarkovRandomField:
                     cond_probs_flat = cond_probs.reshape(-1, cond_probs.shape[-1])
                     group_cond_probs = cond_probs_flat[unique_flat]
 
-                    counts_matrix = _round_matrix(
-                        counts, group_cond_probs, target_global
+                    counts_matrix = _controlled_round(
+                        counts[:, None] * group_cond_probs
                     )
                     repeats = counts_matrix.flatten()
 
