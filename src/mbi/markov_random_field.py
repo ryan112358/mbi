@@ -130,57 +130,6 @@ def _controlled_round(counts):
     return integ + to_add
 
 
-def _round_matrix(row_sums, col_probs, col_target):
-    """
-    Rounds a matrix of counts to integers such that:
-    1. Row i sums to row_sums[i]
-    2. Col j sums to col_target[j] (approximately/exactly via cumulative rounding)
-    3. Entries are close to row_sums[i] * col_probs[i, j]
-    """
-    expected = row_sums[:, None] * col_probs
-    total = row_sums.sum()
-    empirical_col_sums = expected.sum(axis=0)
-    adjustment = (col_target - empirical_col_sums) / total
-
-    targets = row_sums[:, None] * (col_probs + adjustment)
-    targets = np.maximum(0, targets)
-
-    current_row_sums = targets.sum(axis=1)
-    mask = current_row_sums > 0
-    targets[mask] *= (row_sums[mask] / current_row_sums[mask])[:, None]
-
-    cum_targets = np.cumsum(targets, axis=0)
-    cum_rounded = _deterministic_round(cum_targets)
-    counts = np.diff(cum_rounded, axis=0, prepend=0)
-
-    if np.any(counts < 0):
-        counts = np.maximum(0, counts)
-
-    current_sum = counts.sum()
-    diff = int(total - current_sum)
-
-    if diff != 0:
-        rows_cnt, cols_cnt = counts.shape
-        row_idx = 0
-
-        while diff != 0:
-            r = row_idx % rows_cnt
-
-            if diff > 0:
-                c = np.argmax(counts[r])
-                counts[r, c] += 1
-                diff -= 1
-            elif diff < 0:
-                c = np.argmax(counts[r])
-                if counts[r, c] > 0:
-                    counts[r, c] -= 1
-                    diff += 1
-
-            row_idx += 1
-
-    return counts.astype(int)
-
-
 @chex.dataclass(frozen=True, kw_only=False)
 class MarkovRandomField:
     """Represents a learned graphical model.
