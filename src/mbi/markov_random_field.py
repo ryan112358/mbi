@@ -193,11 +193,6 @@ class MarkovRandomField:
                     choices = (rows_cdfs > u).argmax(axis=1)
                     data[col] = choices.astype(dtype)
                 else:
-                    target_global = self.project((col,)).datavector(flatten=False)
-                    target_global = _deterministic_round(
-                        target_global * total / target_global.sum()
-                    )
-
                     # Group rows by parent configuration
                     parent_sizes = [self.domain[p] for p in proj]
                     assert math.prod(parent_sizes) < 2**63, "Parent domain size too large."
@@ -221,6 +216,10 @@ class MarkovRandomField:
                     # Get conditional probs using flat index
                     cond_probs_flat = cond_probs.reshape(-1, cond_probs.shape[-1])
                     group_cond_probs = cond_probs_flat[unique_flat]
+
+                    target_global = _deterministic_round(
+                        (counts[:, None] * group_cond_probs).sum(axis=0)
+                    )
 
                     counts_matrix = _round_matrix(
                         counts, group_cond_probs, target_global
