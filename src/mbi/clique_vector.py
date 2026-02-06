@@ -101,6 +101,7 @@ class CliqueVector:
         return self.parent(clique) is not None
 
     def project(self, clique: Clique, log: bool = False) -> Factor:
+        clique = tuple(clique)
         if clique in self.arrays:
             return self[clique]
         if self.supports(clique):

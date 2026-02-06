@@ -138,7 +138,7 @@ def from_linear_measurements(
                 loss += jnp.sum(jnp.abs(diff)) / M.stddev
 
         if normalize:
-            total = marginals.project([]).datavector(flatten=False)
+            total = marginals.project(()).datavector(flatten=False)
             loss = loss / len(measurements) / total
             if norm == "l2":
                 loss = jnp.sqrt(loss)
