@@ -52,8 +52,20 @@ class MarkovRandomField:
     def supports(self, attrs: str | Sequence[str]) -> bool:
         return self.marginals.domain.supports(attrs)
 
-    def synthetic_data(self, rows: int | None = None, method: str = "round"):
-        """Generates synthetic data based on the learned model's marginals."""
+    def synthetic_data(self, rows: int | None = None, method: str = "round") -> Dataset:
+        """Generates synthetic data based on the learned model's marginals.
+
+        Args:
+            rows: The number of rows to generate. If not provided, uses the
+                  model total, which is usually estimated automatically.
+            method: Specification for strategy to use to generate records.
+                    - "round" for randomized rounding
+                    - "sample" for i.i.d sampling
+
+        Returns:
+            A synthetic dataset whose marginals should closely match those of the
+            model.
+        """
         total = max(1, int(rows or self.total))
         domain = self.domain
         cliques = [set(cl) for cl in self.cliques]
@@ -98,7 +110,9 @@ class MarkovRandomField:
                 marg = self.project(proj + (col,)).datavector(flatten=False)
 
                 marg_parents = marg.sum(axis=-1, keepdims=True)
-                cond_probs = np.divide(marg, marg_parents, out=np.zeros_like(marg), where=marg_parents!=0)
+                cond_probs = np.divide(
+                    marg, marg_parents, out=np.zeros_like(marg), where=marg_parents != 0
+                )
                 cond_cdfs = cond_probs.cumsum(axis=-1)
 
                 indices = tuple(current_proj_data.T)
@@ -107,9 +121,14 @@ class MarkovRandomField:
                 if method == "sample":
                     u = np.random.rand(total, 1)
                 else:
-                    _, inverse, counts = np.unique(current_proj_data, axis=0, return_inverse=True, return_counts=True)
+                    _, inverse, counts = np.unique(
+                        current_proj_data,
+                        axis=0,
+                        return_inverse=True,
+                        return_counts=True,
+                    )
 
-                    perm = np.argsort(inverse, kind='stable')
+                    perm = np.argsort(inverse, kind="stable")
                     inverse_sorted = inverse[perm]
 
                     group_starts = np.zeros(len(counts), dtype=int)
