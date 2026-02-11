@@ -18,6 +18,7 @@ from typing import Protocol
 import jax
 import jax.numpy as jnp
 import networkx as nx
+import numpy as np
 
 from . import junction_tree
 from .clique_utils import clique_mapping
@@ -401,7 +402,7 @@ def variable_elimination(
     clique: Clique,
     total: float = 1,
     mesh: jax.sharding.Mesh | None = None,
-    evidence: dict[str, int] | None = None,
+    evidence: dict[str, int | jax.Array | np.ndarray] | None = None,
 ) -> Factor:
     """Compute an out-of-model/unsupported marginal from the potentials.
 
@@ -417,45 +418,111 @@ def variable_elimination(
         each entry is non-negative and sums to the input total.
     """
     clique = tuple(clique)
-    evidence = evidence or {}
+    if evidence is None:
+        evidence = {}
     if set(clique) & set(evidence.keys()):
         raise ValueError("Evidence attributes cannot be in the query clique.")
 
     k = len(potentials.cliques)
     psi = dict(zip(range(k), potentials.arrays.values()))
 
-    if evidence:
-        for i in list(psi.keys()):
-            psi[i] = psi[i].slice(evidence)
-
+    # If vector evidence is present, we need to handle it carefully to avoid
+    # materializing large intermediate factors (size N * prod(|domain|)).
+    # We will delay slicing until it is beneficial (size reduction > N).
     evidence_attr = "_mbi_evidence"
-    has_vector_evidence = any(evidence_attr in psi[i].domain for i in psi)
+    N = 0
+    has_vector_evidence = False
+    for val in evidence.values():
+        if hasattr(val, "ndim") and val.ndim > 0:
+            has_vector_evidence = True
+            N = val.shape[0]
+            break
 
+    if has_vector_evidence and evidence_attr not in clique:
+        clique = (evidence_attr,) + clique
+
+    # We treat evidence variables as "retained" (not eliminated) during ordering,
+    # so that we can delay slicing them until it is beneficial.
+    domain = potentials.active_domain
     if has_vector_evidence:
-        ev_size = next(
-            psi[i].domain[evidence_attr] for i in psi if evidence_attr in psi[i].domain
-        )
-        extra = Domain([evidence_attr], [ev_size])
-        domain = potentials.active_domain.marginalize(evidence.keys()).merge(extra)
-        if evidence_attr not in clique:
-            clique = (evidence_attr,) + clique
-    else:
-        domain = potentials.active_domain.marginalize(evidence.keys())
+        extra = Domain([evidence_attr], [N])
+        domain = domain.merge(extra)
 
     cliques = [psi[i].domain.attributes for i in psi] + [clique]
-    elim = domain.invert(clique)
+    retained = set(clique) | set(evidence.keys())
+    elim = [a for a in domain.attributes if a not in retained]
     elim_order, _ = junction_tree.greedy_order(domain, cliques, elim=elim)
+
+    def slice_if_beneficial(factor):
+        relevant = [e for e in evidence if e in factor.domain.attrs]
+        if not relevant:
+            return factor
+
+        # If we have vector evidence, slicing introduces a dimension of size N.
+        # We should only slice if the reduction in domain size outweighs N.
+        current_size = 1
+        relevant_size = 1
+        for attr in factor.domain.attrs:
+            size = factor.domain[attr]
+            current_size *= size
+            if attr in relevant:
+                relevant_size *= size
+
+        should_slice = True
+        if has_vector_evidence:
+            # New size would be (current_size / relevant_size) * N
+            # Slice if New Size < Current Size => N < relevant_size
+            if N >= relevant_size:
+                should_slice = False
+
+        if should_slice:
+            return factor.slice(evidence)
+        return factor
+
+    # Initial slice check (for factors not involving elimination variables)
+    for i in list(psi.keys()):
+        psi[i] = slice_if_beneficial(psi[i])
 
     for z in elim_order:
         psi2 = [psi.pop(i) for i in list(psi.keys()) if z in psi[i].domain]
-        psi[k] = sum(psi2).logsumexp([z]).apply_sharding(mesh)
+
+        # Consistency check: If any factor in psi2 has been sliced (has evidence_attr),
+        # we must force slice all other factors in psi2 that contain evidence variables.
+        # This prevents mixing sliced and unsliced versions of the same variable.
+        has_ev_dim = any(evidence_attr in f.domain for f in psi2)
+        if has_ev_dim:
+            for idx, f in enumerate(psi2):
+                if evidence_attr not in f.domain:
+                     # Force slice if it has evidence vars
+                     if any(a in evidence for a in f.domain.attrs):
+                         psi2[idx] = f.slice(evidence)
+
+        combined = sum(psi2)
+        combined = slice_if_beneficial(combined)
+        psi[k] = combined.logsumexp([z]).apply_sharding(mesh)
         k += 1
+
+    # Final slice check for remaining factors
+    for i in list(psi.keys()):
+        psi[i] = slice_if_beneficial(psi[i])
+        # If any evidence remains that wasn't sliced (because N was too big),
+        # we MUST slice it now because we are done eliminating.
+        # However, slice_if_beneficial might have skipped it.
+        # We force slice if any evidence attributes remain.
+        remaining_evidence = [e for e in evidence if e in psi[i].domain.attrs]
+        if remaining_evidence:
+            psi[i] = psi[i].slice(evidence)
+
     # this expand covers the case when clique is not in the active domain
     if has_vector_evidence:
         vars_in_model = [v for v in clique if v != evidence_attr]
         base_dom = potentials.domain.project(vars_in_model)
-        ev_size = domain[evidence_attr]
-        newdom = base_dom.merge(Domain([evidence_attr], [ev_size])).project(clique)
+        # If we haven't sliced yet, domain won't have evidence_attr
+        # But we force sliced above, so psi[i] should have it.
+        # However, unnormalized might not have it if no factors had vector evidence?
+        # But has_vector_evidence is True implies input evidence had vectors.
+        # And we force slice at the end.
+        newdom = base_dom.merge(Domain([evidence_attr], [N])).project(clique)
     else:
         newdom = potentials.domain.project(clique)
 
