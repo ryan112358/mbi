@@ -205,12 +205,11 @@ def mirror_descent(
 
         return theta, loss, alpha, mu, state
 
-    # A reasonable initial learning rate seems to be 2.0 L / known_total,
-    # where L is the Lipschitz constant.  Starting from a value too high
-    # can be fine in some cases, but lead to incorrect behavior in others.
-    # We don't currently take L as an argument, but for the most common case,
-    # where our loss function is || mu - y ||_2^2, we have L = 1.
-    alpha = 2.0 / known_total if stepsize is None else stepsize
+    # Theory suggests the initial learning rate should be inversely
+    # proportional to L. We also divide by scaling factor to account for
+    # the fact that gradients are scaled up by a factor of known_total.
+    L = loss_fn.lipschitz or 1.0
+    alpha = 2.0 / (L * known_total) if stepsize is None else stepsize
     mu, state = marginal_oracle(potentials, known_total, state=None)
     for t in range(iters):
         potentials, loss, alpha, mu, state = update(potentials, alpha, state)
