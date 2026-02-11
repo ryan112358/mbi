@@ -102,15 +102,9 @@ class MarkovRandomField:
             used.add(col)
 
             if len(proj) >= 1:
-                joint = self.project(proj + (col,))
-                clique_vec = CliqueVector(
-                    joint.domain,
-                    [joint.domain.attributes],
-                    {joint.domain.attributes: joint.log()},
-                )
                 evidence = {p: data[p] for p in proj}
                 marg = marginal_oracles.variable_elimination(
-                    clique_vec, (col,), total=1.0, evidence=evidence
+                    self.potentials, (col,), total=1.0, evidence=evidence
                 )
                 cond_probs = np.array(marg.values)
                 cond_cdfs = cond_probs.cumsum(axis=1)
