@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from mbi import Domain, Factor, CliqueVector, MarkovRandomField, Dataset
+from mbi import Domain, Factor, CliqueVector, MarkovRandomField, Dataset, marginal_oracles
 
 class TestMarkovRandomField(unittest.TestCase):
     def test_synthetic_data_accuracy(self):
@@ -140,6 +140,87 @@ class TestMarkovRandomField(unittest.TestCase):
         # Threshold: < 0.0017 is acceptable per user requirements
         # Our fix achieves ~0.0009
         self.assertLess(error, 0.0017, f"Error {error} exceeded threshold 0.0017 for pair {cl}")
+
+class TestSyntheticDataComprehensive(unittest.TestCase):
+    def _create_random_model(self, domain, cliques, N):
+        """Creates a random MRF with given cliques and total count N."""
+        potentials = {}
+        # Ensure reproducibility
+        np.random.seed(0)
+
+        for cl in cliques:
+            # Generate random factor over cl
+            # Use small epsilon to avoid -inf if rand hits 0
+            vals = np.random.rand(*domain.project(cl).shape) + 1e-10
+            f = Factor(domain.project(cl), vals)
+            potentials[cl] = f.log()
+
+        potential_vector = CliqueVector(domain, cliques, potentials)
+        marginals = marginal_oracles.message_passing_stable(potential_vector, total=N)
+
+        return MarkovRandomField(potentials=potential_vector, marginals=marginals, total=N)
+
+    def _test_model_structure(self, domain, cliques, N=10000):
+        """Tests synthetic data generation for a specific model structure."""
+        model = self._create_random_model(domain, cliques, N)
+
+        # Generate synthetic data
+        syn_round = model.synthetic_data(rows=N, method='round')
+        syn_sample = model.synthetic_data(rows=N, method='sample')
+
+        # Check errors on supported cliques
+        errors_round = []
+        errors_sample = []
+
+        for cl in cliques:
+            marg_model = model.project(cl).datavector(flatten=True)
+            marg_round = syn_round.project(cl).datavector(flatten=True)
+            marg_sample = syn_sample.project(cl).datavector(flatten=True)
+
+            # L1 Error (Total Variation Distance * 2)
+            err_round = np.sum(np.abs(marg_round - marg_model))
+            err_sample = np.sum(np.abs(marg_sample - marg_model))
+
+            errors_round.append(err_round)
+            errors_sample.append(err_sample)
+
+            # Assert round error is better than sample error if sample error is significant
+            if err_sample > 1e-5:
+                # With N=10000, sample error should be large enough to distinguish.
+                # But to avoid flakiness if they are close, we can use a loose inequality or just a print
+                # However, the requirement is "asserting that it is always less".
+                self.assertLess(err_round, err_sample,
+                                f"Round error {err_round} should be less than Sample error {err_sample} for clique {cl}")
+
+            # Statistical check for sample error
+            size = marg_model.size
+            bound = 10 * np.sqrt(N * size) # very loose bound
+            self.assertLess(err_sample, bound,
+                            f"Sample error {err_sample} exceeds bound {bound} for clique {cl} (size {size})")
+
+    def test_independent_model(self):
+        """Test with all disjoint attributes (independent factors)."""
+        domain = Domain(['A', 'B', 'C', 'D'], [2, 3, 2, 4])
+        cliques = [('A',), ('B',), ('C',), ('D',)]
+        self._test_model_structure(domain, cliques)
+
+    def test_single_big_model(self):
+        """Test with a single factor over the entire domain."""
+        domain = Domain(['A', 'B', 'C'], [2, 2, 3])
+        cliques = [('A', 'B', 'C')]
+        self._test_model_structure(domain, cliques)
+
+    def test_pairwise_model(self):
+        """Test with factors over pairs of attributes."""
+        domain = Domain(['A', 'B', 'C'], [2, 2, 2])
+        cliques = [('A', 'B'), ('B', 'C'), ('A', 'C')]
+        self._test_model_structure(domain, cliques)
+
+    def test_mixed_model(self):
+        """Test with factors over 2, 3, and 4 attributes."""
+        domain = Domain(['A', 'B', 'C', 'D', 'E'], [2, 2, 2, 2, 2])
+        cliques = [('A', 'B'), ('B', 'C', 'D'), ('C', 'D', 'E', 'A')] # Loop
+        self._test_model_structure(domain, cliques)
 
 if __name__ == '__main__':
     unittest.main()
