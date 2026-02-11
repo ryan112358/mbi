@@ -18,6 +18,7 @@ from typing import Protocol
 import jax
 import jax.numpy as jnp
 import networkx as nx
+import numpy as np
 
 from . import junction_tree
 from .clique_utils import clique_mapping
@@ -401,7 +402,7 @@ def variable_elimination(
     clique: Clique,
     total: float = 1,
     mesh: jax.sharding.Mesh | None = None,
-    evidence: dict[str, int] | None = None,
+    evidence: dict[str, int | jax.Array | np.ndarray] | None = None,
 ) -> Factor:
     """Compute an out-of-model/unsupported marginal from the potentials.
 
@@ -417,7 +418,8 @@ def variable_elimination(
         each entry is non-negative and sums to the input total.
     """
     clique = tuple(clique)
-    evidence = evidence or {}
+    if evidence is None:
+        evidence = {}
     if set(clique) & set(evidence.keys()):
         raise ValueError("Evidence attributes cannot be in the query clique.")
 
