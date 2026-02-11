@@ -93,34 +93,32 @@ class MarkovRandomField:
 
         data = {}
         order = elimination_order[::-1]
-        col = order[0]
-        marg = self.project((col,)).datavector(flatten=False)
-        data[col] = synthetic_col(marg, total)
-        used = {col}
+        used = set()
 
-        for col in order[1:]:
+        for col in order:
             relevant = [cl for cl in cliques if col in cl]
             relevant = used.intersection(set().union(*relevant))
             proj = tuple(relevant)
             used.add(col)
 
             if len(proj) >= 1:
-                current_proj_data = np.stack(tuple(data[col] for col in proj), -1)
-
-                marg = self.project(proj + (col,)).datavector(flatten=False)
-
-                marg_parents = marg.sum(axis=-1, keepdims=True)
-                cond_probs = np.divide(
-                    marg, marg_parents, out=np.zeros_like(marg), where=marg_parents != 0
+                joint = self.project(proj + (col,))
+                clique_vec = CliqueVector(
+                    joint.domain,
+                    [joint.domain.attributes],
+                    {joint.domain.attributes: joint.log()},
                 )
-                cond_cdfs = cond_probs.cumsum(axis=-1)
-
-                indices = tuple(current_proj_data.T)
-                rows_cdfs = cond_cdfs[indices]
+                evidence = {p: data[p] for p in proj}
+                marg = marginal_oracles.variable_elimination(
+                    clique_vec, (col,), total=1.0, evidence=evidence
+                )
+                cond_probs = np.array(marg.values)
+                cond_cdfs = cond_probs.cumsum(axis=1)
 
                 if method == "sample":
                     u = np.random.rand(total, 1)
                 else:
+                    current_proj_data = np.stack(tuple(data[col] for col in proj), -1)
                     _, inverse, counts = np.unique(
                         current_proj_data,
                         axis=0,
@@ -145,7 +143,7 @@ class MarkovRandomField:
                     u = (ranks + noise) / counts[inverse]
                     u = u.reshape(-1, 1)
 
-                choices = (rows_cdfs > u).argmax(axis=1)
+                choices = (cond_cdfs > u).argmax(axis=1)
                 data[col] = choices.astype(np.min_scalar_type(self.domain[col]))
 
             else:
