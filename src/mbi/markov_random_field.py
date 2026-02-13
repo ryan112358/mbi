@@ -111,6 +111,7 @@ class MarkovRandomField:
                 current_proj_data = np.stack(tuple(data[col] for col in proj), -1)
 
                 marg = marginals.project(proj + (col,)).datavector(flatten=False)
+                marg = np.asarray(marg)
 
                 marg_parents = marg.sum(axis=-1, keepdims=True)
                 cond_probs = np.divide(
