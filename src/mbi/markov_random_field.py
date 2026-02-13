@@ -70,6 +70,9 @@ class MarkovRandomField:
         domain = self.domain
         cliques = [set(cl) for cl in self.cliques]
         jtree, elimination_order = junction_tree.make_junction_tree(domain, cliques)
+        
+        potentials = self.potentials.expand(list(jtree.nodes))
+        marginals = marginal_oracles.message_passing_stable(potentials)
 
         def synthetic_col(counts, total):
             """Generates a synthetic column by sampling or rounding based on counts and total."""
@@ -94,7 +97,7 @@ class MarkovRandomField:
         data = {}
         order = elimination_order[::-1]
         col = order[0]
-        marg = self.project((col,)).datavector(flatten=False)
+        marg = marginals.project((col,)).datavector(flatten=False)
         data[col] = synthetic_col(marg, total)
         used = {col}
 
@@ -107,7 +110,7 @@ class MarkovRandomField:
             if len(proj) >= 1:
                 current_proj_data = np.stack(tuple(data[col] for col in proj), -1)
 
-                marg = self.project(proj + (col,)).datavector(flatten=False)
+                marg = marginals.project(proj + (col,)).datavector(flatten=False)
 
                 marg_parents = marg.sum(axis=-1, keepdims=True)
                 cond_probs = np.divide(
@@ -149,7 +152,7 @@ class MarkovRandomField:
                 data[col] = choices.astype(np.min_scalar_type(self.domain[col]))
 
             else:
-                marg = self.project((col,)).datavector(flatten=False)
+                marg = marginals.project((col,)).datavector(flatten=False)
                 data[col] = synthetic_col(marg, total)
 
         return Dataset(data, domain)
