@@ -119,19 +119,16 @@ class MarkovRandomField:
                 )
                 cond_cdfs = cond_probs.cumsum(axis=-1)
 
-                indices = tuple(current_proj_data.T)
-                rows_cdfs = cond_cdfs[indices]
+                uniques, inverse, counts = np.unique(
+                    current_proj_data,
+                    axis=0,
+                    return_inverse=True,
+                    return_counts=True,
+                )
 
                 if method == "sample":
-                    u = np.random.rand(total, 1)
+                    u = np.random.rand(total)
                 else:
-                    _, inverse, counts = np.unique(
-                        current_proj_data,
-                        axis=0,
-                        return_inverse=True,
-                        return_counts=True,
-                    )
-
                     perm = np.argsort(inverse, kind="stable")
                     inverse_sorted = inverse[perm]
 
@@ -147,10 +144,29 @@ class MarkovRandomField:
 
                     noise = np.random.rand(total)
                     u = (ranks + noise) / counts[inverse]
-                    u = u.reshape(-1, 1)
 
-                choices = (rows_cdfs > u).argmax(axis=1)
-                data[col] = choices.astype(np.min_scalar_type(self.domain[col]))
+                indices = tuple(uniques.T)
+                unique_cdfs = cond_cdfs[indices]
+
+                choices = np.empty(total, dtype=np.min_scalar_type(self.domain[col]))
+                domain_size = self.domain[col]
+
+                if method == "sample":
+                    perm = np.argsort(inverse, kind="stable")
+
+                u_sorted = u[perm]
+
+                start = 0
+                for i, count in enumerate(counts):
+                    end = start + count
+                    cdf = unique_cdfs[i]
+                    indices_chunk = np.searchsorted(cdf, u_sorted[start:end], side="right")
+                    if len(indices_chunk) > 0:
+                        np.minimum(indices_chunk, domain_size - 1, out=indices_chunk)
+                        choices[perm[start:end]] = indices_chunk
+                    start = end
+
+                data[col] = choices
 
             else:
                 marg = marginals.project((col,)).datavector(flatten=False)
