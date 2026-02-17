@@ -208,6 +208,7 @@ def mirror_descent(
     # Theory suggests the initial learning rate should be inversely
     # proportional to L. We also divide by scaling factor to account for
     # the fact that gradients are scaled up by a factor of known_total.
+    # See Eq 75. of https://www.cs.uic.edu/~zhangx/teaching/bregman.pdf.
     L = loss_fn.lipschitz or 1.0
     alpha = 2.0 / (L * known_total) if stepsize is None else stepsize
     mu, state = marginal_oracle(potentials, known_total, state=None)
