@@ -70,7 +70,7 @@ class MarkovRandomField:
         domain = self.domain
         cliques = [set(cl) for cl in self.cliques]
         jtree, elimination_order = junction_tree.make_junction_tree(domain, cliques)
-        
+
         potentials = self.potentials.expand(list(jtree.nodes))
         marginals = marginal_oracles.message_passing_stable(potentials)
 
@@ -110,8 +110,9 @@ class MarkovRandomField:
             if len(proj) >= 1:
                 current_proj_data = np.stack(tuple(data[col] for col in proj), -1)
 
-                marg = marginals.project(proj + (col,)).datavector(flatten=False)
-                marg = np.asarray(marg)
+                marg = np.asarray(
+                    marginals.project(proj + (col,)).datavector(flatten=False)
+                )
 
                 marg_parents = marg.sum(axis=-1, keepdims=True)
                 cond_probs = np.divide(
@@ -160,7 +161,9 @@ class MarkovRandomField:
                 for i, count in enumerate(counts):
                     end = start + count
                     cdf = unique_cdfs[i]
-                    indices_chunk = np.searchsorted(cdf, u_sorted[start:end], side="right")
+                    indices_chunk = np.searchsorted(
+                        cdf, u_sorted[start:end], side="right"
+                    )
                     if len(indices_chunk) > 0:
                         np.minimum(indices_chunk, domain_size - 1, out=indices_chunk)
                         choices[perm[start:end]] = indices_chunk
