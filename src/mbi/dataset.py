@@ -341,12 +341,14 @@ class JaxDataset:
             result = w.sum()
             return Factor(domain, jnp.array([result]))
 
-        multi_index = tuple(self.data[a] for a in domain.attrs)
+        length = math.prod(dims)
+        dtype = np.min_scalar_type(length-1)
+        multi_index = [self.data[a] for a in domain.attrs]
+        multi_index[0] = multi_index[0].astype(dtype)
         linear_indices = jnp.ravel_multi_index(
-            multi_index, dims, mode="wrap", order="C"
+            tuple(multi_index), dims, mode="wrap", order="C"
         )
 
-        length = math.prod(dims)
 
         counts = jnp.bincount(linear_indices, weights=self.weights, minlength=length)
 
