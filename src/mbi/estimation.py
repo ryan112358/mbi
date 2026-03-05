@@ -225,6 +225,11 @@ def mirror_descent(
 def _optimize(loss_and_grad_fn, params, iters=250, callback_fn=lambda _: None):
     """Runs an optimization loop using Optax L-BFGS."""
 
+    if len(jax.tree.leaves(params)) == 0:
+        # Nothing to optimize
+        callback_fn(params)
+        return params
+
     def loss_fn(theta):
         return loss_and_grad_fn(theta)[0]
 
