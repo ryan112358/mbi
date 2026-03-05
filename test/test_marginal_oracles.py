@@ -64,7 +64,7 @@ _CLIQUE_SETS = [
     [("d",)],  # singleton
     [("a", "b", "c"), ("c", "b", "a"), ("b", "d")],  # (permuted) duplicates
     [("a", "b"), ("c", "d")],  # disconnected
-    # [],  empty is currently not supported
+    [],  # trivial empty set
 ]
 
 _ALL_CLIQUES = list(itertools.chain.from_iterable(

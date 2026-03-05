@@ -157,6 +157,9 @@ def brute_force_marginals(
     potentials: CliqueVector, total: float = 1, mesh: jax.sharding.Mesh | None = None
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials by materializing the full joint distribution."""
+    if len(potentials.cliques) == 0:
+        return CliqueVector(potentials.domain, [], {})
+
     P = (
         sum(potentials.arrays.values())
         .normalize(total, log=True)
@@ -179,6 +182,10 @@ def einsum_marginals(
 
     This is a "brute-force" approach and is not recommended in practice.
     """
+    # not strictly necessary, but consistent
+    if len(potentials.cliques) == 0:
+        return CliqueVector(potentials.domain, [], {})
+
     inputs = list(potentials.arrays.values())
     return CliqueVector(
         potentials.domain,
@@ -218,6 +225,9 @@ def message_passing_stable(
         The marginals of the graphical model, defined over the same set of cliques
         as the input potentials.  Each marginal is non-negative and sums to "total".
     """
+    if len(potentials.cliques) == 0:
+        return CliqueVector(potentials.domain, [], {})
+
     potentials = potentials.apply_sharding(mesh)
     domain, cliques = potentials.domain, potentials.cliques
 
@@ -270,6 +280,9 @@ def message_passing_shafer_shenoy(
         The marginals of the graphical model, defined over the same set of cliques
         as the input potentials.  Each marginal is non-negative and sums to "total".
     """
+    if len(potentials.cliques) == 0:
+        return CliqueVector(potentials.domain, [], {})
+
     potentials = potentials.apply_sharding(mesh)
     domain, cliques = potentials.domain, potentials.cliques
 
@@ -317,7 +330,7 @@ def message_passing_fast(
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials using the message passing algorithm.
 
-    This implementation leverages the "einsum" primitve to compute clique marginals
+    This implementation leverages the "einsum" primitive to compute clique marginals
     without materializing marginals over the super cliques first (nodes in the
     junction tree).  It can be much faster and more memory efficient than
     message_passing_stable, but there are some cases where this
@@ -337,6 +350,9 @@ def message_passing_fast(
         The marginals of the graphical model, defined over the same set of cliques
         as the input potentials.  Each marginal is non-negative and sums to "total".
     """
+    if len(potentials.cliques) == 0:
+        return CliqueVector(potentials.domain, [], {})
+
     potentials = potentials.apply_sharding(mesh)
     domain, cliques = potentials.active_domain, potentials.cliques
 
