@@ -133,7 +133,7 @@ def from_linear_measurements(
             mu = marginals.project(M.clique)
             diff = M.query(mu) - M.noisy_measurement
             if norm == "l2":
-                loss += (diff @ diff) / (2 * M.stddev)
+                loss += (diff @ diff) / (2 * M.stddev**2)
             elif norm == "l1":
                 loss += jnp.sum(jnp.abs(diff)) / M.stddev
 
