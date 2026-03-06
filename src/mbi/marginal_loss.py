@@ -131,11 +131,13 @@ def from_linear_measurements(
         loss = 0.0
         for M in measurements:
             mu = marginals.project(M.clique)
-            diff = M.query(mu) - M.noisy_measurement
+            # avoid introducing inf/nan from invariants
+            stddev = jnp.maximum(M.stddev, 1e-12)
+            diff = (M.query(mu) - M.noisy_measurement) / stddev
             if norm == "l2":
-                loss += (diff @ diff) / (2 * M.stddev)
+                loss += 0.5 * jnp.vdot(diff, diff)
             elif norm == "l1":
-                loss += jnp.sum(jnp.abs(diff)) / M.stddev
+                loss += jnp.sum(jnp.abs(diff))
 
         if normalize:
             total = marginals.project(()).datavector(flatten=False)
