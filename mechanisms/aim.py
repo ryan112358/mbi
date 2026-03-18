@@ -75,8 +75,9 @@ class AIM(Mechanism):
         max_model_size=80,
         max_iters=1000,
         structural_zeros={},
+        bounded=False,
     ):
-        super(AIM, self).__init__(epsilon, delta, prng)
+        super(AIM, self).__init__(epsilon, delta, bounded=bounded, prng=prng)
         self.rounds = rounds
         self.max_iters = max_iters
         self.max_model_size = max_model_size
@@ -110,7 +111,7 @@ class AIM(Mechanism):
 
         oneway = [cl for cl in candidates if len(cl) == 1]
 
-        sigma = np.sqrt(rounds / (2 * 0.9 * self.rho))
+        sigma = self.gaussian_noise_scale_zcdp(1.0, 0.9 * self.rho / rounds)
         epsilon = np.sqrt(8 * 0.1 * self.rho / rounds)
 
         measurements = []
@@ -134,7 +135,7 @@ class AIM(Mechanism):
             if self.rho - rho_used < 2 * (0.5 / sigma**2 + 1.0 / 8 * epsilon**2):
                 # Just use up whatever remaining budget there is for one last round
                 remaining = self.rho - rho_used
-                sigma = np.sqrt(1 / (2 * 0.9 * remaining))
+                sigma = self.gaussian_noise_scale_zcdp(1.0, 0.9 * remaining)
                 epsilon = np.sqrt(8 * 0.1 * remaining)
                 terminate = True
 
@@ -198,7 +199,6 @@ def default_params():
 
 
 if __name__ == "__main__":
-
     description = ""
     formatter = argparse.ArgumentDefaultsHelpFormatter
     parser = argparse.ArgumentParser(description=description, formatter_class=formatter)

@@ -20,7 +20,6 @@
 # - Thomas Steinke dgauss@thomas-steinke.net 2020
 
 import math
-import matplotlib.pyplot as plt
 
 
 # *********************************************************************
