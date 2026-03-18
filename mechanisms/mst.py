@@ -91,18 +91,6 @@ def MST(data, epsilon, delta):
   return mech.run(data)
 
 
-def measure(data, cliques, sigma, weights=None):
-  if weights is None:
-    weights = np.ones(len(cliques))
-  weights = np.array(weights) / np.linalg.norm(weights)
-  measurements = []
-  for proj, wgt in zip(cliques, weights):
-    x = data.project(proj).datavector()
-    y = x + np.random.normal(loc=0, scale=sigma / wgt, size=x.size)
-    measurements.append(LinearMeasurement(y, proj, sigma / wgt))
-  return measurements
-
-
 def compress_domain(data, measurements):
   supports = {}
   new_measurements = []
