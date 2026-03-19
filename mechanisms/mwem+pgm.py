@@ -4,6 +4,7 @@ from mbi import Dataset, LinearMeasurement, estimation, callbacks, junction_tree
 from scipy.special import softmax
 from cdp2adp import cdp_rho
 import argparse
+from workload_utils import subsample_candidates
 
 
 """
@@ -194,10 +195,7 @@ if __name__ == "__main__":
     workload = list(itertools.combinations(data.domain, args.degree))
     workload = [cl for cl in workload if data.domain.size(cl) <= args.max_cells]
     if args.num_marginals is not None:
-        workload = [
-            workload[i]
-            for i in prng.choice(len(workload), args.num_marginals, replace=False)
-        ]
+        workload = subsample_candidates(workload, args.num_marginals, prng)
 
     synth = mwem_pgm(
         data,

@@ -10,6 +10,7 @@ import argparse
 import pandas as pd
 import os
 import json
+from workload_utils import subsample_candidates
 
 """
 This is a generalization of the winning mechanism from the 
@@ -198,10 +199,7 @@ if __name__ == "__main__":
   workload = [cl for cl in workload if data.domain.size(cl) <= args.max_cells]
   if args.num_marginals is not None:
     prng = np.random.RandomState(None)
-    workload = [
-      workload[i]
-      for i in prng.choice(len(workload), args.num_marginals, replace=False)
-    ]
+    workload = subsample_candidates(workload, args.num_marginals, prng)
 
   synth = MST(data, args.epsilon, args.delta)
 

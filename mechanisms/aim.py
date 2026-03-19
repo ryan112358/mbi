@@ -22,6 +22,7 @@ from scipy.optimize import bisect
 import pandas as pd
 from mbi import Factor
 import argparse
+from workload_utils import subsample_candidates
 
 
 def powerset(iterable):
@@ -230,10 +231,7 @@ if __name__ == "__main__":
     workload = [cl for cl in workload if data.domain.size(cl) <= args.max_cells]
     if args.num_marginals is not None:
         prng = np.random
-        workload = [
-            workload[i]
-            for i in prng.choice(len(workload), args.num_marginals, replace=False)
-        ]
+        workload = subsample_candidates(workload, args.num_marginals, prng)
 
     workload = [(cl, 1.0) for cl in workload]
     mech = AIM(
