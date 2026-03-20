@@ -8,7 +8,6 @@ from autodp import privacy_calibrator
 import os
 import pandas as pd
 import pickle
-from workload_utils import subsample_candidates
 
 """
 This is an implementation of HDMM+APPGM as described in the paper
@@ -158,8 +157,11 @@ if __name__ == "__main__":
 
     queries = list(itertools.combinations(data.domain, args.degree))
     queries = [cl for cl in queries if data.domain.size(cl) <= args.max_cells]
-    if args.num_marginals is not None:
-        queries = subsample_candidates(queries, args.num_marginals, prng)
+    if args.num_marginals is not None and args.num_marginals < len(queries):
+        queries = [
+            queries[i]
+            for i in prng.choice(len(queries), args.num_marginals, replace=False)
+        ]
 
     key = (
         args.degree,
