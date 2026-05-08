@@ -196,7 +196,7 @@ if __name__ == "__main__":
 
   workload = list(itertools.combinations(data.domain, args.degree))
   workload = [cl for cl in workload if data.domain.size(cl) <= args.max_cells]
-  if args.num_marginals is not None:
+  if args.num_marginals is not None and args.num_marginals < len(workload):
     prng = np.random.RandomState(None)
     workload = [
       workload[i]
