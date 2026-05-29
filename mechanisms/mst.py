@@ -4,6 +4,7 @@ from scipy import sparse
 from scipy.cluster.hierarchy import DisjointSet
 import networkx as nx
 import itertools
+from mechanism import Mechanism
 from cdp2adp import cdp_rho
 from scipy.special import logsumexp
 import argparse
@@ -19,30 +20,75 @@ Unlike the original implementation, this one can work for any discrete dataset,
 and does not rely on public provisional data for measurement selection.  
 """
 
+ESTIMATION_ITERATIONS=10_000
+SELECT_ITERATIONS=2500
+
+class MSTMechanism(Mechanism):
+
+  def __init__(self, epsilon, delta):
+    super().__init__(epsilon, delta, bounded=False)
+
+  def run(self, data):
+    sigma = np.sqrt(3 / (2 * self.rho))
+    cliques = [(col,) for col in data.domain]
+    log1 = self.measure(data, cliques, sigma)
+    data, log1, undo_compress_fn = compress_domain(data, log1)
+    cliques = self.select(data, self.rho /3.0, log1)
+    log2 = self.measure(data, cliques, sigma)
+    est = estimation.mirror_descent(data.domain, log1+log2, iters=ESTIMATION_ITERATIONS)
+    synth = est.synthetic_data()
+    return undo_compress_fn(synth)
+
+  def measure(self, data, cliques, sigma, weights=None):
+    if weights is None:
+      weights = np.ones(len(cliques))
+    weights = np.array(weights) / np.linalg.norm(weights)
+    measurements = []
+    for proj, weight in zip(cliques, weights):
+      x = data.project(proj).datavector()
+      y = x + self.gaussian_noise(sigma / weight, x.size)
+      measurements.append(LinearMeasurement(y, proj, sigma / weight))
+    return measurements
+
+  def select(self, data, rho, measurement_log, cliques=None):
+    if cliques is None:
+      cliques = []
+
+    est = estimation.mirror_descent(data.domain, measurement_log, iters=SELECT_ITERATIONS)
+
+    weights = {}
+    candidates = list(itertools.combinations(data.domain.attrs, 2))
+    for a, b in candidates:
+      xhat = est.project([a, b]).datavector()
+      x = data.project([a, b]).datavector()
+      weights[a, b] = np.linalg.norm(x - xhat, 1)
+
+    T = nx.Graph()
+    T.add_nodes_from(data.domain.attrs)
+    ds = DisjointSet(data.domain.attrs)
+
+    for e in cliques:
+      T.add_edge(*e)
+      ds.merge(*e)
+    
+    r = len(list(nx.connected_components(T)))
+    epsilon = np.sqrt((8 * rho) / (r - 1))
+
+    for _ in range(r - 1):
+      candidates = [e for e in candidates if not ds.connected(*e)]
+      wgts = np.array([weights[e] for e in candidates])
+      idx = self.exponential_mechanism(dict(zip(range(len(wgts)), wgts)), epsilon, sensitivity=1.0)
+      e = candidates[idx]
+      T.add_edge(*e)
+      ds.merge(*e)
+    
+    return list(T.edges)
+  
+
 
 def MST(data, epsilon, delta):
-  rho = cdp_rho(epsilon, delta)
-  sigma = np.sqrt(3 / (2 * rho))
-  cliques = [(col,) for col in data.domain]
-  log1 = measure(data, cliques, sigma)
-  data, log1, undo_compress_fn = compress_domain(data, log1)
-  cliques = select(data, rho / 3.0, log1)
-  log2 = measure(data, cliques, sigma)
-  est = estimation.mirror_descent(data.domain, log1+log2, iters=10000)
-  synth = est.synthetic_data()
-  return undo_compress_fn(synth)
-
-
-def measure(data, cliques, sigma, weights=None):
-  if weights is None:
-    weights = np.ones(len(cliques))
-  weights = np.array(weights) / np.linalg.norm(weights)
-  measurements = []
-  for proj, wgt in zip(cliques, weights):
-    x = data.project(proj).datavector()
-    y = x + np.random.normal(loc=0, scale=sigma / wgt, size=x.size)
-    measurements.append(LinearMeasurement(y, proj, sigma / wgt))
-  return measurements
+  mech = MSTMechanism(epsilon, delta)
+  return mech.run(data)
 
 
 def compress_domain(data, measurements):
@@ -65,45 +111,6 @@ def compress_domain(data, measurements):
       new_measurements.append(LinearMeasurement(y2, M.clique, M.stddev, query=query))
   undo_compress_fn = lambda data: reverse_data(data, supports)
   return transform_data(data, supports), new_measurements, undo_compress_fn
-
-
-def exponential_mechanism(q, eps, sensitivity, prng=np.random, monotonic=False):
-  coef = 1.0 if monotonic else 0.5
-  scores = coef * eps / sensitivity * q
-  probas = np.exp(scores - logsumexp(scores))
-  return prng.choice(q.size, p=probas)
-
-
-def select(data, rho, measurement_log, cliques=[]):
-
-  est = estimation.mirror_descent(data.domain, measurement_log, iters=2500)
-
-  weights = {}
-  candidates = list(itertools.combinations(data.domain.attrs, 2))
-  for a, b in candidates:
-    xhat = est.project([a, b]).datavector()
-    x = data.project([a, b]).datavector()
-    weights[a, b] = np.linalg.norm(x - xhat, 1)
-
-  T = nx.Graph()
-  T.add_nodes_from(data.domain.attrs)
-  ds = DisjointSet(data.domain.attrs)
-
-  for e in cliques:
-    T.add_edge(*e)
-    ds.merge(*e)
-
-  r = len(list(nx.connected_components(T)))
-  epsilon = np.sqrt(8 * rho / (r - 1))
-  for i in range(r - 1):
-    candidates = [e for e in candidates if not ds.connected(*e)]
-    wgts = np.array([weights[e] for e in candidates])
-    idx = exponential_mechanism(wgts, epsilon, sensitivity=1.0)
-    e = candidates[idx]
-    T.add_edge(*e)
-    ds.merge(*e)
-
-  return list(T.edges)
 
 
 def transform_data(data, supports):
