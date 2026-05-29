@@ -217,6 +217,8 @@ def custom_einsum(subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.
             _dot_general=functools.partial(
                 custom_dot_general,
                 combine_fn=combine_fn,
+                # We must use jnp.sum here instead of reduce_fn because if reduce_fn contains
+                # a reduce_sum internally (like logsumexp), it would cause infinite recursion.
                 reduce_fn=jnp.sum  # Dummy reduction to intercept
             )
         )
