@@ -1,6 +1,8 @@
 """Prototype implementation of scan-based einsum implementation."""
 
 from collections.abc import Callable, Sequence
+import functools
+from jax._src.core import Literal
 
 import jax
 import jax.numpy as jnp
@@ -139,7 +141,11 @@ def _infer_shapes(
 
 
 def scan_einsum(
-    formula: str, *arrays: jax.Array, sequential: str = "", **kwargs
+    formula: str,
+    *arrays: jax.Array,
+    sequential: str = "",
+    einsum_fn: Callable = jnp.einsum,
+    **kwargs
 ) -> jax.Array:
     """Einsum implementation that allows sequential execution across any axes.
 
@@ -155,13 +161,14 @@ def scan_einsum(
         and the results are accumulated.  When sequential is a string with
         multiple axis names, sequential einsums are executed along all axis
         names given.
-      **kwargs: Keyword arguments to pass to jnp.einsum in the base case.
+      einsum_fn: The underlying einsum function to use (defaults to jnp.einsum).
+      **kwargs: Keyword arguments to pass to the underlying einsum function.
 
     Returns:
       The einsum result.
     """
     if not sequential:
-        return jnp.einsum(formula, *arrays, **kwargs)
+        return einsum_fn(formula, *arrays, **kwargs)
 
     ax = sequential[0]
     if ax not in formula:
@@ -179,7 +186,9 @@ def scan_einsum(
 
     def small_einsum(i):
         new_arrays = _get_subarrays(arrays, ax_dims, i)
-        return scan_einsum(new_formula, *new_arrays, sequential=sequential[1:])
+        return scan_einsum(
+            new_formula, *new_arrays, sequential=sequential[1:], einsum_fn=einsum_fn, **kwargs
+        )
 
     if ax in output_axes:
         # Each smaller einsum is independent.
@@ -188,3 +197,75 @@ def scan_einsum(
     # Each smaller einsum contributes to the global einsum.
     init = jnp.zeros(tuple(shapes[i] for i in output_axes))
     return jax.lax.scan(lambda carry, i: (carry + small_einsum(i), ()), init, loop)[0]
+
+def custom_einsum(subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.sum):
+    """Custom einsum function that uses the given combine and reduce functions.
+
+    This function acts like jnp.einsum, but intercepts the reduction operations and
+    replaces them with the provided `reduce_fn`. The `combine_fn` replaces the
+    standard multiplication. This allows for einsum operations over arbitrary
+    semirings like (+, max), (+, logsumexp), etc.
+
+    Args:
+        subscripts: The einsum subscripts string.
+        *operands: The arrays to compute the einsum over.
+        combine_fn: A callable that combines two arrays.
+        reduce_fn: A callable that reduces an array along a given axis.
+
+    Returns:
+        The result of the custom einsum operation.
+    """
+    def f(*args):
+        return jnp.einsum(
+            subscripts,
+            *args,
+            _dot_general=functools.partial(
+                custom_dot_general,
+                combine_fn=combine_fn,
+                # We must use jnp.sum here instead of reduce_fn because if reduce_fn contains
+                # a reduce_sum internally (like logsumexp), it would cause problems.
+                reduce_fn=jnp.sum
+            )
+        )
+    closed_jaxpr = jax.make_jaxpr(f)(*operands)
+
+    def eval_rewritten(*args):
+        env = {}
+        for invar, arg in zip(closed_jaxpr.jaxpr.invars, args):
+            env[invar] = arg
+        for constvar, const in zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts):
+            env[constvar] = const
+
+        for eqn in closed_jaxpr.jaxpr.eqns:
+            invals = [
+                var.val if isinstance(var, Literal) else env[var] for var in eqn.invars
+            ]
+            if eqn.primitive.name == 'reduce_sum':
+                axes = eqn.params['axes']
+                outvals = [reduce_fn(invals[0], axis=axes)]
+            else:
+                # Many JAX primitives do not implement get_bind_params
+                try:
+                    bind_params = eqn.primitive.get_bind_params(eqn.params)
+                    if isinstance(bind_params, tuple) and len(bind_params) == 2:
+                        subfuns, bind_params = bind_params
+                    else:
+                        subfuns = []
+                except AttributeError:
+                    subfuns = []
+                    bind_params = eqn.params
+                ans = eqn.primitive.bind(*subfuns, *invals, **bind_params)
+                if eqn.primitive.multiple_results:
+                    outvals = ans
+                else:
+                    outvals = [ans]
+            for outvar, outval in zip(eqn.outvars, outvals):
+                env[outvar] = outval
+
+        ans = [
+            var.val if isinstance(var, Literal) else env[var]
+            for var in closed_jaxpr.jaxpr.outvars
+        ]
+        return ans[0] if len(ans) == 1 else tuple(ans)
+
+    return eval_rewritten(*operands)
