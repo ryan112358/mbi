@@ -141,7 +141,11 @@ def _infer_shapes(
 
 
 def scan_einsum(
-    formula: str, *arrays: jax.Array, sequential: str = "", einsum_fn: Callable = jnp.einsum, **kwargs
+    formula: str,
+    *arrays: jax.Array,
+    sequential: str = "",
+    einsum_fn: Callable = jnp.einsum,
+    **kwargs
 ) -> jax.Array:
     """Einsum implementation that allows sequential execution across any axes.
 
@@ -182,7 +186,9 @@ def scan_einsum(
 
     def small_einsum(i):
         new_arrays = _get_subarrays(arrays, ax_dims, i)
-        return scan_einsum(new_formula, *new_arrays, sequential=sequential[1:], einsum_fn=einsum_fn, **kwargs)
+        return scan_einsum(
+            new_formula, *new_arrays, sequential=sequential[1:], einsum_fn=einsum_fn, **kwargs
+        )
 
     if ax in output_axes:
         # Each smaller einsum is independent.
@@ -217,8 +223,8 @@ def custom_einsum(subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.
                 custom_dot_general,
                 combine_fn=combine_fn,
                 # We must use jnp.sum here instead of reduce_fn because if reduce_fn contains
-                # a reduce_sum internally (like logsumexp), it would cause infinite recursion.
-                reduce_fn=jnp.sum  # Dummy reduction to intercept
+                # a reduce_sum internally (like logsumexp), it would cause problems.
+                reduce_fn=jnp.sum
             )
         )
     closed_jaxpr = jax.make_jaxpr(f)(*operands)
@@ -231,11 +237,14 @@ def custom_einsum(subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.
             env[constvar] = const
 
         for eqn in closed_jaxpr.jaxpr.eqns:
-            invals = [var.val if isinstance(var, Literal) else env[var] for var in eqn.invars]
+            invals = [
+                var.val if isinstance(var, Literal) else env[var] for var in eqn.invars
+            ]
             if eqn.primitive.name == 'reduce_sum':
                 axes = eqn.params['axes']
                 outvals = [reduce_fn(invals[0], axis=axes)]
             else:
+                # Many JAX primitives do not implement get_bind_params
                 try:
                     bind_params = eqn.primitive.get_bind_params(eqn.params)
                     if isinstance(bind_params, tuple) and len(bind_params) == 2:
@@ -253,7 +262,10 @@ def custom_einsum(subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.
             for outvar, outval in zip(eqn.outvars, outvals):
                 env[outvar] = outval
 
-        ans = [var.val if isinstance(var, Literal) else env[var] for var in closed_jaxpr.jaxpr.outvars]
+        ans = [
+            var.val if isinstance(var, Literal) else env[var]
+            for var in closed_jaxpr.jaxpr.outvars
+        ]
         return ans[0] if len(ans) == 1 else tuple(ans)
 
     return eval_rewritten(*operands)
