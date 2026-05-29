@@ -1,6 +1,8 @@
 """Prototype implementation of scan-based einsum implementation."""
 
 from collections.abc import Callable, Sequence
+import functools
+from jax._src.core import Literal
 
 import jax
 import jax.numpy as jnp
@@ -188,10 +190,6 @@ def scan_einsum(
     # Each smaller einsum contributes to the global einsum.
     init = jnp.zeros(tuple(shapes[i] for i in output_axes))
     return jax.lax.scan(lambda carry, i: (carry + small_einsum(i), ()), init, loop)[0]
-
-import functools
-from jax._src.core import Literal
-
 
 def custom_einsum(subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.sum):
     """Custom einsum function that uses the given combine and reduce functions.
