@@ -188,3 +188,71 @@ def scan_einsum(
     # Each smaller einsum contributes to the global einsum.
     init = jnp.zeros(tuple(shapes[i] for i in output_axes))
     return jax.lax.scan(lambda carry, i: (carry + small_einsum(i), ()), init, loop)[0]
+
+import functools
+from jax._src.core import Literal
+
+
+def custom_einsum(subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.sum):
+    """Custom einsum function that uses the given combine and reduce functions.
+
+    This function acts like jnp.einsum, but intercepts the reduction operations and
+    replaces them with the provided `reduce_fn`. The `combine_fn` replaces the
+    standard multiplication. This allows for einsum operations over arbitrary
+    semirings like (+, max), (+, logsumexp), etc.
+
+    Args:
+        subscripts: The einsum subscripts string.
+        *operands: The arrays to compute the einsum over.
+        combine_fn: A callable that combines two arrays.
+        reduce_fn: A callable that reduces an array along a given axis.
+
+    Returns:
+        The result of the custom einsum operation.
+    """
+    def f(*args):
+        return jnp.einsum(
+            subscripts,
+            *args,
+            _dot_general=functools.partial(
+                custom_dot_general,
+                combine_fn=combine_fn,
+                reduce_fn=jnp.sum  # Dummy reduction to intercept
+            )
+        )
+    closed_jaxpr = jax.make_jaxpr(f)(*operands)
+
+    def eval_rewritten(*args):
+        env = {}
+        for invar, arg in zip(closed_jaxpr.jaxpr.invars, args):
+            env[invar] = arg
+        for constvar, const in zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts):
+            env[constvar] = const
+
+        for eqn in closed_jaxpr.jaxpr.eqns:
+            invals = [var.val if isinstance(var, Literal) else env[var] for var in eqn.invars]
+            if eqn.primitive.name == 'reduce_sum':
+                axes = eqn.params['axes']
+                outvals = [reduce_fn(invals[0], axis=axes)]
+            else:
+                try:
+                    bind_params = eqn.primitive.get_bind_params(eqn.params)
+                    if isinstance(bind_params, tuple) and len(bind_params) == 2:
+                        subfuns, bind_params = bind_params
+                    else:
+                        subfuns = []
+                except AttributeError:
+                    subfuns = []
+                    bind_params = eqn.params
+                ans = eqn.primitive.bind(*subfuns, *invals, **bind_params)
+                if eqn.primitive.multiple_results:
+                    outvals = ans
+                else:
+                    outvals = [ans]
+            for outvar, outval in zip(eqn.outvars, outvals):
+                env[outvar] = outval
+
+        ans = [var.val if isinstance(var, Literal) else env[var] for var in closed_jaxpr.jaxpr.outvars]
+        return ans[0] if len(ans) == 1 else tuple(ans)
+
+    return eval_rewritten(*operands)

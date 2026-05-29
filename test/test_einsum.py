@@ -421,5 +421,37 @@ class TestScanEinsum(unittest.TestCase):
         )
 
 
+    def test_custom_einsum_max(self):
+        from mbi.einsum import custom_einsum
+        x = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+        y = jnp.array([[5.0, 6.0], [7.0, 8.0]])
+        # 'ij,jk->ik' with (+, max)
+        actual = custom_einsum('ij,jk->ik', x, y, combine_fn=jnp.add, reduce_fn=jnp.max)
+        expected = jnp.array([[9.0, 10.0], [11.0, 12.0]])
+        self.assertArraysAllClose(expected, actual, msg="custom_einsum with jnp.max")
+
+    def test_custom_einsum_logsumexp(self):
+        from mbi.einsum import custom_einsum
+        from jax.scipy.special import logsumexp
+        x = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+        y = jnp.array([[5.0, 6.0], [7.0, 8.0]])
+        actual = custom_einsum('ij,jk->ik', x, y, combine_fn=jnp.add, reduce_fn=logsumexp)
+        expected = jnp.array([
+            [logsumexp(jnp.array([6.0, 9.0])), logsumexp(jnp.array([7.0, 10.0]))],
+            [logsumexp(jnp.array([8.0, 11.0])), logsumexp(jnp.array([9.0, 12.0]))]
+        ])
+        self.assertArraysAllClose(expected, actual, msg="custom_einsum with logsumexp")
+
+    def test_custom_einsum_vmap_jit(self):
+        from mbi.einsum import custom_einsum
+        def f(x, y):
+            return custom_einsum('ij,jk->ik', x, y, combine_fn=jnp.add, reduce_fn=jnp.max)
+        f = jax.jit(jax.vmap(f, in_axes=(0, 0)))
+        x = jnp.array([[[1.0, 2.0], [3.0, 4.0]]])
+        y = jnp.array([[[5.0, 6.0], [7.0, 8.0]]])
+        actual = f(x, y)
+        expected = jnp.array([[[9.0, 10.0], [11.0, 12.0]]])
+        self.assertArraysAllClose(expected, actual, msg="custom_einsum vmap and jit")
+
 if __name__ == "__main__":
     unittest.main(argv=["first-arg-is-ignored"], exit=False)
