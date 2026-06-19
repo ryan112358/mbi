@@ -88,6 +88,8 @@ disable=
     redefined-outer-name, # Common in scientific code
     too-many-positional-arguments, # Already disabled via too-many-arguments
     cell-var-from-loop, # Sometimes needed for closures
+    redefined-variable-type, # Noisy for dict-building patterns
+    unused-argument, # Common for API-compatible function signatures
 
 
 [REPORTS]
