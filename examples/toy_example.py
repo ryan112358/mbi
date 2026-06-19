@@ -23,7 +23,10 @@ ybc = bc + np.random.laplace(loc=0, scale=sigma, size=bc.size)
 print(yab)
 print(ybc)
 
-measurements = [marginal_loss.LinearMeasurement(yab, ['A', 'B']), marginal_loss.LinearMeasurement(ybc, ['B', 'C'])]
+measurements = [
+    marginal_loss.LinearMeasurement(yab, ['A', 'B']),
+    marginal_loss.LinearMeasurement(ybc, ['B', 'C']),
+]
 
 loss_fn = marginal_loss.from_linear_measurements(measurements)
 
@@ -39,7 +42,7 @@ print(bc2)
 
 # estimate answer to unmeasured queries
 ac2 = model.project(['A', 'C']).datavector()
-#print(ac2)
+# print(ac2)
 
 # generate synthetic data
 synth = model.synthetic_data()

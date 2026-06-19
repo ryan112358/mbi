@@ -16,7 +16,9 @@ jax.config.update("jax_enable_x64", True)
 
 
 @functools.partial(
-    jax.tree_util.register_dataclass, meta_fields=["domain"], data_fields=["values"]
+    jax.tree_util.register_dataclass,
+    meta_fields=["domain"],
+    data_fields=["values"],
 )
 @attr.dataclass(frozen=True)
 class Factor:
@@ -95,7 +97,9 @@ class Factor:
         return Factor(domain, values)
 
     # Functions that aggregate along some subset of axes
-    def _aggregate(self, fn: Callable, attrs: Sequence[str] | None = None) -> Factor:
+    def _aggregate(
+        self, fn: Callable, attrs: Sequence[str] | None = None
+    ) -> Factor:
         """Helper for aggregating values along specified attribute axes."""
         attrs = self.domain.attrs if attrs is None else attrs
         axes = self.domain.axes(attrs)
@@ -115,7 +119,9 @@ class Factor:
         """Computes the log-sum-exp along specified attribute axes."""
         return self._aggregate(jax.scipy.special.logsumexp, attrs)
 
-    def project(self, attrs: str | Sequence[str], log: bool = False) -> "Factor":
+    def project(
+        self, attrs: str | Sequence[str], log: bool = False
+    ) -> "Factor":
         """Computes the marginal distribution by summing/logsumexp'ing out other attributes."""
         if isinstance(attrs, str):
             attrs = (attrs,)
@@ -123,7 +129,9 @@ class Factor:
         result = self.logsumexp(marginalized) if log else self.sum(marginalized)
         return result.transpose(attrs)
 
-    def slice(self, evidence: dict[str, int | np.ndarray | jax.Array]) -> "Factor":
+    def slice(
+        self, evidence: dict[str, int | np.ndarray | jax.Array]
+    ) -> "Factor":
         """Slices the factor by fixing specific attribute values.
 
         If at least one attribute has numpy-valued evidence, the returned factor will
@@ -163,7 +171,9 @@ class Factor:
         if has_vector:
             adv_indices.sort()
             # If advanced indices are contiguous, numpy puts the new dimension at the start of the block
-            is_contiguous = (adv_indices[-1] - adv_indices[0] + 1) == len(adv_indices)
+            is_contiguous = (adv_indices[-1] - adv_indices[0] + 1) == len(
+                adv_indices
+            )
             target_axis = adv_indices[0] if is_contiguous else 0
 
             # We want the evidence dimension to be at axis 0
@@ -254,7 +264,9 @@ class Factor:
 
     def dot(self, other: Factor) -> chex.Numeric:
         if self.domain != other.domain:
-            raise ValueError(f"Domains do not match {self.domain} != {other.domain}")
+            raise ValueError(
+                f"Domains do not match {self.domain} != {other.domain}"
+            )
         return jnp.sum(
             self.values * other.values,
             where=(self.values != 0) & (other.values != 0),
@@ -307,7 +319,9 @@ class Factor:
         for i, ax in enumerate(self.domain):
             if ax in mesh.axis_names:
                 pspec[i] = ax
-        sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(*pspec))
+        sharding = jax.sharding.NamedSharding(
+            mesh, jax.sharding.PartitionSpec(*pspec)
+        )
 
         return Factor(
             domain=self.domain,

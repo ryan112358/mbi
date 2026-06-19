@@ -129,7 +129,9 @@ def build_graph(domain: Domain, cliques: list[tuple[str, ...]]):
         for rd in children[ru]:
             message_order.append((ru, rd))
             messages[ru, rd] = Factor.zeros(domain.project(rd))
-            messages[rd, ru] = Factor.zeros(domain.project(rd))  # only for hazan et al
+            messages[rd, ru] = Factor.zeros(
+                domain.project(rd)
+            )  # only for hazan et al
 
     return regions, cliques, messages, message_order, parents, children
 

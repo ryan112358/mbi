@@ -3,6 +3,7 @@ from mbi.domain import Domain
 
 
 class TestDomain(unittest.TestCase):
+
     def setUp(self):
         attrs = ["a", "b", "c", "d"]
         shape = [10, 20, 30, 40]
@@ -87,25 +88,37 @@ class TestDomain(unittest.TestCase):
         self.assertEqual(proj.labels, (("small", "medium", "large"),))
 
         # Test merge
-        dom2 = Domain(["b", "c"], [3, 2], labels=[["small", "medium", "large"], ["up", "down"]])
+        dom2 = Domain(
+            ["b", "c"],
+            [3, 2],
+            labels=[["small", "medium", "large"], ["up", "down"]],
+        )
         merged = dom.merge(dom2)
         # expected: a, b, c
         self.assertEqual(merged.attributes, ("a", "b", "c"))
         # labels should be preserved
-        expected_labels = (("yes", "no"), ("small", "medium", "large"), ("up", "down"))
+        expected_labels = (
+            ("yes", "no"),
+            ("small", "medium", "large"),
+            ("up", "down"),
+        )
         self.assertEqual(merged.labels, expected_labels)
 
         # Test merge mismatch
-        dom3 = Domain(["c"], [2]) # no labels
+        dom3 = Domain(["c"], [2])  # no labels
         merged_mismatch = dom.merge(dom3)
         self.assertIsNone(merged_mismatch.labels)
 
         # Test invalid labels
         with self.assertRaises(ValueError):
-            Domain(attrs, shape, labels=[["yes"], ["small", "medium", "large"]]) # wrong length for 'a'
+            Domain(
+                attrs, shape, labels=[["yes"], ["small", "medium", "large"]]
+            )  # wrong length for 'a'
 
         with self.assertRaises(ValueError):
-            Domain(attrs, shape, labels=[["yes", "no"]]) # wrong number of label lists
+            Domain(
+                attrs, shape, labels=[["yes", "no"]]
+            )  # wrong number of label lists
 
 
 if __name__ == "__main__":

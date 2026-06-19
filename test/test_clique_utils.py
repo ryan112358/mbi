@@ -2,7 +2,9 @@ import unittest
 from mbi.clique_utils import clique_mapping, reverse_clique_mapping
 from mbi.domain import Domain
 
+
 class TestCliqueUtils(unittest.TestCase):
+
     def test_clique_mapping_no_domain(self):
         # M1: Length 3
         # M2: Length 4
@@ -11,17 +13,23 @@ class TestCliqueUtils(unittest.TestCase):
 
         M1 = ('A', 'B', 'C')
         M2 = ('A', 'B', 'D', 'E')
-        maximal_cliques = [M2, M1] # M2 comes first
+        maximal_cliques = [M2, M1]  # M2 comes first
         all_cliques = [('A', 'B')]
 
         # clique_mapping
         mapping = clique_mapping(maximal_cliques, all_cliques)
-        self.assertEqual(mapping[('A', 'B')], M1, "Should pick M1 (len 3) over M2 (len 4)")
+        self.assertEqual(
+            mapping[('A', 'B')], M1, 'Should pick M1 (len 3) over M2 (len 4)'
+        )
 
         # reverse_clique_mapping
         rev_mapping = reverse_clique_mapping(maximal_cliques, all_cliques)
-        self.assertEqual(rev_mapping[M1], [('A', 'B')], "M1 should contain the clique")
-        self.assertEqual(rev_mapping[M2], [], "M2 should not contain the clique")
+        self.assertEqual(
+            rev_mapping[M1], [('A', 'B')], 'M1 should contain the clique'
+        )
+        self.assertEqual(
+            rev_mapping[M2], [], 'M2 should not contain the clique'
+        )
 
     def test_clique_mapping_with_domain(self):
         # M1: Length 3, Size 400
@@ -42,19 +50,31 @@ class TestCliqueUtils(unittest.TestCase):
         self.assertEqual(domain.size(M1), 400)
         self.assertEqual(domain.size(M2), 16)
 
-        maximal_cliques = [M1, M2] # M1 comes first and is shorter.
+        maximal_cliques = [M1, M2]  # M1 comes first and is shorter.
         all_cliques = [('A', 'B')]
 
         # Test WITH domain
         try:
-            mapping = clique_mapping(maximal_cliques, all_cliques, domain=domain)
-            self.assertEqual(mapping[('A', 'B')], M2, "Should pick M2 (size 16) over M1 (size 400)")
+            mapping = clique_mapping(
+                maximal_cliques, all_cliques, domain=domain
+            )
+            self.assertEqual(
+                mapping[('A', 'B')],
+                M2,
+                'Should pick M2 (size 16) over M1 (size 400)',
+            )
 
-            rev_mapping = reverse_clique_mapping(maximal_cliques, all_cliques, domain=domain)
+            rev_mapping = reverse_clique_mapping(
+                maximal_cliques, all_cliques, domain=domain
+            )
             self.assertEqual(rev_mapping[M2], [('A', 'B')])
             self.assertEqual(rev_mapping[M1], [])
         except TypeError:
-            self.fail("clique_mapping or reverse_clique_mapping raised TypeError, likely due to missing domain argument support")
+            self.fail(
+                'clique_mapping or reverse_clique_mapping raised TypeError,'
+                ' likely due to missing domain argument support'
+            )
+
 
 if __name__ == '__main__':
     unittest.main()

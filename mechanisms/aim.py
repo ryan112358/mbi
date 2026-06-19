@@ -57,7 +57,10 @@ def filter_candidates(candidates, model, size_limit):
     free_cliques = downward_closure(model.cliques)
     for cl in candidates:
         cond1 = (
-            junction_tree.hypothetical_model_size(model.domain, model.cliques + [cl]) <= size_limit
+            junction_tree.hypothetical_model_size(
+                model.domain, model.cliques + [cl]
+            )
+            <= size_limit
         )
         cond2 = cl in free_cliques
         if cond1 or cond2:
@@ -66,6 +69,7 @@ def filter_candidates(candidates, model, size_limit):
 
 
 class AIM(Mechanism):
+
     def __init__(
         self,
         epsilon,
@@ -124,14 +128,19 @@ class AIM(Mechanism):
         zeros = self.structural_zeros
         # NOTE: Haven't incorproated structural zeros back yet after refactoring
         model = estimation.mirror_descent(
-                data.domain, measurements, iters=self.max_iters, callback_fn=lambda *_: None
+            data.domain,
+            measurements,
+            iters=self.max_iters,
+            callback_fn=lambda *_: None,
         )
 
         t = 0
         terminate = False
         while not terminate:
             t += 1
-            if self.rho - rho_used < 2 * (0.5 / sigma**2 + 1.0 / 8 * epsilon**2):
+            if self.rho - rho_used < 2 * (
+                0.5 / sigma**2 + 1.0 / 8 * epsilon**2
+            ):
                 # Just use up whatever remaining budget there is for one last round
                 remaining = self.rho - rho_used
                 sigma = np.sqrt(1 / (2 * 0.9 * remaining))
@@ -139,14 +148,14 @@ class AIM(Mechanism):
                 terminate = True
 
             rho_used += 1.0 / 8 * epsilon**2 + 0.5 / sigma**2
-            print('Budget Used', rho_used, '/', self.rho)
+            print("Budget Used", rho_used, "/", self.rho)
             size_limit = self.max_model_size * rho_used / self.rho
 
             small_candidates = filter_candidates(candidates, model, size_limit)
             cl = self.worst_approximated(
                 small_candidates, answers, model, epsilon, sigma
             )
-            print('Measuring Clique', cl)
+            print("Measuring Clique", cl)
             n = data.domain.size(cl)
             x = data.project(cl).datavector()
             y = x + self.gaussian_noise(sigma, n)
@@ -158,7 +167,11 @@ class AIM(Mechanism):
             pcliques = list(set(M.clique for M in measurements))
             potentials = model.potentials.expand(pcliques)
             model = estimation.mirror_descent(
-                    data.domain, measurements, iters=self.max_iters, potentials=potentials, callback_fn=lambda *_: None
+                data.domain,
+                measurements,
+                iters=self.max_iters,
+                potentials=potentials,
+                callback_fn=lambda *_: None,
             )
             w = model.project(cl).datavector()
             # print('Selected',cl,'Size',n,'Budget Used',rho_used/self.rho)
@@ -169,7 +182,10 @@ class AIM(Mechanism):
 
         print("Generating Data...")
         model = estimation.mirror_descent(
-            data.domain, measurements, iters=self.max_iters, potentials=potentials
+            data.domain,
+            measurements,
+            iters=self.max_iters,
+            potentials=potentials,
         )
         synth = model.synthetic_data(rows=num_synth_rows)
 
@@ -201,16 +217,24 @@ if __name__ == "__main__":
 
     description = ""
     formatter = argparse.ArgumentDefaultsHelpFormatter
-    parser = argparse.ArgumentParser(description=description, formatter_class=formatter)
+    parser = argparse.ArgumentParser(
+        description=description, formatter_class=formatter
+    )
     parser.add_argument("--dataset", help="dataset to use")
     parser.add_argument("--domain", help="domain to use")
     parser.add_argument("--epsilon", type=float, help="privacy parameter")
     parser.add_argument("--delta", type=float, help="privacy parameter")
     parser.add_argument(
-        "--max_model_size", type=float, help="maximum size (in megabytes) of model"
+        "--max_model_size",
+        type=float,
+        help="maximum size (in megabytes) of model",
     )
-    parser.add_argument("--max_iters", type=int, help="maximum number of iterations")
-    parser.add_argument("--degree", type=int, help="degree of marginals in workload")
+    parser.add_argument(
+        "--max_iters", type=int, help="maximum number of iterations"
+    )
+    parser.add_argument(
+        "--degree", type=int, help="degree of marginals in workload"
+    )
     parser.add_argument(
         "--num_marginals", type=int, help="number of marginals in workload"
     )
@@ -231,7 +255,9 @@ if __name__ == "__main__":
     if args.num_marginals is not None and args.num_marginals < len(workload):
         workload = [
             workload[i]
-            for i in np.random.choice(len(workload), args.num_marginals, replace=False)
+            for i in np.random.choice(
+                len(workload), args.num_marginals, replace=False
+            )
         ]
 
     workload = [(cl, 1.0) for cl in workload]

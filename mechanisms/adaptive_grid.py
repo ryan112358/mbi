@@ -133,7 +133,9 @@ def get_aggregate(cl, matrices, domain):
         scipy.sparse.csr_matrix: Sparse matrix containing additional
             measurements.
     """
-    children = [r for r in matrices if set(r) < set(cl) and len(r) + 1 == len(cl)]
+    children = [
+        r for r in matrices if set(r) < set(cl) and len(r) + 1 == len(cl)
+    ]
     ans = [sparse.csr_matrix((0, domain.size(cl)))]
     for c in children:
         coef = 1.0 / np.sqrt(len(children))
@@ -163,7 +165,9 @@ def get_identity(cl, post_plausibility, domain):
         probably containing counts above threshold have value 1.
     """
     children = [
-        r for r in post_plausibility if set(r) < set(cl) and len(r) + 1 == len(cl)
+        r
+        for r in post_plausibility
+        if set(r) < set(cl) and len(r) + 1 == len(cl)
     ]
     plausibility = Factor.ones(domain.project(cl))
     for c in children:
@@ -298,7 +302,9 @@ def adagrid(
             )  # get remaining aggregate measurements
             Q1 = Q1[Q1.getnnz(1) > 0]  # remove all-zero rows
             Q = sparse.vstack([Q1, Q2])
-            Q.T = sparse.csr_matrix(Q.T)  # a trick to improve efficiency of Private-PGM
+            Q.T = sparse.csr_matrix(
+                Q.T
+            )  # a trick to improve efficiency of Private-PGM
             # Q has sensitivity 1 by construction
             print(
                 "Measuring %s, L2 sensitivity %.6f"
@@ -308,7 +314,9 @@ def adagrid(
             ### This code uses the sensitive data ###
             #########################################
             mu = data.project(cl).datavector()
-            y = Q @ mu + np.random.normal(loc=0, scale=step1_sigma, size=Q.shape[0])
+            y = Q @ mu + np.random.normal(
+                loc=0, scale=step1_sigma, size=Q.shape[0]
+            )
             #########################################
             est = Q1.T @ y[: Q1.shape[0]]
 
@@ -337,7 +345,9 @@ def adagrid(
         )  # get remaining aggregate measurements
         Q1 = Q1[Q1.getnnz(1) > 0]  # remove all-zero rows
         Q = sparse.vstack([Q1, Q2])
-        Q.T = sparse.csr_matrix(Q.T)  # a trick to improve efficiency of Private-PGM
+        Q.T = sparse.csr_matrix(
+            Q.T
+        )  # a trick to improve efficiency of Private-PGM
         # Q has sensitivity 1 by construction
         print(
             "Measuring %s, L2 sensitivity %.6f"
@@ -382,9 +392,14 @@ def default_params():
 
 if __name__ == "__main__":
 
-    description = "A generalization of the Adaptive Grid Mechanism that won 2nd place in the 2020 NIST temporal map challenge"
+    description = (
+        "A generalization of the Adaptive Grid Mechanism that won 2nd place in"
+        " the 2020 NIST temporal map challenge"
+    )
     formatter = argparse.ArgumentDefaultsHelpFormatter
-    parser = argparse.ArgumentParser(description=description, formatter_class=formatter)
+    parser = argparse.ArgumentParser(
+        description=description, formatter_class=formatter
+    )
     parser.add_argument("--dataset", help="dataset to use")
     parser.add_argument("--domain", help="domain to use")
     parser.add_argument("--epsilon", type=float, help="privacy parameter")
@@ -397,9 +412,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--metric", choices=["L1", "L2"], help="loss function metric to use"
     )
-    parser.add_argument("--threshold", type=float, help="adagrid treshold parameter")
     parser.add_argument(
-        "--split_strategy", type=float, nargs="+", help="budget split for 3 steps"
+        "--threshold", type=float, help="adagrid treshold parameter"
+    )
+    parser.add_argument(
+        "--split_strategy",
+        type=float,
+        nargs="+",
+        help="budget split for 3 steps",
     )
     parser.add_argument("--save", type=str, help="path to save synthetic data")
 
@@ -425,7 +445,7 @@ if __name__ == "__main__":
         args.threshold,
         split_strategy=args.split_strategy,
         targets=args.targets,
-        **mbi_args
+        **mbi_args,
     )
 
     # Convert back to pandas for saving

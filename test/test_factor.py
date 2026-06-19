@@ -6,6 +6,7 @@ import jax.numpy as jnp
 
 
 class TestFactor(unittest.TestCase):
+
     def setUp(self):
         attrs = ["a", "b", "c"]
         shape = [2, 3, 4]
@@ -23,7 +24,9 @@ class TestFactor(unittest.TestCase):
         self.assertEqual(res.domain, domain)
         self.assertEqual(res.values.shape, domain.shape)
 
-        self.assertTrue(np.allclose(res.sum("d").values * 0.2, self.factor.values))
+        self.assertTrue(
+            np.allclose(res.sum("d").values * 0.2, self.factor.values)
+        )
 
     def test_transpose(self):
         attrs = ["b", "c", "a"]
@@ -46,7 +49,9 @@ class TestFactor(unittest.TestCase):
     def test_sum(self):
         res = self.factor.sum(["a", "b"])
         self.assertEqual(res.domain, Domain(["c"], [4]))
-        self.assertTrue(np.allclose(res.values, self.factor.values.sum(axis=(0, 1))))
+        self.assertTrue(
+            np.allclose(res.values, self.factor.values.sum(axis=(0, 1)))
+        )
 
     def test_logsumexp(self):
         res = self.factor.logsumexp(["a", "c"])
@@ -81,30 +86,30 @@ class TestFactor(unittest.TestCase):
         self.assertTrue(np.allclose(res.values, self.factor.values))
 
     def test_slice(self):
-        domain = Domain.fromdict({'A': 3, 'B': 2})
+        domain = Domain.fromdict({"A": 3, "B": 2})
         values = jnp.arange(6).reshape(3, 2)
         factor = Factor(domain, jnp.asarray(values))
 
         # Test slicing A=0
-        evidence = {'A': 0}
+        evidence = {"A": 0}
         sliced_factor = factor.slice(evidence)
-        expected_domain = Domain.fromdict({'B': 2})
+        expected_domain = Domain.fromdict({"B": 2})
         expected_values = values[0, :]
 
         self.assertEqual(sliced_factor.domain, expected_domain)
         self.assertTrue(jnp.array_equal(sliced_factor.values, expected_values))
 
         # Test slicing B=1
-        evidence = {'B': 1}
+        evidence = {"B": 1}
         sliced_factor = factor.slice(evidence)
-        expected_domain = Domain.fromdict({'A': 3})
+        expected_domain = Domain.fromdict({"A": 3})
         expected_values = values[:, 1]
 
         self.assertEqual(sliced_factor.domain, expected_domain)
         self.assertTrue(jnp.array_equal(sliced_factor.values, expected_values))
 
         # Test slicing both
-        evidence = {'A': 1, 'B': 1}
+        evidence = {"A": 1, "B": 1}
         sliced_factor = factor.slice(evidence)
         expected_domain = Domain.fromdict({})
         expected_values = values[1, 1]
@@ -113,9 +118,9 @@ class TestFactor(unittest.TestCase):
         self.assertTrue(jnp.array_equal(sliced_factor.values, expected_values))
 
         # Test slicing with extra attribute (should be ignored)
-        evidence = {'A': 2, 'C': 5}
+        evidence = {"A": 2, "C": 5}
         sliced_factor = factor.slice(evidence)
-        expected_domain = Domain.fromdict({'B': 2})
+        expected_domain = Domain.fromdict({"B": 2})
         expected_values = values[2, :]
 
         self.assertEqual(sliced_factor.domain, expected_domain)

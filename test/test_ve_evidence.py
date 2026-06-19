@@ -1,11 +1,12 @@
-
 import unittest
 import numpy as np
 import jax.numpy as jnp
 from mbi import Domain, Factor, CliqueVector
 from mbi.marginal_oracles import variable_elimination
 
+
 class TestVariableEliminationVectorEvidence(unittest.TestCase):
+
     def test_vector_evidence_single_factor(self):
         dom = Domain(['X', 'Y'], [2, 2])
         # Values X (row), Y (col)
@@ -23,11 +24,9 @@ class TestVariableEliminationVectorEvidence(unittest.TestCase):
         # Row 1 (Y=1): [2, 4]. Sum 6. Norm: [1/3, 2/3]
         # Row 2 (Y=0): [1, 3]. Sum 4. Norm: [0.25, 0.75]
 
-        expected = np.array([
-            [0.25, 0.75],
-            [1.0/3.0, 2.0/3.0],
-            [0.25, 0.75]
-        ])
+        expected = np.array(
+            [[0.25, 0.75], [1.0 / 3.0, 2.0 / 3.0], [0.25, 0.75]]
+        )
 
         res = variable_elimination(potentials, ('X',), evidence=evidence)
 
@@ -43,7 +42,9 @@ class TestVariableEliminationVectorEvidence(unittest.TestCase):
         f1 = Factor(dom.project(('X', 'Y')), jnp.log(v1))
         f2 = Factor(dom.project(('Y', 'Z')), jnp.log(v2))
 
-        potentials = CliqueVector(dom, [('X', 'Y'), ('Y', 'Z')], {('X', 'Y'): f1, ('Y', 'Z'): f2})
+        potentials = CliqueVector(
+            dom, [('X', 'Y'), ('Y', 'Z')], {('X', 'Y'): f1, ('Y', 'Z'): f2}
+        )
 
         evidence = {'Y': np.array([0, 1])}
 
@@ -52,18 +53,15 @@ class TestVariableEliminationVectorEvidence(unittest.TestCase):
         # Y=1: f1 col 1 [2, 4]. f2 row 1 [7, 8] -> sum 15.
         # Joint [2*15, 4*15] = [30, 60]. Sum 90. Norm: [1/3, 2/3]
 
-        expected = np.array([
-            [0.25, 0.75],
-            [1.0/3.0, 2.0/3.0]
-        ])
+        expected = np.array([[0.25, 0.75], [1.0 / 3.0, 2.0 / 3.0]])
         res = variable_elimination(potentials, ('X',), evidence=evidence)
         np.testing.assert_array_almost_equal(res.values, expected)
 
     def test_multiple_evidence_arrays(self):
         dom = Domain(['X', 'Y', 'Z'], [2, 2, 2])
-        val_list = [1,2,3,4,5,6,7,8]
+        val_list = [1, 2, 3, 4, 5, 6, 7, 8]
         # X varies slowest. (0,0,0)->1. (1,0,0)->5.
-        values = jnp.array(val_list).reshape((2,2,2))
+        values = jnp.array(val_list).reshape((2, 2, 2))
         f = Factor(dom, jnp.log(values))
 
         potentials = CliqueVector(dom, [('X', 'Y', 'Z')], {('X', 'Y', 'Z'): f})
@@ -75,23 +73,26 @@ class TestVariableEliminationVectorEvidence(unittest.TestCase):
 
         res = variable_elimination(potentials, ('X',), evidence=evidence)
 
-        expected = np.array([
-            [1.0/6.0, 5.0/6.0],
-            [1.0/3.0, 2.0/3.0]
-        ])
+        expected = np.array([[1.0 / 6.0, 5.0 / 6.0], [1.0 / 3.0, 2.0 / 3.0]])
 
         np.testing.assert_array_almost_equal(res.values, expected)
 
     def test_reproduction_case_consistency(self):
         # Verify that marginal1 = marginal2 / sum(marginal2)
-        dom = Domain(['a','b','c','d'], [5, 10, 15, 20])
+        dom = Domain(['a', 'b', 'c', 'd'], [5, 10, 15, 20])
         np.random.seed(42)
         cliques = [('a', 'b'), ('b', 'c'), ('c', 'd')]
         potentials = CliqueVector.random(dom, cliques)
-        evidence = {'a': np.array([0, 2, 4]) }
+        evidence = {'a': np.array([0, 2, 4])}
 
         marginal1 = variable_elimination(potentials, ('c',), evidence=evidence)
-        marginal2 = variable_elimination(potentials, ('a', 'c',))
+        marginal2 = variable_elimination(
+            potentials,
+            (
+                'a',
+                'c',
+            ),
+        )
 
         # Check index 2 (a=2). In marginal1, this is index 1.
         val1 = marginal1.values[1]
@@ -103,6 +104,7 @@ class TestVariableEliminationVectorEvidence(unittest.TestCase):
 
         expected = val2 / val2.sum()
         np.testing.assert_array_almost_equal(val1, expected)
+
 
 if __name__ == '__main__':
     unittest.main()

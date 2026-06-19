@@ -80,7 +80,9 @@ class Estimator(Protocol):
         pass
 
 
-def minimum_variance_unbiased_total(measurements: list[LinearMeasurement]) -> float:
+def minimum_variance_unbiased_total(
+    measurements: list[LinearMeasurement],
+) -> float:
     """Estimates the total count from measurements with identity queries."""
     # find the minimum variance estimate of the total given the measurements
     estimates, variances = [], []
@@ -109,7 +111,9 @@ def _initialize(domain, loss_fn, known_total, potentials):
             known_total = minimum_variance_unbiased_total(loss_fn)
         loss_fn = marginal_loss.from_linear_measurements(loss_fn, domain=domain)
     elif known_total is None:
-        raise ValueError("Must set known_total if giving a custom MarginalLossFn")
+        raise ValueError(
+            "Must set known_total if giving a custom MarginalLossFn"
+        )
 
     if potentials is None:
         potentials = CliqueVector.zeros(domain, loss_fn.cliques)
@@ -312,7 +316,10 @@ def lbfgs(
         callback_fn(marginal_oracle(theta, known_total))
 
     potentials = _optimize(
-        theta_loss_and_grad, potentials, iters=iters, callback_fn=theta_callback_fn
+        theta_loss_and_grad,
+        potentials,
+        iters=iters,
+        callback_fn=theta_callback_fn,
     )
     return MarkovRandomField(
         potentials=potentials,
@@ -460,7 +467,8 @@ def interior_gradient(
     )
     if loss_fn.lipschitz is None:
         raise ValueError(
-            "Interior Gradient requires a loss function with Lipschitz gradients."
+            "Interior Gradient requires a loss function with Lipschitz"
+            " gradients."
         )
 
     # Algorithm parameters
@@ -598,7 +606,10 @@ def _universal_accelerated_method_step_init(
     ) -> _AcceleratedStepSearchState:
         """Step when searching step."""
         # Computes new theta
-        prev_theta, prev_smooth_estim = carry.prev_theta, 1 / carry.prev_stepsize
+        prev_theta, prev_smooth_estim = (
+            carry.prev_theta,
+            1 / carry.prev_stepsize,
+        )
         smooth_estim, stepsize = 1 / carry.stepsize, carry.stepsize
         aux = 1 + 4 * smooth_estim / (prev_theta**2 * prev_smooth_estim)
         new_theta = 2 / (1 + jnp.sqrt(aux))
@@ -647,7 +658,9 @@ def _universal_accelerated_method_step_init(
         base = carry._replace(
             stepsize=0.5 * carry.stepsize, iter_search=carry.iter_search + 1
         )
-        return jax.tree.map(lambda x, y: jnp.where(accept, x, y), candidate, base)
+        return jax.tree.map(
+            lambda x, y: jnp.where(accept, x, y), candidate, base
+        )
 
     x = z = dual_proj(dual_init_params)
     u = dual_init_params

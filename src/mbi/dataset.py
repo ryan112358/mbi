@@ -28,7 +28,9 @@ from .factor import Factor
 
 def _validate_column(data: np.ndarray, size: int):
     if data.ndim != 1:
-        raise ValueError(f"Expected column data to be 1D, found shape {data.shape}")
+        raise ValueError(
+            f"Expected column data to be 1D, found shape {data.shape}"
+        )
     if not np.issubdtype(data.dtype, np.integer):
         raise ValueError(f"Expected integer data, got {data.dtype}")
     if not np.all((data >= 0) & (data < size)):
@@ -57,6 +59,7 @@ def _validate_mapping(map_array: np.ndarray, attr: str):
 
 
 class Dataset:
+
     def __init__(
         self,
         data: ArrayLike | dict[str, ArrayLike],
@@ -84,7 +87,8 @@ class Dataset:
 
         elif hasattr(data, "values"):  # Pandas DataFrame
             warnings.warn(
-                "Pandas dataframe inputs are deprecated, please pass in a dictionary of numpy arrays instead."
+                "Pandas dataframe inputs are deprecated, please pass in a"
+                " dictionary of numpy arrays instead."
             )
             n = data.shape[0]
             data = {attr: data[attr].values for attr in domain.attrs}
@@ -168,7 +172,9 @@ class Dataset:
 
         return Dataset(np.array(data), domain_obj)
 
-    def project(self, cols: int | str | Sequence[str] | Sequence[int]) -> Factor:
+    def project(
+        self, cols: int | str | Sequence[str] | Sequence[int]
+    ) -> Factor:
         """project dataset onto a subset of columns"""
         if isinstance(cols, (str, int)):
             cols = [cols]
@@ -225,16 +231,21 @@ class Dataset:
             _validate_mapping(map_array, attr)
             if map_array.shape[0] != self.domain[attr]:
                 raise ValueError(
-                    f"Mapping size {map_array.shape[0]} does not match domain size {self.domain[attr]} for attribute {attr}"
+                    f"Mapping size {map_array.shape[0]} does not match domain"
+                    f" size {self.domain[attr]} for attribute {attr}"
                 )
 
             new_col = map_array[self._data[attr]]
-            new_data[attr] = new_col.astype(np.min_scalar_type(np.max(map_array)))
+            new_data[attr] = new_col.astype(
+                np.min_scalar_type(np.max(map_array))
+            )
 
             new_size = int(np.max(map_array) + 1)
             new_domain_config[attr] = new_size
 
-        new_domain = Domain(new_domain_config.keys(), new_domain_config.values())
+        new_domain = Domain(
+            new_domain_config.keys(), new_domain_config.values()
+        )
         return Dataset(new_data, new_domain, self.weights)
 
     def decompress(self, mapping: dict[str, np.ndarray]) -> Dataset:
@@ -273,7 +284,8 @@ class Dataset:
             col_counts = counts[current_col]
             if np.any(col_counts == 0):
                 raise ValueError(
-                    f"Data contains values for {attr} that have no preimage in the mapping."
+                    f"Data contains values for {attr} that have no preimage in"
+                    " the mapping."
                 )
 
             random_offsets = np.floor(
@@ -283,11 +295,15 @@ class Dataset:
             lookup_indices = starts[current_col] + random_offsets
 
             new_col = permutation[lookup_indices]
-            new_data[attr] = new_col.astype(np.min_scalar_type(len(map_array) - 1))
+            new_data[attr] = new_col.astype(
+                np.min_scalar_type(len(map_array) - 1)
+            )
 
             new_domain_config[attr] = len(map_array)
 
-        new_domain = Domain(new_domain_config.keys(), new_domain_config.values())
+        new_domain = Domain(
+            new_domain_config.keys(), new_domain_config.values()
+        )
         return Dataset(new_data, new_domain, self.weights)
 
 
@@ -323,7 +339,9 @@ class JaxDataset:
         """
         data = {}
         for attr, n in zip(domain.attrs, domain.shape):
-            data[attr] = jnp.array(np.random.randint(low=0, high=n, size=records))
+            data[attr] = jnp.array(
+                np.random.randint(low=0, high=n, size=records)
+            )
 
         return JaxDataset(data, domain)
 
@@ -336,20 +354,25 @@ class JaxDataset:
 
         dims = domain.shape
         if not dims:
-            w = self.weights if self.weights is not None else jnp.ones(self.records)
+            w = (
+                self.weights
+                if self.weights is not None
+                else jnp.ones(self.records)
+            )
             result = w.sum()
             return Factor(domain, jnp.array([result]))
 
         length = math.prod(dims)
-        dtype = np.min_scalar_type(length-1)
+        dtype = np.min_scalar_type(length - 1)
         multi_index = [self.data[a] for a in domain.attrs]
         multi_index[0] = multi_index[0].astype(dtype)
         linear_indices = jnp.ravel_multi_index(
             tuple(multi_index), dims, mode="wrap", order="C"
         )
 
-
-        counts = jnp.bincount(linear_indices, weights=self.weights, minlength=length)
+        counts = jnp.bincount(
+            linear_indices, weights=self.weights, minlength=length
+        )
 
         return Factor(domain, counts.reshape(dims))
 

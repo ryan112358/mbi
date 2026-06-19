@@ -5,10 +5,10 @@ Combines private and public measurements through iterative selection.
 Note that this method uses bounded DP as the neighborhood relation and should
 be compared to other bounded DP methods.
 
-For full technical details see: 
-Fuentes, M., Mullins, B.C., McKenna, R., Miklau, G. &amp; Sheldon, D.. (2024). 
-Joint Selection: Adaptively Incorporating Public Information for Private Synthetic Data. 
-Proceedings of The 27th International Conference on Artificial Intelligence and Statistics, 
+For full technical details see:
+Fuentes, M., Mullins, B.C., McKenna, R., Miklau, G. &amp; Sheldon, D.. (2024).
+Joint Selection: Adaptively Incorporating Public Information for Private Synthetic Data.
+Proceedings of The 27th International Conference on Artificial Intelligence and Statistics,
 in Proceedings of Machine Learning Research 238:2404-2412 Available from https://proceedings.mlr.press/v238/fuentes24a.html.
 """
 
@@ -31,8 +31,8 @@ def powerset(iterable):
     """powerset([1,2,3]) --> (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"""
     s = list(iterable)
     return itertools.chain.from_iterable(
-        itertools.combinations(s, r) for r in range(1,
-                                                    len(s) + 1))
+        itertools.combinations(s, r) for r in range(1, len(s) + 1)
+    )
 
 
 def downward_closure(workloads):
@@ -57,10 +57,15 @@ def compile_workload(workload):
     workload_cliques_keys = weights.keys()
 
     def score(clique):
-        return sum(weights[workload_cl] * len(set(clique) & set(workload_cl))
-                   for workload_cl in workload_cliques_keys)
+        return sum(
+            weights[workload_cl] * len(set(clique) & set(workload_cl))
+            for workload_cl in workload_cliques_keys
+        )
 
-    return {clique: score(clique) for clique in downward_closure(workload_cliques_keys)}
+    return {
+        clique: score(clique)
+        for clique in downward_closure(workload_cliques_keys)
+    }
 
 
 def adaptive_split(rho_total, rho_used, num_rounds, current_round, alpha):
@@ -84,17 +89,22 @@ def exponential_mech_eps(rho_select):
 def gaussian_sigma(rho_measure, sensitivity):
     """Calculates Gaussian noise stddev (sigma) from rho and sensitivity."""
     if rho_measure <= 0:
-        return float('inf')
+        return float("inf")
     return sensitivity / np.sqrt(2 * rho_measure)
 
 
-def size_filter(domain, current_cliques, candidate_clique,
-                max_model_size_limit):
+def size_filter(
+    domain, current_cliques, candidate_clique, max_model_size_limit
+):
     """Filters candidates that would exceed model size limit."""
     if candidate_clique in current_cliques:
         return True
-    return junction_tree.hypothetical_model_size(
-        domain, current_cliques + [candidate_clique]) <= max_model_size_limit
+    return (
+        junction_tree.hypothetical_model_size(
+            domain, current_cliques + [candidate_clique]
+        )
+        <= max_model_size_limit
+    )
 
 
 def expected_priv_error(sigma, num_cells):
@@ -111,8 +121,17 @@ class JAM(Mechanism):
     Combines private and public measurements through iterative selection.
     """
 
-    def __init__(self, epsilon, delta, prng=None, alpha=0.2, degree=3,
-                 optim_iters=1000, size_limit=80.0, rounds=30):
+    def __init__(
+        self,
+        epsilon,
+        delta,
+        prng=None,
+        alpha=0.2,
+        degree=3,
+        optim_iters=1000,
+        size_limit=80.0,
+        rounds=30,
+    ):
         # pylint: disable=too-many-arguments,too-many-locals,too-many-positional-arguments
         super().__init__(epsilon, delta, prng)
         self.alpha = alpha
@@ -171,20 +190,26 @@ class JAM(Mechanism):
         t = 0
         measurements = []
         while t < self.rounds:
-            rho_select, rho_measure = adaptive_split(self.rho, rho_used,
-                                                     self.rounds, t, self.alpha)
+            rho_select, rho_measure = adaptive_split(
+                self.rho, rho_used, self.rounds, t, self.alpha
+            )
             selection_eps = exponential_mech_eps(rho_select)
             measurement_sigma = gaussian_sigma(rho_measure, marg_l2_sensitivity)
 
             # Filter candidates by model size
             current_cliques_in_model = list(set(m.clique for m in measurements))
             current_size_limit = (
-                1 / self.rounds) * self.size_limit if t == 0 else (
-                    rho_used / self.rho) * self.size_limit
+                (1 / self.rounds) * self.size_limit
+                if t == 0
+                else (rho_used / self.rho) * self.size_limit
+            )
 
             candidates_filtered = [
-                marg for marg in all_candidates if size_filter(
-                    domain, current_cliques_in_model, marg, current_size_limit)
+                marg
+                for marg in all_candidates
+                if size_filter(
+                    domain, current_cliques_in_model, marg, current_size_limit
+                )
             ]
 
             # Calculate scores for selection
@@ -193,8 +218,8 @@ class JAM(Mechanism):
 
             if not measurements:  # First round
                 priv_scores = [
-                    -1 *
-                    expected_priv_error(measurement_sigma, domain.size(marg))
+                    -1
+                    * expected_priv_error(measurement_sigma, domain.size(marg))
                     for marg in candidates_filtered
                 ]
                 pub_scores = [
@@ -202,15 +227,14 @@ class JAM(Mechanism):
                 ]
             else:
                 model_error = {
-                    marg:
-                        np.linalg.norm(
-                            priv_answers[marg] -
-                            model.project(marg).datavector(), 1)
+                    marg: np.linalg.norm(
+                        priv_answers[marg] - model.project(marg).datavector(), 1
+                    )
                     for marg in candidates_filtered
                 }
                 priv_scores = [
-                    model_error[marg] -
-                    expected_priv_error(measurement_sigma, domain.size(marg))
+                    model_error[marg]
+                    - expected_priv_error(measurement_sigma, domain.size(marg))
                     for marg in candidates_filtered
                 ]
                 pub_scores = [
@@ -220,64 +244,75 @@ class JAM(Mechanism):
 
             # Make selection using Exponential Mechanism
             score_dict = {
-                (clique, 'PRIV'): score
+                (clique, "PRIV"): score
                 for clique, score in zip(candidates_filtered, priv_scores)
             }
             score_dict.update({
-                (clique, 'PUB'): score
+                (clique, "PUB"): score
                 for clique, score in zip(candidates_filtered, pub_scores)
             })
 
             selected_marg, mtype = self.exponential_mechanism(
                 score_dict,
                 selection_eps,
-                sensitivity=score_sensitivity_exp_mech)
+                sensitivity=score_sensitivity_exp_mech,
+            )
             rho_used += rho_select
 
-            if mtype == 'PRIV':
+            if mtype == "PRIV":
                 x = priv_answers[selected_marg]
                 y = x + self.gaussian_noise(measurement_sigma, x.size)
                 measurements.append(
-                    LinearMeasurement(y, selected_marg, stddev=1.0))
+                    LinearMeasurement(y, selected_marg, stddev=1.0)
+                )
                 rho_used += rho_measure
             else:
                 x = pub_answers[selected_marg]
                 y = x
                 measurements.append(
-                    LinearMeasurement(y, selected_marg, stddev=1.0))
+                    LinearMeasurement(y, selected_marg, stddev=1.0)
+                )
 
             # Update Model
             potentials = model.potentials if model else None
 
             print(
-                f'Measuring Clique {selected_marg} ({mtype}) - Round {t+1}/{self.rounds} '
-                f'Meas_Sigma={measurement_sigma:.3g} Sel_Eps={selection_eps:.3g} '
-                f'Budget Used={rho_used:.3g}/{self.rho:.3g}',
-                flush=True)
+                f"Measuring Clique {selected_marg} ({mtype}) - Round"
+                f" {t+1}/{self.rounds} Meas_Sigma={measurement_sigma:.3g}"
+                f" Sel_Eps={selection_eps:.3g} Budget"
+                f" Used={rho_used:.3g}/{self.rho:.3g}",
+                flush=True,
+            )
 
-            model = estimation.mirror_descent(domain,
-                                              measurements,
-                                              iters=self.optim_iters,
-                                              potentials=potentials,
-                                              callback_fn=lambda *_: None)
+            model = estimation.mirror_descent(
+                domain,
+                measurements,
+                iters=self.optim_iters,
+                potentials=potentials,
+                callback_fn=lambda *_: None,
+            )
             model_size = junction_tree.hypothetical_model_size(
-                domain, model.cliques)
-            print(f'Model Size: {model_size:.2f} MB', flush=True)
+                domain, model.cliques
+            )
+            print(f"Model Size: {model_size:.2f} MB", flush=True)
 
             t += 1
             if rho_used >= self.rho:
                 print(
-                    f"[{self.__class__.__name__}] Privacy budget exhausted. Terminating early."
+                    f"[{self.__class__.__name__}] Privacy budget exhausted."
+                    " Terminating early."
                 )
                 break
 
         # --- Final Model Estimation and Synthetic Data Generation ---
         print("Generating Data...", flush=True)
         final_potentials = model.potentials if model else None
-        final_model = estimation.mirror_descent(domain,
-                                                measurements,
-                                                iters=self.optim_iters,
-                                                potentials=final_potentials)
+        final_model = estimation.mirror_descent(
+            domain,
+            measurements,
+            iters=self.optim_iters,
+            potentials=final_potentials,
+        )
 
         synth = final_model.synthetic_data(rows=npriv)
 
@@ -301,46 +336,47 @@ def default_params():
     return params
 
 
-if __name__ == '__main__':
-    DESCRIPTION = "Run JAM (Joint Adaptive Measurements) mechanism for DP Synthetic Data."
+if __name__ == "__main__":
+    DESCRIPTION = (
+        "Run JAM (Joint Adaptive Measurements) mechanism for DP Synthetic Data."
+    )
     FORMATTER = argparse.ArgumentDefaultsHelpFormatter
-    parser = argparse.ArgumentParser(description=DESCRIPTION,
-                                     formatter_class=FORMATTER)
+    parser = argparse.ArgumentParser(
+        description=DESCRIPTION, formatter_class=FORMATTER
+    )
 
-    parser.add_argument("--dataset",
-                        type=str,
-                        help="dataset name (e.g., adult)")
-    parser.add_argument("--data_dir",
-                        type=str,
-                        help="base directory for datasets")
-    parser.add_argument("--epsilon",
-                        type=float,
-                        help="privacy parameter epsilon")
+    parser.add_argument(
+        "--dataset", type=str, help="dataset name (e.g., adult)"
+    )
+    parser.add_argument(
+        "--data_dir", type=str, help="base directory for datasets"
+    )
+    parser.add_argument(
+        "--epsilon", type=float, help="privacy parameter epsilon"
+    )
     parser.add_argument("--delta", type=float, help="privacy parameter delta")
-    parser.add_argument("--alpha",
-                        type=float,
-                        help="selection budget proportion")
-    parser.add_argument("--degree",
-                        type=int,
-                        help="degree of marginals in workload")
-    parser.add_argument("--seed",
-                        type=int,
-                        help="PRNG seed")
-    parser.add_argument("--optim_iters",
-                        type=int,
-                        help="number of optimization iterations")
-    parser.add_argument("--size_limit",
-                        type=float,
-                        help="model size limit in MB (approx)")
-    parser.add_argument("--rounds",
-                        type=int,
-                        help="number of iterative selection rounds")
-    parser.add_argument("--save_synth",
-                        type=str,
-                        help="path to save synthetic data CSV")
-    parser.add_argument("--save_errors",
-                        type=str,
-                        help="path to save errors CSV")
+    parser.add_argument(
+        "--alpha", type=float, help="selection budget proportion"
+    )
+    parser.add_argument(
+        "--degree", type=int, help="degree of marginals in workload"
+    )
+    parser.add_argument("--seed", type=int, help="PRNG seed")
+    parser.add_argument(
+        "--optim_iters", type=int, help="number of optimization iterations"
+    )
+    parser.add_argument(
+        "--size_limit", type=float, help="model size limit in MB (approx)"
+    )
+    parser.add_argument(
+        "--rounds", type=int, help="number of iterative selection rounds"
+    )
+    parser.add_argument(
+        "--save_synth", type=str, help="path to save synthetic data CSV"
+    )
+    parser.add_argument(
+        "--save_errors", type=str, help="path to save errors CSV"
+    )
 
     parser.set_defaults(**default_params())
     args = parser.parse_args()
@@ -373,7 +409,9 @@ if __name__ == '__main__':
 
     # --- Compute Error and Save Results ---
     errors = []
-    normalization_factor = 1 / private_data.records if private_data.records > 0 else 1.0
+    normalization_factor = (
+        1 / private_data.records if private_data.records > 0 else 1.0
+    )
 
     for cl in workload_cliques:
         X = private_data.project(cl).datavector()
@@ -393,13 +431,15 @@ if __name__ == '__main__':
         if results_dir:
             os.makedirs(results_dir, exist_ok=True)
 
-        with open(args.save_errors, 'a', encoding='utf-8') as f:
+        with open(args.save_errors, "a", encoding="utf-8") as f:
             f.write(
-                f'{args.size_limit},{args.seed},{args.epsilon},{err_avg},{err_max}\n'
+                f"{args.size_limit},{args.seed},{args.epsilon},{err_avg},{err_max}\n"
             )
         print(f"Errors saved to {args.save_errors}")
 
     print(
-        f"Results: size_limit={args.size_limit}, seed={args.seed}, epsilon={args.epsilon}, "
-        f"avg_error={err_avg:.6f}, max_error={err_max:.6f}",
-        flush=True)
+        f"Results: size_limit={args.size_limit}, seed={args.seed},"
+        f" epsilon={args.epsilon}, avg_error={err_avg:.6f},"
+        f" max_error={err_max:.6f}",
+        flush=True,
+    )

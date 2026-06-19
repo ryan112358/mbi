@@ -11,6 +11,7 @@ from mbi import (
 
 
 class TestMarkovRandomField(unittest.TestCase):
+
     def test_synthetic_data_accuracy(self):
         domain = Domain(["A", "B"], [10, 10])
         factor = Factor.random(domain).normalize(1.0)
@@ -27,7 +28,8 @@ class TestMarkovRandomField(unittest.TestCase):
         diff = np.abs(syn_counts - exp_counts)
         max_diff = np.max(diff)
         self.assertTrue(
-            np.all(diff <= 2.0000001), f"Counts deviated by {max_diff}, expected <= 2"
+            np.all(diff <= 2.0000001),
+            f"Counts deviated by {max_diff}, expected <= 2",
         )
 
     def test_linear_indexing_strides(self):
@@ -81,10 +83,14 @@ class TestMarkovRandomField(unittest.TestCase):
         # compared to others (1).
 
         factor = Factor(domain, data)
-        marginals = CliqueVector(domain, [("A", "B", "C")], {("A", "B", "C"): factor})
+        marginals = CliqueVector(
+            domain, [("A", "B", "C")], {("A", "B", "C"): factor}
+        )
 
         N = 1000
-        model = MarkovRandomField(potentials=marginals, marginals=marginals, total=N)
+        model = MarkovRandomField(
+            potentials=marginals, marginals=marginals, total=N
+        )
 
         synthetic = model.synthetic_data(rows=N, method="round")
         data = synthetic.to_dict()
@@ -93,7 +99,9 @@ class TestMarkovRandomField(unittest.TestCase):
         mask = (data["B"] == 1) & (data["C"] == 0)
         subset_A = data["A"][mask]
 
-        self.assertGreater(len(subset_A), 0, "Should have generated rows with B=1, C=0")
+        self.assertGreater(
+            len(subset_A), 0, "Should have generated rows with B=1, C=0"
+        )
 
         # Check A values
         # Should be all 1s
@@ -101,8 +109,8 @@ class TestMarkovRandomField(unittest.TestCase):
         self.assertEqual(
             a_ones,
             len(subset_A),
-            f"Expected all A=1 for B=1, C=0. Found {a_ones}/{len(subset_A)} A=1s. "
-            "This indicates linear indexing stride mismatch.",
+            f"Expected all A=1 for B=1, C=0. Found {a_ones}/{len(subset_A)}"
+            " A=1s. This indicates linear indexing stride mismatch.",
         )
 
     def test_synthetic_data_round_accuracy_adult(self):
@@ -157,7 +165,9 @@ class TestMarkovRandomField(unittest.TestCase):
         # Threshold: < 0.0017 is acceptable per user requirements
         # Our fix achieves ~0.0009
         self.assertLess(
-            error, 0.0017, f"Error {error} exceeded threshold 0.0017 for pair {cl}"
+            error,
+            0.0017,
+            f"Error {error} exceeded threshold 0.0017 for pair {cl}",
         )
 
 
@@ -172,12 +182,17 @@ def _create_random_model(domain, cliques, N):
         potentials[cl] = f.log()
 
     potential_vector = CliqueVector(domain, cliques, potentials)
-    marginals = marginal_oracles.message_passing_stable(potential_vector, total=N)
+    marginals = marginal_oracles.message_passing_stable(
+        potential_vector, total=N
+    )
 
-    return MarkovRandomField(potentials=potential_vector, marginals=marginals, total=N)
+    return MarkovRandomField(
+        potentials=potential_vector, marginals=marginals, total=N
+    )
 
 
 class TestSyntheticDataComprehensive(unittest.TestCase):
+
     def _test_model_structure(self, domain, cliques, N=10000):
         """Tests synthetic data generation for a specific model structure."""
         model = _create_random_model(domain, cliques, N)
@@ -210,7 +225,8 @@ class TestSyntheticDataComprehensive(unittest.TestCase):
                 self.assertLess(
                     err_round,
                     err_sample,
-                    f"Round error {err_round} should be less than Sample error {err_sample} for clique {cl}",
+                    f"Round error {err_round} should be less than Sample error"
+                    f" {err_sample} for clique {cl}",
                 )
 
             # Statistical check for sample error
@@ -219,7 +235,8 @@ class TestSyntheticDataComprehensive(unittest.TestCase):
             self.assertLess(
                 err_sample,
                 bound,
-                f"Sample error {err_sample} exceeds bound {bound} for clique {cl} (size {size})",
+                f"Sample error {err_sample} exceeds bound {bound} for clique"
+                f" {cl} (size {size})",
             )
 
     def test_independent_model(self):

@@ -45,7 +45,9 @@ class TestEstimation(unittest.TestCase):
         measurements = fake_measurements(cliques)
         loss_fn = marginal_loss.from_linear_measurements(measurements)
 
-        model = estimation.mirror_descent(_DOMAIN, loss_fn, known_total=1.0, iters=250)
+        model = estimation.mirror_descent(
+            _DOMAIN, loss_fn, known_total=1.0, iters=250
+        )
         for M in measurements:
             expected = M.noisy_measurement
             actual = model.project(M.clique).datavector()
@@ -57,7 +59,7 @@ class TestEstimation(unittest.TestCase):
         loss_fn = marginal_loss.from_linear_measurements(measurements)
 
         model = estimation.universal_accelerated_method(
-                _DOMAIN, loss_fn, known_total=1.0, iters=250
+            _DOMAIN, loss_fn, known_total=1.0, iters=250
         )
         for M in measurements:
             expected = M.noisy_measurement
@@ -67,7 +69,9 @@ class TestEstimation(unittest.TestCase):
     @parameterized.expand(itertools.product(_CLIQUE_SETS))
     def test_mirror_descent_l1(self, cliques):
         measurements = fake_measurements(cliques)
-        loss_fn = marginal_loss.from_linear_measurements(measurements, norm="l1")
+        loss_fn = marginal_loss.from_linear_measurements(
+            measurements, norm="l1"
+        )
 
         model = estimation.mirror_descent(
             _DOMAIN, loss_fn, known_total=1.0, iters=250, stepsize=0.01
@@ -129,7 +133,9 @@ class TestEstimation(unittest.TestCase):
     def test_mle(self, cliques):
         P = Factor.random(_DOMAIN) * 10
         total = float(P.sum())
-        mu = CliqueVector(_DOMAIN, cliques, {cl: P.project(cl) for cl in cliques})
+        mu = CliqueVector(
+            _DOMAIN, cliques, {cl: P.project(cl) for cl in cliques}
+        )
 
         model = estimation.mle_from_marginals(mu, known_total=total)
         for cl in cliques:

@@ -33,7 +33,9 @@ class Callback:
 
     def __call__(self, marginals: CliqueVector):
         if self._step == 0:
-            header = "|".join([_pad(x, 12) for x in ["step", *self.loss_fns.keys()]])
+            header = "|".join(
+                [_pad(x, 12) for x in ["step", *self.loss_fns.keys()]]
+            )
             print(header)
             print("=" * len(header))
         if self._step % self.frequency == 0:

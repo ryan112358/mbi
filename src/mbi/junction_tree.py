@@ -25,10 +25,14 @@ def maximal_cliques(junction_tree: nx.Graph) -> list[Clique]:
     return list(nx.dfs_preorder_nodes(junction_tree))
 
 
-def message_passing_order(junction_tree: nx.Graph) -> list[tuple[Clique, Clique]]:
+def message_passing_order(
+    junction_tree: nx.Graph,
+) -> list[tuple[Clique, Clique]]:
     """Return a valid message passing order."""
     edges = set()
-    messages = list(junction_tree.edges()) + [(b, a) for a, b in junction_tree.edges()]
+    messages = list(junction_tree.edges()) + [
+        (b, a) for a, b in junction_tree.edges()
+    ]
     for m1 in messages:
         for m2 in messages:
             if m1[1] == m2[0] and m1[0] != m2[1]:
@@ -111,7 +115,11 @@ def make_junction_tree(
     cliques = [tuple(cl) for cl in cliques]
     graph = _make_graph(domain, cliques)
 
-    if elimination_order is None and not nx.is_empty(graph) and nx.is_tree(graph):
+    if (
+        elimination_order is None
+        and not nx.is_empty(graph)
+        and nx.is_tree(graph)
+    ):
         elimination_order = list(nx.dfs_postorder_nodes(graph))
     elif elimination_order is None:
         elimination_order = greedy_order(domain, cliques, stochastic=False)[0]
