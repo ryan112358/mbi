@@ -195,11 +195,11 @@ class Factor:
         return self.domain.supports(attrs)
 
     # Functions that operate element-wise
-    def exp(self, out=None) -> Factor:
+    def exp(self) -> Factor:
         """Applies element-wise exponentiation (jnp.exp) to the factor's values."""
         return Factor(self.domain, jnp.exp(self.values))
 
-    def log(self, out=None) -> Factor:
+    def log(self) -> Factor:
         """Applies element-wise logarithm (jnp.log) to the factor's values."""
         return Factor(self.domain, jnp.log(self.values))
 
