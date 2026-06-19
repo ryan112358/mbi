@@ -137,7 +137,6 @@ def estimate(
     params = jax.random.normal(key, (num_components, one_hot_features)) * 0.25
 
     cliques = loss_fn.cliques
-    letters = "bcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
     def get_products(params):
         products = {}
@@ -148,21 +147,14 @@ def estimate(
             idx += n
         return products
 
-    def marginals_from_params(params):
-        products = get_products(params)
-        arrays = {}
-        for cl in cliques:
-            let = letters[: len(cl)]
-            formula = ",".join(f"a{l}" for l in let) + "->" + "".join(let)
-            components = [products[col] for col in cl]
-            ans = (
-                jnp.einsum(formula, *components) * known_total / num_components
-            )
-            arrays[cl] = Factor(domain.project(cl), ans)
-        return CliqueVector(domain, cliques, arrays)
+    def model_from_params(params):
+        return MixtureOfProducts(get_products(params), domain, known_total)
 
     def params_loss(params: jax.Array) -> float:
-        return loss_fn(marginals_from_params(params))
+        model = model_from_params(params)
+        arrays = {cl: model.project(cl) for cl in cliques}
+        mu = CliqueVector(domain, cliques, arrays)
+        return loss_fn(mu)
 
     params_loss_and_grad = jax.jit(jax.value_and_grad(params_loss))
     opt_state = optimizer.init(params)
@@ -182,8 +174,6 @@ def estimate(
     for _ in range(num_blocks):
         (params, opt_state), _ = scan_block((params, opt_state))
         if callback_fn is not None:
-            callback_fn(
-                MixtureOfProducts(get_products(params), domain, known_total)
-            )
+            callback_fn(model_from_params(params))
 
-    return MixtureOfProducts(get_products(params), domain, known_total)
+    return model_from_params(params)
