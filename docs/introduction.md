@@ -16,12 +16,12 @@ by combining all sources of information in a principled manner (e.g., by maximiz
 Published articles: 
 
 - McKenna, Ryan, Terrance Liu, "A simple recipe for private synthetic data generation."
-[https://differentialprivacy.org/synth-data-1/](https://differentialprivacy.org/synth-data-1)
+[https://differentialprivacy.org/synth-data-1/](https://differentialprivacy.org/synth-data-1/)
 
 - McKenna, Ryan, Daniel Sheldon, and Gerome Miklau. 2021. "Winning the NIST Contest: A scalable and general approach to differentially private synthetic data."  *Journal of Privacy and Confidentiality* 11 (3).  [![DOI:10.29012/jpc.778](https://zenodo.org/badge/DOI/10.29012/jpc.778.svg)](https://doi.org/10.29012/jpc.778) 
 
 - McKenna, Ryan, Daniel Sheldon, and Gerome Miklau. "Graphical-model based estimation and inference for differential privacy." In Proceedings of the 36th International Conference on Machine Learning. 2019. https://arxiv.org/abs/1901.09136
 
-- McKenna, Ryan, Siddhant Pradhan, Daniel Sheldon, and Gerome Miklau. "Relaxed Marginal Consistency for Differentially Private Query Answering".  In Proceedings of the 35th Conference on Nueral Information Processing Systems, 2021. https://arxiv.org/pdf/2109.06153
+- McKenna, Ryan, Siddhant Pradhan, Daniel Sheldon, and Gerome Miklau. "Relaxed Marginal Consistency for Differentially Private Query Answering".  In Proceedings of the 35th Conference on Neural Information Processing Systems, 2021. https://arxiv.org/pdf/2109.06153
 
 - McKenna, Ryan, Brett Mullins, Daniel Sheldon, and Gerome Miklau. "AIM: An Adaptive and Iterative Mechanism for Differentially Private Synthetic Data".  In Proceedings of the VLDB Endowment, Vol 15, 2023. https://arxiv.org/abs/2201.12677
