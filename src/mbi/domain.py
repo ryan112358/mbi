@@ -7,6 +7,7 @@ various operations like projection, marginalization, and merging of domains.
 """
 
 import functools
+import math
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -213,7 +214,7 @@ class Domain:
           the total size of the domain
         """
         if attributes is None:
-            return functools.reduce(lambda x, y: x * y, self.shape, 1)
+            return math.prod(self.shape)
         return self.project(attributes).size()
 
     @property
