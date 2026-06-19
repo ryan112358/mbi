@@ -9,7 +9,6 @@ generating synthetic data.
 
 from collections.abc import Sequence
 import chex
-import math
 import numpy as np
 
 from . import junction_tree, marginal_oracles

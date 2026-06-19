@@ -234,5 +234,5 @@ class Domain:
         return len(self.attributes)
 
     def __str__(self) -> str:
-        inner = ", ".join(["%s: %d" % x for x in zip(self.attributes, self.shape)])
-        return "Domain(%s)" % inner
+        inner = ", ".join([f"{x[0]}: {x[1]}" for x in zip(self.attributes, self.shape)])
+        return f"Domain({inner})"

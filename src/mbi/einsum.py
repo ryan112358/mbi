@@ -95,8 +95,7 @@ def _axis_name_to_dim(axis_names: str, axis_name: str) -> int | None:
     """Returns the index of axis_name in axis_names, or None if not found."""
     if axis_name in axis_names:
         return axis_names.index(axis_name)
-    else:
-        return None
+    return None
 
 
 def _get_subarrays(
@@ -240,8 +239,8 @@ def custom_einsum(subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.
             invals = [
                 var.val if isinstance(var, Literal) else env[var] for var in eqn.invars
             ]
-            if eqn.primitive.name == 'reduce_sum':
-                axes = eqn.params['axes']
+            if eqn.primitive.name == "reduce_sum":
+                axes = eqn.params["axes"]
                 outvals = [reduce_fn(invals[0], axis=axes)]
             else:
                 # Many JAX primitives do not implement get_bind_params

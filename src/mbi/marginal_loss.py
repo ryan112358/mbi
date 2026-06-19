@@ -171,5 +171,5 @@ def primal_feasibility(mu: CliqueVector) -> chex.Numeric:
                 count += 1
     try:
         return ans / count
-    except:
+    except Exception:  # pylint: disable=broad-exception-caught
         return 0

@@ -71,7 +71,7 @@ class MarginalOracle(Protocol):
         Returns:
             A CliqueVector of the computed marginals.
         """
-        ...
+        pass
 
 
 def sum_product(factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum) -> Factor:
@@ -369,8 +369,7 @@ def message_passing_fast(
         potential_mapping[mapping[cl]].append(potentials[cl])
         inverse_mapping[mapping[cl]].append(cl)
 
-    for i in range(len(message_order)):
-        msg = message_order[i]
+    for i, msg in enumerate(message_order):
         for j in range(i):
             msg2 = message_order[j]
             if msg[0] == msg2[1] and msg[1] != msg2[0]:
@@ -394,7 +393,7 @@ def message_passing_fast(
     beliefs = {}
     for cl in maximal_cliques:
         input_potentials = potential_mapping[cl]
-        input_messages = [messages[key] for key in messages if key[1] == cl]
+        input_messages = [val for key, val in messages.items() if key[1] == cl]
         inputs = input_potentials + input_messages
         for cl2 in inverse_mapping[cl]:
             beliefs[cl2] = (
@@ -483,13 +482,12 @@ def variable_elimination(
         log_z = unnormalized.logsumexp(sum_attrs)
         normalized = unnormalized + jnp.log(total) - log_z
         return normalized.exp().project(clique).apply_sharding(mesh)
-    else:
-        return (
-            unnormalized.normalize(total, log=True)
-            .exp()
-            .project(clique)
-            .apply_sharding(mesh)
-        )
+    return (
+        unnormalized.normalize(total, log=True)
+        .exp()
+        .project(clique)
+        .apply_sharding(mesh)
+    )
 
 
 def bulk_variable_elimination(
@@ -603,7 +601,7 @@ def calculate_many_marginals(
             S = set(Cl) - set(Ci) - set(Cj)
             results[(Ci, Cj)] = results[(Cj, Ci)] = (X * Y).sum(S)
 
-    results = {domain.canonical(key[0] + key[1]): results[key] for key in results}
+    results = {domain.canonical(key[0] + key[1]): val for key, val in results.items()}
 
     answers = {}
     for cl in marginal_queries:

@@ -63,7 +63,7 @@ class StatefulMarginalOracle(Protocol):
                 - CliqueVector: The computed marginals.
                 - Any: The updated state.
         """
-        ...
+        pass
 
 
 def build_graph(domain: Domain, cliques: list[tuple[str, ...]]):
