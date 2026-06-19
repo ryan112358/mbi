@@ -11,7 +11,7 @@ This is a cleaned-up, optimized replacement for
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 import jax
 import jax.nn
@@ -30,7 +30,10 @@ from ..marginal_loss import LinearMeasurement
 class MixtureOfProducts:
     """A discrete distribution as a mixture of product distributions."""
 
-    def __init__(self, products: dict[str, jax.Array], domain: Domain, total: float):
+    def __init__(
+        self, products: dict[str, jax.Array], domain: Domain, total: float
+    ):
+        """Initialize from per-attribute product arrays, domain, and total."""
         self.products = products
         self.domain = domain
         self.total = total
@@ -153,9 +156,7 @@ def mixture_of_products(
             formula = ",".join(f"a{l}" for l in let) + "->" + "".join(let)
             components = [products[col] for col in cl]
             ans = (
-                jnp.einsum(formula, *components)
-                * known_total
-                / num_components
+                jnp.einsum(formula, *components) * known_total / num_components
             )
             arrays[cl] = Factor(domain.project(cl), ans)
         return CliqueVector(domain, cliques, arrays)
@@ -181,6 +182,8 @@ def mixture_of_products(
     for _ in range(num_blocks):
         (params, opt_state), _ = scan_block((params, opt_state))
         if callback_fn is not None:
-            callback_fn(MixtureOfProducts(get_products(params), domain, known_total))
+            callback_fn(
+                MixtureOfProducts(get_products(params), domain, known_total)
+            )
 
     return MixtureOfProducts(get_products(params), domain, known_total)

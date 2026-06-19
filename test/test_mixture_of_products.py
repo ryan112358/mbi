@@ -119,7 +119,9 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
         """Test that L1 loss works without crashing and converges."""
         cliques = [("a", "b"), ("b", "c")]
         measurements, P = _fake_measurements(_DOMAIN, cliques)
-        loss_fn = marginal_loss.from_linear_measurements(measurements, norm="l1")
+        loss_fn = marginal_loss.from_linear_measurements(
+            measurements, norm="l1"
+        )
 
         model = mixture_of_products(
             _DOMAIN,
@@ -139,7 +141,9 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
         """Test explicit L2 loss construction."""
         cliques = [("a", "b"), ("b", "c")]
         measurements, P = _fake_measurements(_DOMAIN, cliques)
-        loss_fn = marginal_loss.from_linear_measurements(measurements, norm="l2")
+        loss_fn = marginal_loss.from_linear_measurements(
+            measurements, norm="l2"
+        )
 
         model = mixture_of_products(
             _DOMAIN,
