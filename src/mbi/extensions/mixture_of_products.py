@@ -94,8 +94,8 @@ class MixtureOfProducts:
         """Generate synthetic data via randomized rounding."""
         total = max(1, int(rows or self.total))
         rng = np.random.default_rng()
-        subtotal = total // self.num_components + 1
         products = self.products
+        subtotal = total // self.num_components + 1
 
         blocks = []
         for k in range(self.num_components):
@@ -114,14 +114,19 @@ class MixtureOfProducts:
                 rng.shuffle(vals)
                 comp_data[col] = vals
             blocks.append(
-                np.stack([comp_data[col] for col in self.domain.attrs], axis=1)
+                np.stack(
+                    [comp_data[col] for col in self.domain.attrs], axis=1
+                )
             )
 
         full_data = np.concatenate(blocks, axis=0)
         rng.shuffle(full_data)
         full_data = full_data[:total]
 
-        data = {col: full_data[:, i] for i, col in enumerate(self.domain.attrs)}
+        data = {
+            col: full_data[:, i]
+            for i, col in enumerate(self.domain.attrs)
+        }
         return Dataset(data, self.domain)
 
 
