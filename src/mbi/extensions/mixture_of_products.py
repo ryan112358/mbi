@@ -93,7 +93,7 @@ class MixtureOfProducts:
         return Dataset(data, self.domain)
 
 
-def mixture_of_products(
+def estimate(
     domain: Domain,
     loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
     *,
