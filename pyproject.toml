@@ -40,6 +40,7 @@ dev = [
     "yapf",
     "pylint",
     "pydocstyle",
+    "flake8",
 ]
 docs = [
     "sphinx",
