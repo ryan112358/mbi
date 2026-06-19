@@ -1,3 +1,5 @@
+"""Factor representation for discrete probability distributions."""
+
 from __future__ import annotations
 
 import functools

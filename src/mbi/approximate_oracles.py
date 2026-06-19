@@ -30,8 +30,7 @@ Clique: TypeAlias = tuple[str, ...]
 
 
 class StatefulMarginalOracle(Protocol):
-    """
-    Defines the callable signature for stateful marginal oracle functions.
+    """Defines the callable signature for stateful marginal oracle functions.
 
     A stateful marginal oracle computes (approximate) marginals from
     log-space potentials while also managing an internal state, often
@@ -46,8 +45,7 @@ class StatefulMarginalOracle(Protocol):
         state: Any = None,
         mesh: jax.sharding.Mesh | None = None,
     ) -> tuple[CliqueVector, Any]:
-        """
-        Computes marginals from log-space potentials and manages state.
+        """Computes marginals from log-space potentials and manages state.
 
         Args:
             potentials: A CliqueVector representing the log-space potentials

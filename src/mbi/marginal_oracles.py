@@ -29,8 +29,7 @@ _EINSUM_LETTERS = list(string.ascii_lowercase) + list(string.ascii_uppercase)
 
 
 class MarginalOracle(Protocol):
-    """
-    Defines the callable signature for stateless marginal oracle functions.
+    """Defines the callable signature for stateless marginal oracle functions.
 
     A marginal oracle consumes log-space potentials (CliqueVector) of
     a graphical model and returns its marginals (CliqueVector).  The
@@ -57,8 +56,7 @@ class MarginalOracle(Protocol):
         total: float = 1.0,
         mesh: jax.sharding.Mesh | None = None,
     ) -> CliqueVector:
-        """
-        Computes marginals from log-space potentials.
+        """Computes marginals from log-space potentials.
 
         Args:
             potentials: A CliqueVector representing the log-space potentials
@@ -565,7 +563,7 @@ def calculate_many_marginals(
     belief_propagation_oracle: MarginalOracle = message_passing_stable,
     mesh: jax.sharding.Mesh | None = None,
 ) -> CliqueVector:
-    """Calculates marginals for all the projections in the list using
+    """Calculate marginals for all projections using belief propagation.
 
     Implements Algorithm from section 10.3 in Koller and Friedman.
     This method may be faster than calling variable_elimination many times.

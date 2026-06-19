@@ -1,3 +1,5 @@
+"""Estimation with public data support constraints."""
+
 import jax
 import numpy as np
 from scipy.special import logsumexp

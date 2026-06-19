@@ -126,6 +126,7 @@ def _get_subarrays(
       ax_dims: A list of axis dimensions to slice along, or None if no slicing is
         needed.
       index: The index to slice at.
+
     Returns:
       A list of arrays, each of which is a slice of the corresponding input array.
     """
