@@ -149,7 +149,7 @@ def mirror_descent(
     stepsize: float | None = None,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
     mesh: jax.sharding.Mesh | None = None,
-):
+) -> MarkovRandomField:
     """Optimization using the Mirror Descent algorithm.
 
     This is a first-order proximal optimization algorithm for solving
@@ -266,7 +266,7 @@ def lbfgs(
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
     mesh: jax.sharding.Mesh | None = None,
-):
+) -> MarkovRandomField:
     """Gradient-based optimization on the potentials (theta) via L-BFGS.
 
     This optimizer works by calculating the gradients with respect to the
@@ -328,7 +328,7 @@ def mle_from_marginals(
     known_total: float,
     iters: int = 250,
     marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
-    callback_fn=lambda *_: None,
+    callback_fn: Callable[..., None] = lambda *_: None,
     mesh: jax.sharding.Mesh | None = None,
 ) -> MarkovRandomField:
     """Compute the MLE Graphical Model from the marginals.
@@ -432,7 +432,7 @@ def interior_gradient(
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
     mesh: jax.sharding.Mesh | None = None,
-):
+) -> MarkovRandomField:
     """Optimization using the Interior Point Gradient Descent algorithm.
 
     Interior Gradient is an accelerated proximal algorithm for solving a smooth
@@ -682,7 +682,7 @@ def universal_accelerated_method(
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
     mesh: jax.sharding.Mesh | None = None,
-):
+) -> MarkovRandomField:
     """Optimization using the Universal Accelerated MD algorithm."""
     loss_fn, known_total, potentials = _initialize(
         domain, loss_fn, known_total, potentials

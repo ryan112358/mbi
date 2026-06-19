@@ -31,7 +31,7 @@ class Callback:
     _step: int = 0
     _logs: list = attr.field(factory=list)
 
-    def __call__(self, marginals: CliqueVector):
+    def __call__(self, marginals: CliqueVector) -> None:
         if self._step == 0:
             header = "|".join(
                 [_pad(x, 12) for x in ["step", *self.loss_fns.keys()]]
@@ -46,7 +46,7 @@ class Callback:
         self._step += 1
 
     @property
-    def summary(self):
+    def summary(self) -> dict[str, list]:
         return {
             "columns": ["step"] + list(self.loss_fns.keys()),
             "data": self._logs,

@@ -64,7 +64,14 @@ class StatefulMarginalOracle(Protocol):
         pass
 
 
-def build_graph(domain: Domain, cliques: list[tuple[str, ...]]):
+def build_graph(domain: Domain, cliques: list[tuple[str, ...]]) -> tuple[
+    set[Clique],
+    list[tuple[str, ...]],
+    dict[tuple[Clique, Clique], Factor],
+    list[tuple[Clique, Clique]],
+    dict[Clique, list[Clique]],
+    dict[Clique, list[Clique]],
+]:
     """Builds the region graph for convex generalized belief propagation."""
     # Hard-code minimal=True, convex=True
     # Counting numbers = 1 for all regions

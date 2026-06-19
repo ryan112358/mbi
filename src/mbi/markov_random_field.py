@@ -8,12 +8,15 @@ generating synthetic data.
 """
 
 from collections.abc import Sequence
+
 import chex
 import numpy as np
 
 from . import junction_tree, marginal_oracles
+from .clique_utils import Clique
 from .clique_vector import CliqueVector
 from .dataset import Dataset
+from .domain import Domain
 from .factor import Factor
 
 
@@ -192,11 +195,11 @@ class MarkovRandomField:
         return Dataset(data, domain)
 
     @property
-    def domain(self):
+    def domain(self) -> Domain:
         """Returns the Domain object associated with this graphical model."""
         return self.potentials.domain
 
     @property
-    def cliques(self):
+    def cliques(self) -> list[Clique]:
         """Returns the list of cliques the model's potentials are defined over."""
         return self.potentials.cliques

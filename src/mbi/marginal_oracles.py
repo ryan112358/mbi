@@ -14,6 +14,7 @@ import functools
 import itertools
 import math
 import string
+from collections.abc import Callable
 from typing import Protocol
 
 import jax
@@ -73,7 +74,7 @@ class MarginalOracle(Protocol):
 
 
 def sum_product(
-    factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum
+    factors: list[Factor], dom: Domain, einsum_fn: Callable = jnp.einsum
 ) -> Factor:
     """Compute the sum-of-products of a list of Factors using einsum.
 
@@ -106,7 +107,7 @@ def sum_product(
 
 
 def logspace_sum_product_fast(
-    log_factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum
+    log_factors: list[Factor], dom: Domain, einsum_fn: Callable = jnp.einsum
 ) -> Factor:
     """Numerically stable algorithm for computing sum product in log space.
 
@@ -137,7 +138,7 @@ def logspace_sum_product_fast(
 
 
 def logspace_sum_product_stable_v1(
-    log_factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum
+    log_factors: list[Factor], dom: Domain, einsum_fn: Callable = jnp.einsum
 ) -> Factor:
     """More stable implementation of logspace_sum_product.
 
@@ -178,7 +179,7 @@ def einsum_marginals(
     potentials: CliqueVector,
     total: float = 1,
     mesh: jax.sharding.Mesh | None = None,
-    einsum_fn=jnp.einsum,
+    einsum_fn: Callable = jnp.einsum,
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials by using einsum.
 
@@ -336,7 +337,7 @@ def message_passing_fast(
     potentials: CliqueVector,
     total: float = 1,
     mesh: jax.sharding.Mesh | None = None,
-    einsum_fn=jnp.einsum,
+    einsum_fn: Callable = jnp.einsum,
     jtree: nx.Graph | None = None,
     logspace_sum_product_fn=logspace_sum_product_fast,
 ) -> CliqueVector:

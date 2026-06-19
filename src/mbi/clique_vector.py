@@ -78,13 +78,15 @@ class CliqueVector:
         return cls(domain, cliques, arrays)
 
     @classmethod
-    def from_projectable(cls, data: Projectable, cliques: list[Clique]):
+    def from_projectable(
+        cls, data: Projectable, cliques: list[Clique]
+    ) -> CliqueVector:
         """Creates a CliqueVector by projecting a data source onto the specified cliques."""
         arrays = {cl: data.project(cl) for cl in cliques}
         return cls(data.domain, cliques, arrays)
 
     @functools.cached_property
-    def active_domain(self):
+    def active_domain(self) -> Domain:
         """Returns the merged domain encompassing all attributes across all cliques."""
         domains = [self.domain.project(cl) for cl in self.cliques]
         return functools.reduce(
@@ -142,7 +144,7 @@ class CliqueVector:
         arrays = {cl: self.project(cl, log=log) for cl in cliques}
         return CliqueVector(self.domain, cliques, arrays)
 
-    def normalize(self, total: float = 1, log: bool = True):
+    def normalize(self, total: float = 1, log: bool = True) -> CliqueVector:
         """Normalizes each factor within the CliqueVector."""
         return jax.tree.map(
             lambda f: f.normalize(total, log),
@@ -187,7 +189,7 @@ class CliqueVector:
         )
         return jax.tree.reduce(operator.add, dots, 0)
 
-    def size(self):
+    def size(self) -> int:
         """Calculates the total number of parameters across all factors in the vector."""
         return sum(self.domain.size(cl) for cl in self.cliques)
 

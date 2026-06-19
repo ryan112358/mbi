@@ -7,12 +7,15 @@ attribute names (strings).
 """
 
 import itertools
+from collections.abc import Iterable, Iterator
 from typing import TypeAlias
+
+from .domain import Domain
 
 Clique: TypeAlias = tuple[str, ...]
 
 
-def powerset(iterable):
+def powerset(iterable: Iterable) -> Iterator[tuple]:
     """Powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)."""
     s = list(iterable)
     return itertools.chain.from_iterable(
@@ -47,7 +50,9 @@ def downward_closure(
 
 
 def reverse_clique_mapping(
-    maximal_cliques: list[Clique], all_cliques: list[Clique], domain=None
+    maximal_cliques: list[Clique],
+    all_cliques: list[Clique],
+    domain: Domain | None = None,
 ) -> dict[Clique, list[Clique]]:
     """Creates a mapping from maximal cliques to a list of cliques they contain.
 
@@ -101,7 +106,9 @@ def maximal_subset(cliques: list[Clique]) -> list[Clique]:
 
 
 def clique_mapping(
-    maximal_cliques: list[Clique], all_cliques: list[Clique], domain=None
+    maximal_cliques: list[Clique],
+    all_cliques: list[Clique],
+    domain: Domain | None = None,
 ) -> dict[Clique, Clique]:
     """Creates a mapping from cliques to their corresponding maximal clique.
 
