@@ -71,10 +71,12 @@ class MarginalOracle(Protocol):
         Returns:
             A CliqueVector of the computed marginals.
         """
-        pass
+        ...
 
 
-def sum_product(factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum) -> Factor:
+def sum_product(
+    factors: list[Factor], dom: Domain, einsum_fn=jnp.einsum
+) -> Factor:
     """Compute the sum-of-products of a list of Factors using einsum.
 
     Args:
@@ -148,13 +150,15 @@ def logspace_sum_product_stable_v1(
     """
     del einsum_fn  # unused
     summed = sum(log_factors)  # Might help to put a sharding constraint here
-    return summed.logsumexp(summed.domain.marginalize(dom).attributes).transpose(
-        dom.attributes
-    )
+    return summed.logsumexp(
+        summed.domain.marginalize(dom).attributes
+    ).transpose(dom.attributes)
 
 
 def brute_force_marginals(
-    potentials: CliqueVector, total: float = 1, mesh: jax.sharding.Mesh | None = None
+    potentials: CliqueVector,
+    total: float = 1,
+    mesh: jax.sharding.Mesh | None = None,
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials by materializing the full joint distribution."""
     if len(potentials.cliques) == 0:
@@ -191,10 +195,14 @@ def einsum_marginals(
         potentials.domain,
         potentials.cliques,
         {
-            cl: logspace_sum_product_fast(inputs, potentials[cl].domain, einsum_fn)
-            .normalize(total, log=True)
-            .exp()
-            .apply_sharding(mesh)
+            cl: (
+                logspace_sum_product_fast(
+                    inputs, potentials[cl].domain, einsum_fn
+                )
+                .normalize(total, log=True)
+                .exp()
+                .apply_sharding(mesh)
+            )
             for cl in potentials.cliques
         },
     )
@@ -252,7 +260,10 @@ def message_passing_stable(
         beliefs[j] = beliefs[j] + messages[(i, j)]
 
     return (
-        beliefs.normalize(total, log=True).exp().contract(cliques).apply_sharding(mesh)
+        beliefs.normalize(total, log=True)
+        .exp()
+        .contract(cliques)
+        .apply_sharding(mesh)
     )
 
 
@@ -315,7 +326,10 @@ def message_passing_shafer_shenoy(
 
     beliefs = CliqueVector(potentials.domain, maximal_cliques, beliefs)
     return (
-        beliefs.normalize(total, log=True).exp().contract(cliques).apply_sharding(mesh)
+        beliefs.normalize(total, log=True)
+        .exp()
+        .contract(cliques)
+        .apply_sharding(mesh)
     )
 
 
@@ -369,7 +383,8 @@ def message_passing_fast(
         potential_mapping[mapping[cl]].append(potentials[cl])
         inverse_mapping[mapping[cl]].append(cl)
 
-    for i, msg in enumerate(message_order):
+    for i in range(len(message_order)):
+        msg = message_order[i]
         for j in range(i):
             msg2 = message_order[j]
             if msg[0] == msg2[1] and msg[1] != msg2[0]:
@@ -393,7 +408,7 @@ def message_passing_fast(
     beliefs = {}
     for cl in maximal_cliques:
         input_potentials = potential_mapping[cl]
-        input_messages = [val for key, val in messages.items() if key[1] == cl]
+        input_messages = [messages[key] for key in messages if key[1] == cl]
         inputs = input_potentials + input_messages
         for cl2 in inverse_mapping[cl]:
             beliefs[cl2] = (
@@ -448,10 +463,14 @@ def variable_elimination(
 
     if has_vector_evidence:
         ev_size = next(
-            psi[i].domain[evidence_attr] for i in psi if evidence_attr in psi[i].domain
+            psi[i].domain[evidence_attr]
+            for i in psi
+            if evidence_attr in psi[i].domain
         )
         extra = Domain([evidence_attr], [ev_size])
-        domain = potentials.active_domain.marginalize(evidence.keys()).merge(extra)
+        domain = potentials.active_domain.marginalize(evidence.keys()).merge(
+            extra
+        )
         if evidence_attr not in clique:
             clique = (evidence_attr,) + clique
     else:
@@ -470,24 +489,31 @@ def variable_elimination(
         vars_in_model = [v for v in clique if v != evidence_attr]
         base_dom = potentials.domain.project(vars_in_model)
         ev_size = domain[evidence_attr]
-        newdom = base_dom.merge(Domain([evidence_attr], [ev_size])).project(clique)
+        newdom = base_dom.merge(Domain([evidence_attr], [ev_size])).project(
+            clique
+        )
     else:
         newdom = potentials.domain.project(clique)
 
     zero = Factor(Domain([], []), jnp.asarray(0.0))
-    unnormalized = sum(psi.values(), start=zero).expand(newdom).apply_sharding(mesh)
+    unnormalized = (
+        sum(psi.values(), start=zero).expand(newdom).apply_sharding(mesh)
+    )
 
     if has_vector_evidence:
-        sum_attrs = [a for a in unnormalized.domain.attributes if a != evidence_attr]
+        sum_attrs = [
+            a for a in unnormalized.domain.attributes if a != evidence_attr
+        ]
         log_z = unnormalized.logsumexp(sum_attrs)
         normalized = unnormalized + jnp.log(total) - log_z
         return normalized.exp().project(clique).apply_sharding(mesh)
-    return (
-        unnormalized.normalize(total, log=True)
-        .exp()
-        .project(clique)
-        .apply_sharding(mesh)
-    )
+    else:
+        return (
+            unnormalized.normalize(total, log=True)
+            .exp()
+            .project(clique)
+            .apply_sharding(mesh)
+        )
 
 
 def bulk_variable_elimination(
@@ -555,7 +581,9 @@ def calculate_many_marginals(
     """
 
     domain = potentials.domain
-    jtree = junction_tree.make_junction_tree(potentials.domain, potentials.cliques)[0]
+    jtree = junction_tree.make_junction_tree(
+        potentials.domain, potentials.cliques
+    )[0]
     max_cliques = junction_tree.maximal_cliques(jtree)
     neighbors = {i: tuple(jtree.neighbors(i)) for i in max_cliques}
 
@@ -576,13 +604,17 @@ def calculate_many_marginals(
             Z = marginals.project(Cj)
             Z_sep = Z.project(Sij)
             denom = Z_sep.expand(Z.domain)
-            safe_div = jnp.where(denom.values != 0, Z.values / denom.values, 0.0)
+            safe_div = jnp.where(
+                denom.values != 0, Z.values / denom.values, 0.0
+            )
             conditional[(Cj, Ci)] = Factor(Z.domain, safe_div)
 
     # now iterate through pairs of cliques in order of distance
     # not sure why this API changed and why we need to do this hack.
     nx.set_edge_attributes(jtree, values=1.0, name="weight")  # type: ignore
-    pred, dist = nx.floyd_warshall_predecessor_and_distance(jtree)  # , weight=None)
+    pred, dist = nx.floyd_warshall_predecessor_and_distance(
+        jtree
+    )  # , weight=None)
 
     def order_fn(x):
         return dist[x[0]][x[1]]
@@ -601,7 +633,9 @@ def calculate_many_marginals(
             S = set(Cl) - set(Ci) - set(Cj)
             results[(Ci, Cj)] = results[(Cj, Ci)] = (X * Y).sum(S)
 
-    results = {domain.canonical(key[0] + key[1]): val for key, val in results.items()}
+    results = {
+        domain.canonical(key[0] + key[1]): results[key] for key in results
+    }
 
     answers = {}
     for cl in marginal_queries:

@@ -7,20 +7,21 @@ from mbi.dataset import Dataset, JaxDataset
 
 
 class TestDomain(unittest.TestCase):
+
     def setUp(self):
-        attrs = ["a", "b", "c", "d"]
+        attrs = ['a', 'b', 'c', 'd']
         shape = [3, 4, 5, 6]
         domain = Domain(attrs, shape)
         self.data = Dataset.synthetic(domain, 100)
 
     def test_project(self):
-        proj = self.data.project(["a", "b"])
-        ans = Domain(["a", "b"], [3, 4])
+        proj = self.data.project(['a', 'b'])
+        ans = Domain(['a', 'b'], [3, 4])
         self.assertEqual(proj.domain, ans)
-        proj = self.data.project(("a", "b"))
+        proj = self.data.project(('a', 'b'))
         self.assertEqual(proj.domain, ans)
-        proj = self.data.project("c")
-        self.assertEqual(proj.domain, Domain(["c"], [5]))
+        proj = self.data.project('c')
+        self.assertEqual(proj.domain, Domain(['c'], [5]))
 
     def test_datavector(self):
         vec = self.data.datavector()
@@ -28,6 +29,7 @@ class TestDomain(unittest.TestCase):
 
 
 class TestDatasetDeterministic(unittest.TestCase):
+
     def setUp(self):
         attrs = ['A', 'B']
         shape = [2, 3]
@@ -35,12 +37,14 @@ class TestDatasetDeterministic(unittest.TestCase):
 
         self.data_dict = {
             'A': np.array([0, 0, 1, 0]),
-            'B': np.array([0, 1, 2, 0])
+            'B': np.array([0, 1, 2, 0]),
         }
         self.dataset = Dataset(self.data_dict, self.domain)
 
         self.weights = np.array([1.0, 2.0, 0.5, 1.0])
-        self.weighted_dataset = Dataset(self.data_dict, self.domain, self.weights)
+        self.weighted_dataset = Dataset(
+            self.data_dict, self.domain, self.weights
+        )
 
     def test_datavector_unweighted(self):
         expected = np.array([2, 1, 0, 0, 0, 1])
@@ -83,15 +87,10 @@ class TestDatasetDeterministic(unittest.TestCase):
 
     def test_compress(self):
         domain = Domain(['a', 'b'], [3, 2])
-        data = {
-            'a': np.array([0, 1, 2, 0, 1]),
-            'b': np.array([0, 1, 0, 1, 0])
-        }
+        data = {'a': np.array([0, 1, 2, 0, 1]), 'b': np.array([0, 1, 0, 1, 0])}
         dataset = Dataset(data, domain)
 
-        mapping = {
-            'a': np.array([0, 1, 1])
-        }
+        mapping = {'a': np.array([0, 1, 1])}
 
         compressed_dataset = dataset.compress(mapping)
 
@@ -101,22 +100,23 @@ class TestDatasetDeterministic(unittest.TestCase):
         expected_a = np.array([0, 1, 1, 0, 1])
         expected_b = np.array([0, 1, 0, 1, 0])
 
-        np.testing.assert_array_equal(compressed_dataset.to_dict()['a'], expected_a)
-        np.testing.assert_array_equal(compressed_dataset.to_dict()['b'], expected_b)
+        np.testing.assert_array_equal(
+            compressed_dataset.to_dict()['a'], expected_a
+        )
+        np.testing.assert_array_equal(
+            compressed_dataset.to_dict()['b'], expected_b
+        )
 
-        np.testing.assert_array_equal(compressed_dataset.weights, dataset.weights)
+        np.testing.assert_array_equal(
+            compressed_dataset.weights, dataset.weights
+        )
 
     def test_decompress(self):
         domain = Domain(['a', 'b'], [2, 2])
-        data = {
-            'a': np.array([0, 1, 1, 0, 1]),
-            'b': np.array([0, 1, 0, 1, 0])
-        }
+        data = {'a': np.array([0, 1, 1, 0, 1]), 'b': np.array([0, 1, 0, 1, 0])}
         compressed_dataset = Dataset(data, domain)
 
-        mapping = {
-            'a': np.array([0, 1, 1])
-        }
+        mapping = {'a': np.array([0, 1, 1])}
 
         decompressed_dataset = compressed_dataset.decompress(mapping)
 
@@ -142,7 +142,10 @@ class TestDatasetDeterministic(unittest.TestCase):
         count_2 = np.sum(vals == 2)
 
         diff = abs(count_1 - count_2)
-        self.assertTrue(diff < large_N * 0.1, f"Difference {diff} is too large for uniform distribution")
+        self.assertTrue(
+            diff < large_N * 0.1,
+            f'Difference {diff} is too large for uniform distribution',
+        )
 
     def test_validation(self):
         domain = Domain(['a'], [3])
@@ -180,17 +183,16 @@ class TestDatasetDeterministic(unittest.TestCase):
         self.assertEqual(decompressed.domain['a'], 3)
         self.assertEqual(len(decompressed.to_dict()['a']), 0)
 
+
 class TestJaxDataset(unittest.TestCase):
+
     def setUp(self):
-        self.attrs = ["a", "b"]
+        self.attrs = ['a', 'b']
         self.shape = [3, 4]
         self.domain = Domain(self.attrs, self.shape)
 
         # Dict input
-        self.data_dict = {
-            "a": jnp.array([0, 1, 2]),
-            "b": jnp.array([0, 2, 3])
-        }
+        self.data_dict = {'a': jnp.array([0, 1, 2]), 'b': jnp.array([0, 2, 3])}
         self.dataset = JaxDataset(self.data_dict, self.domain)
 
     def test_init(self):
@@ -198,22 +200,24 @@ class TestJaxDataset(unittest.TestCase):
         self.assertEqual(self.dataset.records, 3)
         self.assertTrue(isinstance(self.dataset.data, dict))
         self.assertEqual(len(self.dataset.data), 2)
-        self.assertTrue("a" in self.dataset.data)
-        self.assertTrue("b" in self.dataset.data)
+        self.assertTrue('a' in self.dataset.data)
+        self.assertTrue('b' in self.dataset.data)
 
     def test_project(self):
         # Project on "a"
-        proj = self.dataset.project(["a"])
-        self.assertEqual(proj.domain.attrs, ("a",))
+        proj = self.dataset.project(['a'])
+        self.assertEqual(proj.domain.attrs, ('a',))
         # Factor uses flattened datavector
         self.assertEqual(proj.datavector().size, 3)
         np.testing.assert_array_equal(proj.datavector(), np.array([1, 1, 1]))
 
         # Project on "b"
-        proj_b = self.dataset.project(["b"])
+        proj_b = self.dataset.project(['b'])
         # b domain size is 4. Data has 0, 2, 3.
         # counts: 0->1, 1->0, 2->1, 3->1
-        np.testing.assert_array_equal(proj_b.datavector(), np.array([1, 0, 1, 1]))
+        np.testing.assert_array_equal(
+            proj_b.datavector(), np.array([1, 0, 1, 1])
+        )
 
     def test_synthetic(self):
         syn = JaxDataset.synthetic(self.domain, 10)
@@ -225,7 +229,7 @@ class TestJaxDataset(unittest.TestCase):
         weights = jnp.array([2.0, 1.0, 0.5])
         w_dataset = JaxDataset(self.data_dict, self.domain, weights=weights)
         # Factor datavector matches weights
-        proj = w_dataset.project(["a", "b"])
+        proj = w_dataset.project(['a', 'b'])
         vec = proj.datavector(flatten=True)
         # index 0 (0,0) -> weight 2.0
         # index 6 (1,2) -> weight 1.0
@@ -237,7 +241,8 @@ class TestJaxDataset(unittest.TestCase):
     def test_records_empty(self):
         empty_dataset = JaxDataset({}, self.domain)
         with self.assertRaises(ValueError):
-             _ = empty_dataset.records
+            _ = empty_dataset.records
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     unittest.main()

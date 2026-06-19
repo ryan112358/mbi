@@ -1,11 +1,12 @@
-
 import unittest
 import jax.numpy as jnp
 from mbi.domain import Domain
 from mbi.marginal_loss import LinearMeasurement, from_linear_measurements, calculate_l2_lipschitz
 from mbi.clique_vector import CliqueVector
 
+
 class TestMarginalLoss(unittest.TestCase):
+
     def test_l2_lipschitz_disjoint(self):
         """Verify that Lipschitz constant is max(1/stddev^2) for disjoint measurements."""
         domain = Domain.fromdict({'a': 10, 'b': 10, 'c': 10})
@@ -22,7 +23,9 @@ class TestMarginalLoss(unittest.TestCase):
         measurements = [m1, m2, m3]
 
         # Calculate loss function and lipschitz constant
-        loss_fn = from_linear_measurements(measurements, norm='l2', domain=domain)
+        loss_fn = from_linear_measurements(
+            measurements, norm='l2', domain=domain
+        )
 
         calculated_L = loss_fn.lipschitz
         expected_L = max(1.0 / m.stddev**2 for m in measurements)
@@ -37,12 +40,15 @@ class TestMarginalLoss(unittest.TestCase):
         m1 = LinearMeasurement(jnp.zeros(10), ('a',), stddev=0.5)
         measurements = [m1]
 
-        loss_fn = from_linear_measurements(measurements, norm='l2', domain=domain)
+        loss_fn = from_linear_measurements(
+            measurements, norm='l2', domain=domain
+        )
 
         calculated_L = loss_fn.lipschitz
         expected_L = 1.0 / m1.stddev**2
 
         self.assertAlmostEqual(calculated_L, expected_L, delta=1e-3)
+
 
 if __name__ == '__main__':
     unittest.main()

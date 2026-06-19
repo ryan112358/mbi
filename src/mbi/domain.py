@@ -45,10 +45,14 @@ class Domain:
     """
 
     attributes: tuple[str, ...] = attr.field(converter=tuple)
-    shape: tuple[int, ...] = attr.field(converter=lambda sh: tuple(int(n) for n in sh))
+    shape: tuple[int, ...] = attr.field(
+        converter=lambda sh: tuple(int(n) for n in sh)
+    )
     labels: tuple[tuple[Any, ...], ...] | None = attr.field(
         default=None,
-        converter=lambda l: tuple(tuple(x) for x in l) if l is not None else None,
+        converter=lambda l: tuple(tuple(x) for x in l)
+        if l is not None
+        else None,
     )
 
     def __attrs_post_init__(self):
@@ -62,7 +66,8 @@ class Domain:
             for i, l in enumerate(self.labels):
                 if len(l) != self.shape[i]:
                     raise ValueError(
-                        f"Labels for {self.attributes[i]} must have length {self.shape[i]}."
+                        f"Labels for {self.attributes[i]} must have length"
+                        f" {self.shape[i]}."
                     )
 
     @functools.cached_property
@@ -152,7 +157,9 @@ class Domain:
         Returns:
           the intersection of the two domains
         """
-        return self.project([a for a in self.attributes if a in other.attributes])
+        return self.project(
+            [a for a in self.attributes if a in other.attributes]
+        )
 
     def axes(self, attrs: Sequence[str]) -> tuple[int, ...]:
         """Return the axes tuple for the given attributes.
@@ -234,5 +241,7 @@ class Domain:
         return len(self.attributes)
 
     def __str__(self) -> str:
-        inner = ", ".join([f"{x[0]}: {x[1]}" for x in zip(self.attributes, self.shape)])
-        return f"Domain({inner})"
+        inner = ", ".join(
+            ["%s: %d" % x for x in zip(self.attributes, self.shape)]
+        )
+        return "Domain(%s)" % inner

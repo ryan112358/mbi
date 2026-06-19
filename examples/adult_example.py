@@ -1,9 +1,4 @@
-from mbi import (
-  Dataset,
-  Domain,
-  marginal_loss,
-  estimation
-)
+from mbi import (Dataset, Domain, marginal_loss, estimation)
 import numpy as np
 
 # load adult dataset
@@ -18,11 +13,11 @@ print(domain)
 np.random.seed(0)
 
 cliques = [
-  ("age", "education-num"),
-  ("marital-status", "race"),
-  ("sex", "hours-per-week"),
-  ("hours-per-week", "income>50K"),
-  ("native-country", "marital-status", "occupation"),
+    ("age", "education-num"),
+    ("marital-status", "race"),
+    ("sex", "hours-per-week"),
+    ("hours-per-week", "income>50K"),
+    ("native-country", "marital-status", "occupation"),
 ]
 
 
@@ -32,22 +27,24 @@ sigma = 2.0 / epsilon_split
 
 measurements = []
 for col in data.domain:
-  x = data.project(col).datavector()
-  y = x + np.random.laplace(loc=0, scale=sigma, size=x.size)
-  measurements.append(marginal_loss.LinearMeasurement(y, (col,)))
+    x = data.project(col).datavector()
+    y = x + np.random.laplace(loc=0, scale=sigma, size=x.size)
+    measurements.append(marginal_loss.LinearMeasurement(y, (col,)))
 
 # spend half of privacy budget to measure some more 2 and 3 way marginals
 
 for cl in cliques:
-  x = data.project(cl).datavector()
-  y = x + np.random.laplace(loc=0, scale=sigma, size=x.size)
-  measurements.append(marginal_loss.LinearMeasurement(y, cl))
+    x = data.project(cl).datavector()
+    y = x + np.random.laplace(loc=0, scale=sigma, size=x.size)
+    measurements.append(marginal_loss.LinearMeasurement(y, cl))
 
 # now estimate the data distribution from the noisy measurements
 
 estimated_total = estimation.minimum_variance_unbiased_total(measurements)
 loss_fn = marginal_loss.from_linear_measurements(measurements)
-model = estimation.mirror_descent(domain, loss_fn, known_total=estimated_total, iters=2500, stepsize=4e-5)
+model = estimation.mirror_descent(
+    domain, loss_fn, known_total=estimated_total, iters=2500, stepsize=4e-5
+)
 
 # now answer new queries
 
@@ -57,4 +54,4 @@ y2 = model.project(("race", "occupation")).datavector()
 # and compute error:
 
 x1 = data.project(("sex", "income>50K")).datavector()
-print('Error on (sex, income>50K)', np.linalg.norm(x1 - y1, 1) / x1.sum())
+print("Error on (sex, income>50K)", np.linalg.norm(x1 - y1, 1) / x1.sum())

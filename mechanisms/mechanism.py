@@ -1,5 +1,5 @@
 import numpy as np
-#from autodp import privacy_calibrator
+# from autodp import privacy_calibrator
 from functools import partial
 from cdp2adp import cdp_rho
 from scipy.special import softmax
@@ -26,12 +26,13 @@ def generalized_em_scores(q, ds, t):
 
 
 class Mechanism:
+
     def __init__(self, epsilon, delta, bounded, prng=np.random):
         """
-        Base class for a mechanism.  
+        Base class for a mechanism.
         :param epsilon: privacy parameter
         :param delta: privacy parameter
-        :param bounded: privacy definition (bounded vs unbounded DP) 
+        :param bounded: privacy definition (bounded vs unbounded DP)
         :param prng: pseudo random number generator
         """
         self.epsilon = epsilon
@@ -63,7 +64,7 @@ class Mechanism:
         return keys[key]
 
     def permute_and_flip(self, qualities, epsilon, sensitivity=1.0):
-        """ Sample a candidate from the permute-and-flip mechanism """
+        """Sample a candidate from the permute-and-flip mechanism"""
         q = qualities - qualities.max()
         p = np.exp(0.5 * epsilon / sensitivity * q)
         for i in np.random.permutation(p.size):
@@ -94,29 +95,35 @@ class Mechanism:
         return keys[self.prng.choice(p.size, p=p)]
 
     def gaussian_noise_scale(self, l2_sensitivity, epsilon, delta):
-        """ Return the Gaussian noise necessary to attain (epsilon, delta)-DP """
+        """Return the Gaussian noise necessary to attain (epsilon, delta)-DP"""
         raise ValueError('Temporarily Deprecated due to broken dependency')
 
     def laplace_noise_scale(self, l1_sensitivity, epsilon):
-        """ Return the Laplace noise necessary to attain epsilon-DP """
+        """Return the Laplace noise necessary to attain epsilon-DP"""
         if self.bounded:
             l1_sensitivity *= 2.0
         return l1_sensitivity / epsilon
 
     def gaussian_noise(self, sigma, size):
-        """ Generate iid Gaussian noise  of a given scale and size """
+        """Generate iid Gaussian noise  of a given scale and size"""
         return self.prng.normal(0, sigma, size)
 
     def laplace_noise(self, b, size):
-        """ Generate iid Laplace noise  of a given scale and size """
+        """Generate iid Laplace noise  of a given scale and size"""
         return self.prng.laplace(0, b, size)
 
-    def best_noise_distribution(self, l1_sensitivity, l2_sensitivity, epsilon, delta):
-        """ Adaptively determine if Laplace or Gaussian noise will be better, and
-            return a function that samples from the appropriate distribution """
+    def best_noise_distribution(
+        self, l1_sensitivity, l2_sensitivity, epsilon, delta
+    ):
+        """Adaptively determine if Laplace or Gaussian noise will be better, and
+        return a function that samples from the appropriate distribution"""
         b = self.laplace_noise_scale(l1_sensitivity, epsilon)
         sigma = self.gaussian_noise_scale(l2_sensitivity, epsilon, delta)
-        dist = self.gaussian_noise if np.sqrt(2) * b > sigma else self.laplace_noise
+        dist = (
+            self.gaussian_noise
+            if np.sqrt(2) * b > sigma
+            else self.laplace_noise
+        )
         if np.sqrt(2) * b < sigma:
             return partial(self.laplace_noise, b)
         return partial(self.gaussian_noise, sigma)

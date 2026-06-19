@@ -20,20 +20,24 @@ def _variable_elimination_oracle(
     }
     return CliqueVector(domain, cliques, mu)
 
+
 def _calculate_many_oracle(potentials: CliqueVector, total: float = 1):
     return marginal_oracles.calculate_many_marginals(
         potentials, potentials.cliques, total
     )
 
 
-def _bulk_variable_elimination_oracle(potentials: CliqueVector, total: float = 1):
+def _bulk_variable_elimination_oracle(
+    potentials: CliqueVector, total: float = 1
+):
     return marginal_oracles.bulk_variable_elimination(
         potentials, potentials.cliques, total
     )
 
+
 message_passing_fast_v1 = functools.partial(
-  marginal_oracles.message_passing_fast,
-  logspace_sum_product_fn=marginal_oracles.logspace_sum_product_stable_v1
+    marginal_oracles.message_passing_fast,
+    logspace_sum_product_fn=marginal_oracles.logspace_sum_product_stable_v1,
 )
 
 
@@ -46,12 +50,12 @@ _ORACLES = [
     message_passing_fast_v1,
     _variable_elimination_oracle,
     _calculate_many_oracle,
-    _bulk_variable_elimination_oracle
+    _bulk_variable_elimination_oracle,
 ]
 
 _STABLE_ORACLES = [
     marginal_oracles.brute_force_marginals,
-    marginal_oracles.message_passing_shafer_shenoy
+    marginal_oracles.message_passing_shafer_shenoy,
 ]
 
 _DOMAIN = Domain(["a", "b", "c", "d"], [2, 3, 4, 5])
@@ -67,9 +71,11 @@ _CLIQUE_SETS = [
     [],  # trivial empty set
 ]
 
-_ALL_CLIQUES = list(itertools.chain.from_iterable(
-    itertools.combinations(_DOMAIN.attrs, r) for r in range(5)
-))
+_ALL_CLIQUES = list(
+    itertools.chain.from_iterable(
+        itertools.combinations(_DOMAIN.attrs, r) for r in range(5)
+    )
+)
 
 
 class TestMarginalOracles(unittest.TestCase):
@@ -98,7 +104,9 @@ class TestMarginalOracles(unittest.TestCase):
         mu1 = oracle(theta, total)
         mu2 = marginal_oracles.brute_force_marginals(theta, total)
         for cl in cliques:
-            np.testing.assert_allclose(mu1[cl].datavector(), mu2[cl].datavector())
+            np.testing.assert_allclose(
+                mu1[cl].datavector(), mu2[cl].datavector()
+            )
 
     @parameterized.expand(itertools.product(_CLIQUE_SETS, _ALL_CLIQUES))
     def test_variable_elimination(self, model_cliques, query_clique):
@@ -115,14 +123,20 @@ class TestMarginalOracles(unittest.TestCase):
 
         if evidence_attr in query_clique:
             with self.assertRaises(ValueError):
-                marginal_oracles.variable_elimination(theta, query_clique, evidence=evidence)
+                marginal_oracles.variable_elimination(
+                    theta, query_clique, evidence=evidence
+                )
             return
 
         target_clique_full = tuple(set(query_clique) | set(evidence.keys()))
 
-        ans1 = marginal_oracles.variable_elimination(theta, query_clique, evidence=evidence)
+        ans1 = marginal_oracles.variable_elimination(
+            theta, query_clique, evidence=evidence
+        )
 
-        ans2_full = marginal_oracles.variable_elimination(theta, target_clique_full)
+        ans2_full = marginal_oracles.variable_elimination(
+            theta, target_clique_full
+        )
         ans2 = ans2_full.slice(evidence)
 
         ans1 = ans1.normalize()
@@ -136,25 +150,34 @@ class TestMarginalOracles(unittest.TestCase):
     @parameterized.expand(_STABLE_ORACLES)
     def test_nan_potentials(self, oracle):
         """Test that -inf potentials are handled correctly without NaNs."""
-        cliques = [('A','B','C'),
-         ('A',),
-         ('D',),
-         ('D', 'A'),
-         ('D', 'A', 'C'),
-         ('A', 'B')]
+        cliques = [
+            ("A", "B", "C"),
+            ("A",),
+            ("D",),
+            ("D", "A"),
+            ("D", "A", "C"),
+            ("A", "B"),
+        ]
 
-        dom = Domain(['A', 'B', 'C', 'D'], [2,2,2,2])
+        dom = Domain(["A", "B", "C", "D"], [2, 2, 2, 2])
         potentials = CliqueVector.zeros(dom, cliques)
 
-        con = Factor(dom.project(['A', 'C']), jnp.array([[0, -np.inf], [-np.inf, 0]]))
-        potentials.arrays[('A', 'C')] = con
-        potentials.cliques.append(('A', 'C'))
+        con = Factor(
+            dom.project(["A", "C"]), jnp.array([[0, -np.inf], [-np.inf, 0]])
+        )
+        potentials.arrays[("A", "C")] = con
+        potentials.cliques.append(("A", "C"))
 
         marginals = oracle(potentials)
 
         for cl, factor in marginals.arrays.items():
-            self.assertFalse(jnp.isnan(factor.values).any(), f"NaNs found in clique {cl}")
+            self.assertFalse(
+                jnp.isnan(factor.values).any(), f"NaNs found in clique {cl}"
+            )
             # With normalize(total=1), we expect sums to be 1.0 (or very close)
             # The domain is A,C correlated perfectly (A=C). A=0,C=1 and A=1,C=0 are impossible.
             # This is a valid graphical model configuration.
-            self.assertTrue(jnp.allclose(factor.sum().values, 1.0), f"Marginal for {cl} does not sum to 1")
+            self.assertTrue(
+                jnp.allclose(factor.sum().values, 1.0),
+                f"Marginal for {cl} does not sum to 1",
+            )

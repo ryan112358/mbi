@@ -1,4 +1,3 @@
-
 import jax
 import numpy as np
 from scipy.special import logsumexp
@@ -58,6 +57,7 @@ def entropic_mirror_descent(loss_and_grad, x0, total, iters=250):
 
     return np.exp(logP)
 
+
 def _to_clique_vector(data, cliques):
     """Converts a Dataset object into a CliqueVector representation of its marginals."""
     arrays = {}
@@ -73,10 +73,12 @@ def public_support(
     loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
     *,
     public_data: Dataset,
-    known_total=None
+    known_total=None,
 ) -> Dataset:
 
-    loss_fn, known_total, _ = estimation._initialize(domain, loss_fn, known_total, None)
+    loss_fn, known_total, _ = estimation._initialize(
+        domain, loss_fn, known_total, None
+    )
     loss_and_grad_mu = jax.value_and_grad(loss_fn)
 
     cliques = loss_fn.cliques  # type: ignore

@@ -46,12 +46,16 @@ class MarkovRandomField:
         attrs = tuple(attrs)
         if self.marginals.supports(attrs):
             return self.marginals.project(attrs)
-        return marginal_oracles.variable_elimination(self.potentials, attrs, self.total)
+        return marginal_oracles.variable_elimination(
+            self.potentials, attrs, self.total
+        )
 
     def supports(self, attrs: str | Sequence[str]) -> bool:
         return self.marginals.domain.supports(attrs)
 
-    def synthetic_data(self, rows: int | None = None, method: str = "round") -> Dataset:
+    def synthetic_data(
+        self, rows: int | None = None, method: str = "round"
+    ) -> Dataset:
         """Generates synthetic data based on the learned model's marginals.
 
         Args:
@@ -68,7 +72,9 @@ class MarkovRandomField:
         total = max(1, int(rows or self.total))
         domain = self.domain
         cliques = [set(cl) for cl in self.cliques]
-        jtree, elimination_order = junction_tree.make_junction_tree(domain, cliques)
+        jtree, elimination_order = junction_tree.make_junction_tree(
+            domain, cliques
+        )
 
         potentials = self.potentials.expand(list(jtree.nodes))
         marginals = marginal_oracles.message_passing_stable(potentials)
@@ -107,7 +113,9 @@ class MarkovRandomField:
             used.add(col)
 
             if len(proj) >= 1:
-                current_proj_data = np.stack(tuple(data[col] for col in proj), -1)
+                current_proj_data = np.stack(
+                    tuple(data[col] for col in proj), -1
+                )
 
                 marg = np.asarray(
                     marginals.project(proj + (col,)).datavector(flatten=False)
@@ -115,7 +123,10 @@ class MarkovRandomField:
 
                 marg_parents = marg.sum(axis=-1, keepdims=True)
                 cond_probs = np.divide(
-                    marg, marg_parents, out=np.zeros_like(marg), where=marg_parents != 0
+                    marg,
+                    marg_parents,
+                    out=np.zeros_like(marg),
+                    where=marg_parents != 0,
                 )
                 cond_cdfs = cond_probs.cumsum(axis=-1)
 
@@ -148,7 +159,9 @@ class MarkovRandomField:
                 indices = tuple(uniques.T)
                 unique_cdfs = cond_cdfs[indices]
 
-                choices = np.empty(total, dtype=np.min_scalar_type(self.domain[col]))
+                choices = np.empty(
+                    total, dtype=np.min_scalar_type(self.domain[col])
+                )
                 domain_size = self.domain[col]
 
                 if method == "sample":
@@ -164,7 +177,9 @@ class MarkovRandomField:
                         cdf, u_sorted[start:end], side="right"
                     )
                     if len(indices_chunk) > 0:
-                        np.minimum(indices_chunk, domain_size - 1, out=indices_chunk)
+                        np.minimum(
+                            indices_chunk, domain_size - 1, out=indices_chunk
+                        )
                         choices[perm[start:end]] = indices_chunk
                     start = end
 

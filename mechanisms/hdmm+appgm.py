@@ -88,11 +88,15 @@ def optm(queries, approx=False):
         for _ in range(args.restarts):
             if args.parameterization == "OPTM":
                 temp = templates.Marginals(
-                    data.domain.shape, approx=args.noise == "gaussian", seed=args.seed
+                    data.domain.shape,
+                    approx=args.noise == "gaussian",
+                    seed=args.seed,
                 )
             else:
                 temp = templates.MarginalUnionKron(
-                    data.domain.shape, len(queries), approx=args.noise == "gaussian"
+                    data.domain.shape,
+                    len(queries),
+                    approx=args.noise == "gaussian",
                 )
             obj = temp.optimize(W)
             if obj < best_obj:
@@ -110,13 +114,17 @@ def opt_plus(queries, approx=False):
 if __name__ == "__main__":
     description = ""
     formatter = argparse.ArgumentDefaultsHelpFormatter
-    parser = argparse.ArgumentParser(description=description, formatter_class=formatter)
+    parser = argparse.ArgumentParser(
+        description=description, formatter_class=formatter
+    )
     parser.add_argument("--dataset", type=str, help="path to dataset file")
     parser.add_argument("--domain", type=str, help="path to domain file")
     parser.add_argument("--epsilon", type=float, help="privacy  parameter")
     parser.add_argument("--delta", type=float, help="privacy parameter")
 
-    parser.add_argument("--degree", type=int, help="degree of marginals in workload")
+    parser.add_argument(
+        "--degree", type=int, help="degree of marginals in workload"
+    )
     parser.add_argument(
         "--num_marginals", type=int, help="number of marginals in workload"
     )
@@ -132,10 +140,14 @@ if __name__ == "__main__":
         help="Strategy parameterization to optimize over",
     )
     parser.add_argument(
-        "--noise", choices=["laplace", "gaussian"], help="noise distribution to use"
+        "--noise",
+        choices=["laplace", "gaussian"],
+        help="noise distribution to use",
     )
 
-    parser.add_argument("--workload", type=int, help="number of marginals in workload")
+    parser.add_argument(
+        "--workload", type=int, help="number of marginals in workload"
+    )
     parser.add_argument(
         "--pgm_iters", type=int, help="number of optimization iterations"
     )
@@ -152,7 +164,8 @@ if __name__ == "__main__":
     print("%d Dimensional Domain" % len(data.domain))
     if len(data.domain) >= 13 and args.parameterization == "OPTM":
         print(
-            "Time complexity of strategy optimization using OPT_M is O(4^d), could be slow for this domain"
+            "Time complexity of strategy optimization using OPT_M is O(4^d),"
+            " could be slow for this domain"
         )
 
     queries = list(itertools.combinations(data.domain, args.degree))
@@ -160,7 +173,9 @@ if __name__ == "__main__":
     if args.num_marginals is not None and args.num_marginals < len(queries):
         queries = [
             queries[i]
-            for i in prng.choice(len(queries), args.num_marginals, replace=False)
+            for i in prng.choice(
+                len(queries), args.num_marginals, replace=False
+            )
         ]
 
     key = (
@@ -189,14 +204,16 @@ if __name__ == "__main__":
 
     prng = np.random
     if args.noise == "laplace":
-        var = 2.0 / args.epsilon ** 2
+        var = 2.0 / args.epsilon**2
         sensitivity = np.linalg.norm(weights, 1)
         add_noise = lambda x: x + sensitivity * prng.laplace(
             loc=0, scale=1.0 / args.epsilon, size=x.size
         )
     else:
-        sigma = privacy_calibrator.gaussian_mech(args.epsilon, args.delta)["sigma"]
-        var = sigma ** 2
+        sigma = privacy_calibrator.gaussian_mech(args.epsilon, args.delta)[
+            "sigma"
+        ]
+        var = sigma**2
         sensitivity = np.linalg.norm(weights, 2)
         add_noise = lambda x: x + sensitivity * prng.normal(
             loc=0, scale=sigma, size=x.size

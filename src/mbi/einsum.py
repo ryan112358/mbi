@@ -63,13 +63,21 @@ def custom_dot_general(
     (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
 
     lhs_used_dims = set(list(lhs_contract) + list(lhs_batch))
-    lhs_other_dims = sorted([i for i in range(lhs.ndim) if i not in lhs_used_dims])
+    lhs_other_dims = sorted(
+        [i for i in range(lhs.ndim) if i not in lhs_used_dims]
+    )
 
     rhs_used_dims = set(list(rhs_contract) + list(rhs_batch))
-    rhs_other_dims = sorted([i for i in range(rhs.ndim) if i not in rhs_used_dims])
+    rhs_other_dims = sorted(
+        [i for i in range(rhs.ndim) if i not in rhs_used_dims]
+    )
 
-    lhs_permutation = list(lhs_batch) + list(lhs_other_dims) + list(lhs_contract)
-    rhs_permutation = list(rhs_batch) + list(rhs_other_dims) + list(rhs_contract)
+    lhs_permutation = (
+        list(lhs_batch) + list(lhs_other_dims) + list(lhs_contract)
+    )
+    rhs_permutation = (
+        list(rhs_batch) + list(rhs_other_dims) + list(rhs_contract)
+    )
 
     lhs_permuted = jnp.transpose(lhs, axes=lhs_permutation)
     rhs_permuted = jnp.transpose(rhs, axes=rhs_permutation)
@@ -80,7 +88,9 @@ def custom_dot_general(
     contract_dims = len(lhs_contract)
 
     # Make broadcast compatible
-    new_axes = tuple(batch_dims + lhs_other_dims + i for i in range(rhs_other_dims))
+    new_axes = tuple(
+        batch_dims + lhs_other_dims + i for i in range(rhs_other_dims)
+    )
     lhs_expanded = jnp.expand_dims(lhs_permuted, axis=new_axes)
 
     rhs_axes = tuple(batch_dims + i for i in range(lhs_other_dims))
@@ -124,7 +134,9 @@ def _get_subarrays(
         if dim is None:
             ans.append(array)
         else:
-            idx = tuple(slice(None) if i != dim else index for i in range(array.ndim))
+            idx = tuple(
+                slice(None) if i != dim else index for i in range(array.ndim)
+            )
             ans.append(array[idx])
     return tuple(ans)
 
@@ -144,7 +156,7 @@ def scan_einsum(
     *arrays: jax.Array,
     sequential: str = "",
     einsum_fn: Callable = jnp.einsum,
-    **kwargs
+    **kwargs,
 ) -> jax.Array:
     """Einsum implementation that allows sequential execution across any axes.
 
@@ -186,18 +198,29 @@ def scan_einsum(
     def small_einsum(i):
         new_arrays = _get_subarrays(arrays, ax_dims, i)
         return scan_einsum(
-            new_formula, *new_arrays, sequential=sequential[1:], einsum_fn=einsum_fn, **kwargs
+            new_formula,
+            *new_arrays,
+            sequential=sequential[1:],
+            einsum_fn=einsum_fn,
+            **kwargs,
         )
 
     if ax in output_axes:
         # Each smaller einsum is independent.
-        return jax.lax.map(small_einsum, loop).swapaxes(0, output_axes.index(ax))
+        return jax.lax.map(small_einsum, loop).swapaxes(
+            0, output_axes.index(ax)
+        )
 
     # Each smaller einsum contributes to the global einsum.
     init = jnp.zeros(tuple(shapes[i] for i in output_axes))
-    return jax.lax.scan(lambda carry, i: (carry + small_einsum(i), ()), init, loop)[0]
+    return jax.lax.scan(
+        lambda carry, i: (carry + small_einsum(i), ()), init, loop
+    )[0]
 
-def custom_einsum(subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.sum):
+
+def custom_einsum(
+    subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.sum
+):
     """Custom einsum function that uses the given combine and reduce functions.
 
     This function acts like jnp.einsum, but intercepts the reduction operations and
@@ -214,6 +237,7 @@ def custom_einsum(subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.
     Returns:
         The result of the custom einsum operation.
     """
+
     def f(*args):
         return jnp.einsum(
             subscripts,
@@ -223,21 +247,25 @@ def custom_einsum(subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.
                 combine_fn=combine_fn,
                 # We must use jnp.sum here instead of reduce_fn because if reduce_fn contains
                 # a reduce_sum internally (like logsumexp), it would cause problems.
-                reduce_fn=jnp.sum
-            )
+                reduce_fn=jnp.sum,
+            ),
         )
+
     closed_jaxpr = jax.make_jaxpr(f)(*operands)
 
     def eval_rewritten(*args):
         env = {}
         for invar, arg in zip(closed_jaxpr.jaxpr.invars, args):
             env[invar] = arg
-        for constvar, const in zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts):
+        for constvar, const in zip(
+            closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts
+        ):
             env[constvar] = const
 
         for eqn in closed_jaxpr.jaxpr.eqns:
             invals = [
-                var.val if isinstance(var, Literal) else env[var] for var in eqn.invars
+                var.val if isinstance(var, Literal) else env[var]
+                for var in eqn.invars
             ]
             if eqn.primitive.name == "reduce_sum":
                 axes = eqn.params["axes"]

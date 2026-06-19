@@ -47,13 +47,17 @@ def default_params():
 if __name__ == "__main__":
     description = ""
     formatter = argparse.ArgumentDefaultsHelpFormatter
-    parser = argparse.ArgumentParser(description=description, formatter_class=formatter)
+    parser = argparse.ArgumentParser(
+        description=description, formatter_class=formatter
+    )
     parser.add_argument("--dataset", type=str, help="path to dataset file")
     parser.add_argument("--domain", type=str, help="path to domain file")
     parser.add_argument("--epsilon", type=float, help="privacy  parameter")
     parser.add_argument("--delta", type=float, help="privacy parameter")
 
-    parser.add_argument("--degree", type=int, help="degree of marginals in workload")
+    parser.add_argument(
+        "--degree", type=int, help="degree of marginals in workload"
+    )
     parser.add_argument(
         "--num_marginals", type=int, help="number of marginals in workload"
     )
@@ -81,16 +85,19 @@ if __name__ == "__main__":
     if args.num_marginals is not None and args.num_marginals < len(workload):
         workload = [
             workload[i]
-            for i in prng.choice(len(workload), args.num_marginals, replace=False)
+            for i in prng.choice(
+                len(workload), args.num_marginals, replace=False
+            )
         ]
 
     try:
         from autodp import privacy_calibrator
+
         sigma = privacy_calibrator.gaussian_mech(args.epsilon, args.delta)[
             "sigma"
         ] * np.sqrt(len(workload))
     except:
-        print('AutoDP not installed or configured correctly, using sigma=50')
+        print("AutoDP not installed or configured correctly, using sigma=50")
         sigma = 50
     measurements = []
     for cl in workload:

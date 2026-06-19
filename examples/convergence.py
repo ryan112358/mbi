@@ -25,14 +25,16 @@ def default_params():
     params["iters"] = 10000
     params["stddev"] = 10
     # True Lipschitz constant should be 1 for Q = I
-    params["lipschitz"] = 1.0  
+    params["lipschitz"] = 1.0
     return params
 
 
 if __name__ == "__main__":
     description = ""
     formatter = argparse.ArgumentDefaultsHelpFormatter
-    parser = argparse.ArgumentParser(description=description, formatter_class=formatter)
+    parser = argparse.ArgumentParser(
+        description=description, formatter_class=formatter
+    )
     parser.add_argument(
         "--estimator",
         choices=["MD", "RDA", "LBFGS", "IG"],
@@ -101,12 +103,13 @@ if __name__ == "__main__":
                 callback_fn=callback_fn,
             )
 
-        summary = pd.DataFrame(callback_fn.summary['data'], columns=callback_fn.summary['columns'])
+        summary = pd.DataFrame(
+            callback_fn.summary["data"], columns=callback_fn.summary["columns"]
+        )
         if args.stddev > 0:
             best = min(best, summary["L2 Loss"].min())
             summary = summary.iloc[: summary.shape[0] // 5]
         summaries[estimator] = summary
-
 
     for estimator in args.estimator:
         summary = summaries[estimator]
@@ -115,7 +118,7 @@ if __name__ == "__main__":
         coef = np.polyfit(np.log(xs), np.log(ys), deg=1)
         est = np.exp(coef[1]) * xs ** coef[0]
 
-        plt.plot(xs, ys, label='%s: O(1 / t^{%.1f})' % (estimator, -coef[0]))
+        plt.plot(xs, ys, label="%s: O(1 / t^{%.1f})" % (estimator, -coef[0]))
 
     plt.xlabel("$t$")
     plt.ylabel("$L_t-L_*$")
@@ -124,4 +127,3 @@ if __name__ == "__main__":
     plt.legend()
     stddev = args.stddev
     plt.savefig(f"{stddev=}.png")
-

@@ -87,7 +87,9 @@ class CliqueVector:
     def active_domain(self):
         """Returns the merged domain encompassing all attributes across all cliques."""
         domains = [self.domain.project(cl) for cl in self.cliques]
-        return functools.reduce(lambda a, b: a.merge(b), domains, Domain([], []))
+        return functools.reduce(
+            lambda a, b: a.merge(b), domains, Domain([], [])
+        )
 
     # @functools.lru_cache(maxsize=None)
     def parent(self, clique: Clique) -> Clique | None:
@@ -121,7 +123,9 @@ class CliqueVector:
         Returns:
             An expanded CliqueVector defined over the given set of cliques.
         """
-        mapping = reverse_clique_mapping(cliques, self.cliques, domain=self.domain)
+        mapping = reverse_clique_mapping(
+            cliques, self.cliques, domain=self.domain
+        )
         arrays = {}
         for cl in cliques:
             dom = self.domain.project(cl)
@@ -131,7 +135,9 @@ class CliqueVector:
                 arrays[cl] = sum(self[cl2] for cl2 in mapping[cl]).expand(dom)
         return CliqueVector(self.domain, cliques, arrays)
 
-    def contract(self, cliques: list[Clique], log: bool = False) -> CliqueVector:
+    def contract(
+        self, cliques: list[Clique], log: bool = False
+    ) -> CliqueVector:
         """Computes a new CliqueVector by projecting this one onto a smaller set of cliques."""
         arrays = {cl: self.project(cl, log=log) for cl in cliques}
         return CliqueVector(self.domain, cliques, arrays)
@@ -139,7 +145,9 @@ class CliqueVector:
     def normalize(self, total: float = 1, log: bool = True):
         """Normalizes each factor within the CliqueVector."""
         return jax.tree.map(
-            lambda f: f.normalize(total, log), self, is_leaf=Factor.__instancecheck__
+            lambda f: f.normalize(total, log),
+            self,
+            is_leaf=Factor.__instancecheck__,
         )
 
     def __mul__(self, const: chex.Numeric) -> CliqueVector:
@@ -174,7 +182,9 @@ class CliqueVector:
 
     def dot(self, other: CliqueVector) -> chex.Numeric:
         """Computes the dot product between this CliqueVector and another."""
-        dots = jax.tree.map(Factor.dot, self, other, is_leaf=Factor.__instancecheck__)
+        dots = jax.tree.map(
+            Factor.dot, self, other, is_leaf=Factor.__instancecheck__
+        )
         return jax.tree.reduce(operator.add, dots, 0)
 
     def size(self):
@@ -205,5 +215,7 @@ class CliqueVector:
             A new CliqueVector identical to self with sharding constraints applied to
             the underlying factors.
         """
-        arrays = {cl: self.arrays[cl].apply_sharding(mesh) for cl in self.cliques}
+        arrays = {
+            cl: self.arrays[cl].apply_sharding(mesh) for cl in self.cliques
+        }
         return CliqueVector(self.domain, self.cliques, arrays)

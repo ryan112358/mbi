@@ -6,13 +6,16 @@ import numpy as np
 
 
 class TestCustomDotGeneral(unittest.TestCase):
+
     def test_standard_vector_vector_inner_product(self):
         lhs = np.array([1.0, 2.0, 3.0])
         rhs = np.array([4.0, 5.0, 6.0])
         expected = np.array(32.0)
         dims = (([0], [0]), ([], []))
         res = custom_dot_general(lhs, rhs, dims)
-        np.testing.assert_allclose(res, expected, err_msg="Std Vec-Vec Inner Product")
+        np.testing.assert_allclose(
+            res, expected, err_msg="Std Vec-Vec Inner Product"
+        )
 
     def test_standard_matrix_vector_product(self):
         lhs = np.array([[1.0, 2.0], [3.0, 4.0]])
@@ -33,7 +36,9 @@ class TestCustomDotGeneral(unittest.TestCase):
     def test_standard_batch_matrix_matrix(self):
         lhs = np.array([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]])
         rhs = np.array([[[1.0, 0.0], [0.0, 1.0]], [[1.0, 1.0], [1.0, 1.0]]])
-        expected = np.array([[[1.0, 2.0], [3.0, 4.0]], [[11.0, 11.0], [15.0, 15.0]]])
+        expected = np.array(
+            [[[1.0, 2.0], [3.0, 4.0]], [[11.0, 11.0], [15.0, 15.0]]]
+        )
         dims = (([2], [1]), ([0], [0]))
         res = custom_dot_general(lhs, rhs, dims)
         np.testing.assert_allclose(res, expected, err_msg="Std Batch Mat-Mat")
@@ -44,7 +49,11 @@ class TestCustomDotGeneral(unittest.TestCase):
         expected = np.log(11.0)
         dims = (([0], [0]), ([], []))
         res = custom_dot_general(
-            lhs, rhs, dims, combine_fn=np.add, reduce_fn=jax.scipy.special.logsumexp
+            lhs,
+            rhs,
+            dims,
+            combine_fn=np.add,
+            reduce_fn=jax.scipy.special.logsumexp,
         )
         np.testing.assert_allclose(res, expected, err_msg="Log-Space Vec-Vec")
 
@@ -74,16 +83,22 @@ class TestCustomDotGeneral(unittest.TestCase):
         expected_ss = np.array(6.0)
         dims_ss = (([], []), ([], []))
         res_ss = custom_dot_general(lhs_s, rhs_s, dims_ss)
-        np.testing.assert_allclose(res_ss, expected_ss, err_msg="Scalar-Scalar Outer")
+        np.testing.assert_allclose(
+            res_ss, expected_ss, err_msg="Scalar-Scalar Outer"
+        )
         assert res_ss.ndim == 0, "Scalar-Scalar output not scalar ndim"
 
         expected_sv = np.array([6.0, 8.0])
         res_sv = custom_dot_general(lhs_s, rhs_v, dims_ss)
-        np.testing.assert_allclose(res_sv, expected_sv, err_msg="Scalar-Vector Outer")
+        np.testing.assert_allclose(
+            res_sv, expected_sv, err_msg="Scalar-Vector Outer"
+        )
 
         expected_vs = np.array([6.0, 8.0])
         res_vs = custom_dot_general(rhs_v, lhs_s, dims_ss)
-        np.testing.assert_allclose(res_vs, expected_vs, err_msg="Vector-Scalar Outer")
+        np.testing.assert_allclose(
+            res_vs, expected_vs, err_msg="Vector-Scalar Outer"
+        )
 
         lhs_v_contract = np.array([2.0, 3.0])
         rhs_v_contract = np.array([4.0, 5.0])
@@ -97,7 +112,9 @@ class TestCustomDotGeneral(unittest.TestCase):
             expected_contract_s,
             err_msg="Scalar output from vector contraction",
         )
-        assert res_contract_s.ndim == 0, "Scalar contraction output not scalar ndim"
+        assert (
+            res_contract_s.ndim == 0
+        ), "Scalar contraction output not scalar ndim"
 
     def test_empty_contract_batch_dims(self):
         lhs = np.array([[1, 2], [3, 4]])
@@ -125,7 +142,10 @@ class TestCustomDotGeneral(unittest.TestCase):
             (B, N, C1, C2, K_)
         )  # Note: original JAX test might have different shape for rhs free dim
 
-        dims = (((2, 3, 4), (2, 3, 4)), ((0,), (0,)))  # Contract C1,C2,K; Batch B
+        dims = (
+            ((2, 3, 4), (2, 3, 4)),
+            ((0,), (0,)),
+        )  # Contract C1,C2,K; Batch B
 
         # Manual computation: res[b, m, n] = sum_{c1,c2,k} (lhs[b,m,c1,c2,k] * rhs[b,n,c1,c2,k])
         # The free dimension of rhs is N at original index 1.
@@ -145,6 +165,7 @@ class TestCustomDotGeneral(unittest.TestCase):
 
 
 class TestScanEinsum(unittest.TestCase):
+
     def assertArraysAllClose(self, arr1, arr2, msg=None, rtol=1e-7, atol=1e-9):
         self.assertTrue(jnp.allclose(arr1, arr2, rtol=rtol, atol=atol), msg=msg)
 
@@ -203,7 +224,9 @@ class TestScanEinsum(unittest.TestCase):
         self.assertArraysAllClose(
             expected_xy, actual_xy_j, msg="Sequential 'j' with size 1"
         )
-        actual_xy_k = scan_einsum("ijk,jkl->il", X, Y, sequential="k")  # k is size 3
+        actual_xy_k = scan_einsum(
+            "ijk,jkl->il", X, Y, sequential="k"
+        )  # k is size 3
         self.assertArraysAllClose(
             expected_xy, actual_xy_k, msg="Sequential 'k' with size 3"
         )
@@ -237,8 +260,12 @@ class TestScanEinsum(unittest.TestCase):
 
         # Batch matrix mul: "bij,bjk->bik"
         # Sequential 'b' (batch dimension)
-        P = jnp.arange(2 * 3 * 4, dtype=jnp.float64).reshape(2, 3, 4)  # b=2, i=3, j=4
-        Q = jnp.arange(2 * 4 * 5, dtype=jnp.float64).reshape(2, 4, 5)  # b=2, j=4, k=5
+        P = jnp.arange(2 * 3 * 4, dtype=jnp.float64).reshape(
+            2, 3, 4
+        )  # b=2, i=3, j=4
+        Q = jnp.arange(2 * 4 * 5, dtype=jnp.float64).reshape(
+            2, 4, 5
+        )  # b=2, j=4, k=5
         expected_bmm = jnp.einsum("bij,bjk->bik", P, Q)
         actual_bmm_b = scan_einsum("bij,bjk->bik", P, Q, sequential="b")
         self.assertArraysAllClose(expected_bmm, actual_bmm_b, msg="BMM seq 'b'")
@@ -292,21 +319,33 @@ class TestScanEinsum(unittest.TestCase):
         expected_abc = jnp.einsum("aij,bjk,ckl->abil", T1, T2, T3)
 
         # Seq "jk" (summed out, a,b,c,l in output)
-        actual_abc_jk = scan_einsum("aij,bjk,ckl->abil", T1, T2, T3, sequential="jk")
+        actual_abc_jk = scan_einsum(
+            "aij,bjk,ckl->abil", T1, T2, T3, sequential="jk"
+        )
         self.assertArraysAllClose(
-            expected_abc, actual_abc_jk, msg="Sequential 'jk' for aij,bjk,ckl->abil"
+            expected_abc,
+            actual_abc_jk,
+            msg="Sequential 'jk' for aij,bjk,ckl->abil",
         )
 
         # Seq "ab" (in output)
-        actual_abc_ab = scan_einsum("aij,bjk,ckl->abil", T1, T2, T3, sequential="ab")
+        actual_abc_ab = scan_einsum(
+            "aij,bjk,ckl->abil", T1, T2, T3, sequential="ab"
+        )
         self.assertArraysAllClose(
-            expected_abc, actual_abc_ab, msg="Sequential 'ab' for aij,bjk,ckl->abil"
+            expected_abc,
+            actual_abc_ab,
+            msg="Sequential 'ab' for aij,bjk,ckl->abil",
         )
 
         # Seq "aj" (a in output, j summed out)
-        actual_abc_aj = scan_einsum("aij,bjk,ckl->abil", T1, T2, T3, sequential="aj")
+        actual_abc_aj = scan_einsum(
+            "aij,bjk,ckl->abil", T1, T2, T3, sequential="aj"
+        )
         self.assertArraysAllClose(
-            expected_abc, actual_abc_aj, msg="Sequential 'aj' for aij,bjk,ckl->abil"
+            expected_abc,
+            actual_abc_aj,
+            msg="Sequential 'aj' for aij,bjk,ckl->abil",
         )
 
         # Test all sequential axes "ijk"
@@ -315,7 +354,9 @@ class TestScanEinsum(unittest.TestCase):
         D3 = jnp.arange(2 * 2 * 2, dtype=jnp.float64).reshape(2, 2, 2)  # kli
         # ijk,jkl,kli -> (no output axes, scalar sum)
         expected_all_seq = jnp.einsum("ijk,jkl,kli->", D1, D2, D3)
-        actual_all_seq_ijk = scan_einsum("ijk,jkl,kli->", D1, D2, D3, sequential="ijk")
+        actual_all_seq_ijk = scan_einsum(
+            "ijk,jkl,kli->", D1, D2, D3, sequential="ijk"
+        )
         self.assertArraysAllClose(
             expected_all_seq, actual_all_seq_ijk, msg="Seq 'ijk' all summed"
         )
@@ -338,19 +379,29 @@ class TestScanEinsum(unittest.TestCase):
         expected = jnp.einsum("bij,bjk,bkl->bil", A, B, C)
         # Sequential over b
         actual_b = scan_einsum("bij,bjk,bkl->bil", A, B, C, sequential="b")
-        self.assertArraysAllClose(expected, actual_b, msg="Chain product seq 'b'")
+        self.assertArraysAllClose(
+            expected, actual_b, msg="Chain product seq 'b'"
+        )
         # Sequential over j
         actual_j = scan_einsum("bij,bjk,bkl->bil", A, B, C, sequential="j")
-        self.assertArraysAllClose(expected, actual_j, msg="Chain product seq 'j'")
+        self.assertArraysAllClose(
+            expected, actual_j, msg="Chain product seq 'j'"
+        )
         # Sequential over k
         actual_k = scan_einsum("bij,bjk,bkl->bil", A, B, C, sequential="k")
-        self.assertArraysAllClose(expected, actual_k, msg="Chain product seq 'k'")
+        self.assertArraysAllClose(
+            expected, actual_k, msg="Chain product seq 'k'"
+        )
         # Sequential over "jk"
         actual_jk = scan_einsum("bij,bjk,bkl->bil", A, B, C, sequential="jk")
-        self.assertArraysAllClose(expected, actual_jk, msg="Chain product seq 'jk'")
+        self.assertArraysAllClose(
+            expected, actual_jk, msg="Chain product seq 'jk'"
+        )
         # Sequential over "bj"
         actual_bj = scan_einsum("bij,bjk,bkl->bil", A, B, C, sequential="bj")
-        self.assertArraysAllClose(expected, actual_bj, msg="Chain product seq 'bj'")
+        self.assertArraysAllClose(
+            expected, actual_bj, msg="Chain product seq 'bj'"
+        )
 
     def test_output_only_formula(self):
 
@@ -369,24 +420,34 @@ class TestScanEinsum(unittest.TestCase):
         # For "a->", seq 'a'
         expected_sum = jnp.einsum("a->", X)
         actual_sum = scan_einsum("a->", X, sequential="a")
-        self.assertArraysAllClose(expected_sum, actual_sum, msg="a-> sequential a")
+        self.assertArraysAllClose(
+            expected_sum, actual_sum, msg="a-> sequential a"
+        )
 
     def test_sequential_axis_not_in_all_arrays(self):
         A = jnp.arange(2 * 3, dtype=jnp.float64).reshape(2, 3)  # ij
         B = jnp.arange(3 * 4, dtype=jnp.float64).reshape(3, 4)  # jk
-        C = jnp.arange(2 * 4, dtype=jnp.float64).reshape(2, 4)  # ik (output like)
+        C = jnp.arange(2 * 4, dtype=jnp.float64).reshape(
+            2, 4
+        )  # ik (output like)
 
         # Formula: "ij,jk->ik"
         expected = jnp.einsum("ij,jk->ik", A, B)
         # Seq "i": A is sliced, B is passed as whole.
         actual_i = scan_einsum("ij,jk->ik", A, B, sequential="i")
-        self.assertArraysAllClose(expected, actual_i, msg="Seq 'i' for ij,jk->ik")
+        self.assertArraysAllClose(
+            expected, actual_i, msg="Seq 'i' for ij,jk->ik"
+        )
         # Seq "j": A and B are sliced.
         actual_j = scan_einsum("ij,jk->ik", A, B, sequential="j")
-        self.assertArraysAllClose(expected, actual_j, msg="Seq 'j' for ij,jk->ik")
+        self.assertArraysAllClose(
+            expected, actual_j, msg="Seq 'j' for ij,jk->ik"
+        )
         # Seq "k": B is sliced, A is passed as whole.
         actual_k = scan_einsum("ij,jk->ik", A, B, sequential="k")
-        self.assertArraysAllClose(expected, actual_k, msg="Seq 'k' for ij,jk->ik")
+        self.assertArraysAllClose(
+            expected, actual_k, msg="Seq 'k' for ij,jk->ik"
+        )
 
         # More complex: "ab,bc,cd->ad"
         X = jnp.arange(2 * 3, dtype=jnp.float64).reshape(2, 3)  # ab
@@ -420,38 +481,60 @@ class TestScanEinsum(unittest.TestCase):
             expected_xyz, actual_ac, msg="Seq 'ac' for ab,bc,cd->ad"
         )
 
-
     def test_custom_einsum_max(self):
         from mbi.einsum import custom_einsum
+
         x = jnp.array([[1.0, 2.0], [3.0, 4.0]])
         y = jnp.array([[5.0, 6.0], [7.0, 8.0]])
         # 'ij,jk->ik' with (+, max)
-        actual = custom_einsum('ij,jk->ik', x, y, combine_fn=jnp.add, reduce_fn=jnp.max)
+        actual = custom_einsum(
+            "ij,jk->ik", x, y, combine_fn=jnp.add, reduce_fn=jnp.max
+        )
         expected = jnp.array([[9.0, 10.0], [11.0, 12.0]])
-        self.assertArraysAllClose(expected, actual, msg="custom_einsum with jnp.max")
+        self.assertArraysAllClose(
+            expected, actual, msg="custom_einsum with jnp.max"
+        )
 
     def test_custom_einsum_logsumexp(self):
         from mbi.einsum import custom_einsum
         from jax.scipy.special import logsumexp
+
         x = jnp.array([[1.0, 2.0], [3.0, 4.0]])
         y = jnp.array([[5.0, 6.0], [7.0, 8.0]])
-        actual = custom_einsum('ij,jk->ik', x, y, combine_fn=jnp.add, reduce_fn=logsumexp)
+        actual = custom_einsum(
+            "ij,jk->ik", x, y, combine_fn=jnp.add, reduce_fn=logsumexp
+        )
         expected = jnp.array([
-            [logsumexp(jnp.array([6.0, 9.0])), logsumexp(jnp.array([7.0, 10.0]))],
-            [logsumexp(jnp.array([8.0, 11.0])), logsumexp(jnp.array([9.0, 12.0]))]
+            [
+                logsumexp(jnp.array([6.0, 9.0])),
+                logsumexp(jnp.array([7.0, 10.0])),
+            ],
+            [
+                logsumexp(jnp.array([8.0, 11.0])),
+                logsumexp(jnp.array([9.0, 12.0])),
+            ],
         ])
-        self.assertArraysAllClose(expected, actual, msg="custom_einsum with logsumexp")
+        self.assertArraysAllClose(
+            expected, actual, msg="custom_einsum with logsumexp"
+        )
 
     def test_custom_einsum_vmap_jit(self):
         from mbi.einsum import custom_einsum
+
         def f(x, y):
-            return custom_einsum('ij,jk->ik', x, y, combine_fn=jnp.add, reduce_fn=jnp.max)
+            return custom_einsum(
+                "ij,jk->ik", x, y, combine_fn=jnp.add, reduce_fn=jnp.max
+            )
+
         f = jax.jit(jax.vmap(f, in_axes=(0, 0)))
         x = jnp.array([[[1.0, 2.0], [3.0, 4.0]]])
         y = jnp.array([[[5.0, 6.0], [7.0, 8.0]]])
         actual = f(x, y)
         expected = jnp.array([[[9.0, 10.0], [11.0, 12.0]]])
-        self.assertArraysAllClose(expected, actual, msg="custom_einsum vmap and jit")
+        self.assertArraysAllClose(
+            expected, actual, msg="custom_einsum vmap and jit"
+        )
+
 
 if __name__ == "__main__":
     unittest.main(argv=["first-arg-is-ignored"], exit=False)

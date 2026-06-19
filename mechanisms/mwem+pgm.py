@@ -104,12 +104,15 @@ def mwem_pgm(
 
     measurements = []
     est = estimation.mirror_descent(domain, measurements, known_total=total)
-    #import IPython; IPython.embed()
+    # import IPython; IPython.embed()
     cliques = []
     for i in range(1, rounds + 1):
         # [New] Only consider candidates that keep the model sufficiently small
         candidates = [
-            cl for cl in workload if hypothetical_model_size(domain, cliques + [cl]) <= maxsize_mb * i / rounds
+            cl
+            for cl in workload
+            if hypothetical_model_size(domain, cliques + [cl])
+            <= maxsize_mb * i / rounds
         ]
         ax = worst_approximated(workload_answers, est, candidates, exp_eps)
         model_size = hypothetical_model_size(domain, cliques)
@@ -117,16 +120,20 @@ def mwem_pgm(
         n = domain.size(ax)
         x = data.project(ax).datavector()
         if noise == "laplace":
-            y = x + np.random.laplace(loc=0, scale=marginal_sensitivity * sigma, size=n)
+            y = x + np.random.laplace(
+                loc=0, scale=marginal_sensitivity * sigma, size=n
+            )
         else:
-            y = x + np.random.normal(loc=0, scale=marginal_sensitivity * sigma, size=n)
+            y = x + np.random.normal(
+                loc=0, scale=marginal_sensitivity * sigma, size=n
+            )
         measurements.append(LinearMeasurement(y, ax))
         est = estimation.mirror_descent(
             domain,
             measurements,
             known_total=total,
             potentials=est.potentials,
-            callback_fn = callbacks.default(measurements, data)
+            callback_fn=callbacks.default(measurements, data),
         )
         cliques.append(ax)
 
@@ -160,20 +167,30 @@ if __name__ == "__main__":
 
     description = ""
     formatter = argparse.ArgumentDefaultsHelpFormatter
-    parser = argparse.ArgumentParser(description=description, formatter_class=formatter)
+    parser = argparse.ArgumentParser(
+        description=description, formatter_class=formatter
+    )
     parser.add_argument("--dataset", help="dataset to use")
     parser.add_argument("--domain", help="domain to use")
     parser.add_argument("--epsilon", type=float, help="privacy parameter")
     parser.add_argument("--delta", type=float, help="privacy parameter")
-    parser.add_argument("--rounds", type=int, help="number of rounds of MWEM to run")
     parser.add_argument(
-        "--noise", choices=["laplace", "gaussian"], help="noise distribution to use"
+        "--rounds", type=int, help="number of rounds of MWEM to run"
     )
     parser.add_argument(
-        "--max_model_size", type=float, help="maximum size (in megabytes) of model"
+        "--noise",
+        choices=["laplace", "gaussian"],
+        help="noise distribution to use",
+    )
+    parser.add_argument(
+        "--max_model_size",
+        type=float,
+        help="maximum size (in megabytes) of model",
     )
 
-    parser.add_argument("--degree", type=int, help="degree of marginals in workload")
+    parser.add_argument(
+        "--degree", type=int, help="degree of marginals in workload"
+    )
     parser.add_argument(
         "--num_marginals", type=int, help="number of marginals in workload"
     )
@@ -196,7 +213,9 @@ if __name__ == "__main__":
     if args.num_marginals is not None and args.num_marginals < len(workload):
         workload = [
             workload[i]
-            for i in np.random.choice(len(workload), args.num_marginals, replace=False)
+            for i in np.random.choice(
+                len(workload), args.num_marginals, replace=False
+            )
         ]
 
     synth = mwem_pgm(

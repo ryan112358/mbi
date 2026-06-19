@@ -1,8 +1,8 @@
-""" This file is experimental.
+"""This file is experimental.
 
 It is a close approximation to the method described in RAP (https://arxiv.org/abs/2103.06641)
-and an even closer approximation to RAP^{softmax} (https://arxiv.org/abs/2106.07153). This 
-implementation is not very optimized.  If you would like to improve it, pull requests 
+and an even closer approximation to RAP^{softmax} (https://arxiv.org/abs/2106.07153). This
+implementation is not very optimized.  If you would like to improve it, pull requests
 are welcome.
 
 Notable differences:
@@ -32,9 +32,9 @@ def adam(loss_and_grad, x0, iters=250):
         l, g = loss_and_grad(x)
         # print(l)
         m = b1 * m + (1 - b1) * g
-        v = b2 * v + (1 - b2) * g ** 2
-        mhat = m / (1 - b1 ** t)
-        vhat = v / (1 - b2 ** t)
+        v = b2 * v + (1 - b2) * g**2
+        mhat = m / (1 - b1**t)
+        vhat = v / (1 - b2**t)
         x = x - a * mhat / (jnp.sqrt(vhat) + eps)
     return x
 
@@ -53,6 +53,7 @@ def synthetic_col(counts, total):
 
 
 class MixtureOfProducts:
+
     def __init__(self, products, domain, total):
         self.products = products
         self.domain = domain
@@ -67,9 +68,13 @@ class MixtureOfProducts:
     def datavector(self, flatten=True):
         d = len(self.domain)
         letters = "bcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"[:d]
-        formula = ",".join(["a%s" % l for l in letters]) + "->" + "".join(letters)
+        formula = (
+            ",".join(["a%s" % l for l in letters]) + "->" + "".join(letters)
+        )
         components = [self.products[col] for col in self.domain]
-        ans = jnp.einsum(formula, *components) * self.total / self.num_components
+        ans = (
+            jnp.einsum(formula, *components) * self.total / self.num_components
+        )
         return ans.flatten() if flatten else ans
 
     def synthetic_data(self, rows=None):
@@ -86,7 +91,9 @@ class MixtureOfProducts:
             # Convert comp_data (dict of arrays) to a structured representation or just a list of rows
             # Here we know the length is subtotal
             # We want a 2D array with columns in domain order
-            current_block = np.stack([comp_data[col] for col in self.domain.attrs], axis=1)
+            current_block = np.stack(
+                [comp_data[col] for col in self.domain.attrs], axis=1
+            )
             data_list.append(current_block)
 
         full_data = np.concatenate(data_list, axis=0)
@@ -107,10 +114,12 @@ def mixture_of_products(
     known_total: int | None = None,
     mixture_components: int = 100,
     iters: int = 2500,
-    alpha: float = 0.1
+    alpha: float = 0.1,
 ) -> MixtureOfProducts:
 
-    loss_fn, known_total, _ = estimation._initialize(domain, loss_fn, known_total, None)
+    loss_fn, known_total, _ = estimation._initialize(
+        domain, loss_fn, known_total, None
+    )
 
     one_hot_features = sum(domain.shape)
     params = np.random.normal(
@@ -137,7 +146,11 @@ def mixture_of_products(
             let = letters[: len(cl)]
             formula = ",".join(["a%s" % l for l in let]) + "->" + "".join(let)
             components = [products[col] for col in cl]
-            ans = jnp.einsum(formula, *components) * known_total / mixture_components
+            ans = (
+                jnp.einsum(formula, *components)
+                * known_total
+                / mixture_components
+            )
             arrays[cl] = Factor(domain.project(cl), ans)
         return CliqueVector(domain, cliques, arrays)
 
