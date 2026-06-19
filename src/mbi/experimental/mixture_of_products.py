@@ -55,6 +55,7 @@ def synthetic_col(counts, total):
 class MixtureOfProducts:
 
     def __init__(self, products, domain, total):
+        """Initialize a MixtureOfProducts model."""
         self.products = products
         self.domain = domain
         self.total = total

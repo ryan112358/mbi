@@ -66,7 +66,7 @@ class Dataset:
         domain: Domain,
         weights: np.ndarray | None = None,
     ):
-        """create a Dataset object
+        """Create a Dataset object.
 
         :param data: a numpy array (n x d) or a dictionary of 1d arrays (length n), keyed by attribute.
         :param domain: a domain object
@@ -126,7 +126,7 @@ class Dataset:
 
     @staticmethod
     def synthetic(domain: Domain, N: int) -> Dataset:
-        """Generate synthetic data conforming to the given domain
+        """Generate synthetic data conforming to the given domain.
 
         :param domain: The domain object
         :param N: the number of individuals
@@ -137,7 +137,7 @@ class Dataset:
 
     @staticmethod
     def load(path: str, domain: str | Domain) -> Dataset:
-        """Load data into a dataset object
+        """Load data into a dataset object.
 
         :param path: path to csv file
         :param domain: path to json file encoding the domain information
@@ -175,7 +175,7 @@ class Dataset:
     def project(
         self, cols: int | str | Sequence[str] | Sequence[int]
     ) -> Factor:
-        """project dataset onto a subset of columns"""
+        """Project dataset onto a subset of columns."""
         if isinstance(cols, (str, int)):
             cols = [cols]
 
@@ -198,7 +198,7 @@ class Dataset:
         return self._n
 
     def datavector(self, flatten: bool = True) -> NDArray:
-        """return the database in vector-of-counts form"""
+        """Return the database in vector-of-counts form."""
         dims = self.domain.shape
         if len(dims) == 0:
             result = self.weights.sum()
@@ -211,8 +211,7 @@ class Dataset:
         return counts if flatten else counts.reshape(dims)
 
     def compress(self, mapping: dict[str, np.ndarray]) -> Dataset:
-        """
-        Compresses the dataset by mapping domain elements to a smaller domain.
+        """Compress the dataset by mapping domain elements to a smaller domain.
 
         Args:
             mapping: A dictionary where keys are attribute names and values are 1D arrays.
@@ -249,8 +248,8 @@ class Dataset:
         return Dataset(new_data, new_domain, self.weights)
 
     def decompress(self, mapping: dict[str, np.ndarray]) -> Dataset:
-        """
-        Decompresses the dataset by reversing the mapping.
+        """Decompress the dataset by reversing the mapping.
+
         Since the mapping is surjective, the reverse mapping is one-to-many.
         We sample uniformly from the possible original values.
 
@@ -332,7 +331,7 @@ class JaxDataset:
 
     @staticmethod
     def synthetic(domain: Domain, records: int) -> JaxDataset:
-        """Generate synthetic data conforming to the given domain
+        """Generate synthetic data conforming to the given domain.
 
         :param domain: The domain object
         :param records: the number of individuals
@@ -346,7 +345,7 @@ class JaxDataset:
         return JaxDataset(data, domain)
 
     def project(self, cols: str | Sequence[str]) -> Factor:
-        """project dataset onto a subset of columns"""
+        """Project dataset onto a subset of columns."""
         if isinstance(cols, (str, int)):
             cols = [cols]
 

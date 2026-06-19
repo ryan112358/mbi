@@ -125,6 +125,7 @@ class Domain:
 
         Args:
           attrs: the attributes to marginalize out.
+
         Returns:
           the marginalized Domain object
         """
@@ -210,6 +211,7 @@ class Domain:
 
         Args:
           attributes: A subset of attributes whose total size should be returned.
+
         Returns:
           the total size of the domain
         """

@@ -1,4 +1,4 @@
-name: Test on Ubuntu
+name: Continuous Integration
 
 on:
   push:
@@ -10,14 +10,47 @@ on:
   workflow_dispatch:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]
+
+      - name: Check formatting with pyink
+        run: |
+          pyink --check --diff src test mechanisms examples
+
+      - name: Lint with flake8
+        run: |
+          flake8 src test mechanisms examples
+
+      - name: Check docstrings with pydocstyle
+        run: |
+          pydocstyle src/mbi/
+
+      - name: Lint with pylint
+        run: |
+          pylint src/mbi/
+
   test:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -26,18 +59,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install .[dev,docs]
           pip install pandas
-
-      # - name: Check formatting with yapf
-        # run: |
-        #  yapf --diff --recursive --exit-code src test mechanisms examples setup.py docs/conf.py
-
-      # - name: Lint with pylint
-        # run: |
-        #  pylint src test mechanisms examples setup.py docs/conf.py
-
-      # - name: Check docstrings with pydocstyle
-        #run: |
-        #  pydocstyle src test mechanisms examples setup.py docs/conf.py
 
       - name: Set PYTHONPATH
         run: |
@@ -50,7 +71,7 @@ jobs:
       - name: Doc tests
         run: |
           pytest --doctest-modules src/mbi/*.py
-  
+
       - name: Type checking
         run: |
           pytype src/mbi/*.py
