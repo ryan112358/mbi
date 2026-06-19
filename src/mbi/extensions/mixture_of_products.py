@@ -27,17 +27,60 @@ from ..factor import Factor
 from ..marginal_loss import LinearMeasurement
 
 
+@jax.tree_util.register_pytree_node_class
 class MixtureOfProducts:
     """A discrete distribution as a mixture of product distributions."""
 
     def __init__(
-        self, products: dict[str, jax.Array], domain: Domain, total: float
+        self, _logits: dict[str, jax.Array], domain: Domain, total: float
     ):
-        """Initialize from per-attribute product arrays, domain, and total."""
-        self.products = products
+        """Initialize from per-attribute logit arrays, domain, and total."""
+        self._logits = _logits
         self.domain = domain
         self.total = total
-        self.num_components = next(iter(products.values())).shape[0]
+
+    def tree_flatten(self):
+        """Logits are dynamic leaves; domain and total are static."""
+        return (self._logits,), (self.domain, self.total)
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        """Reconstruct from flattened pytree."""
+        domain, total = aux
+        (logits,) = children
+        return cls(logits, domain, total)
+
+    @classmethod
+    def random(
+        cls,
+        domain: Domain,
+        total: float,
+        num_components: int = 100,
+        seed: int = 0,
+        scale: float = 0.25,
+    ) -> MixtureOfProducts:
+        """Initialize with random logits."""
+        key = jax.random.PRNGKey(seed)
+        logits = {}
+        for col in domain:
+            key, subkey = jax.random.split(key)
+            logits[col] = (
+                jax.random.normal(subkey, (num_components, domain[col])) * scale
+            )
+        return cls(logits, domain, total)
+
+    @property
+    def num_components(self) -> int:
+        """Number of mixture components K."""
+        return next(iter(self._logits.values())).shape[0]
+
+    @property
+    def products(self) -> dict[str, jax.Array]:
+        """Per-attribute categorical probabilities (softmax of logits)."""
+        return {
+            col: jax.nn.softmax(self._logits[col], axis=1)
+            for col in self._logits
+        }
 
     def project(self, attrs) -> Factor:
         """Compute the marginal over ``attrs`` via einsum."""
@@ -47,7 +90,8 @@ class MixtureOfProducts:
         d = len(attrs)
         letters = "bcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"[:d]
         formula = ",".join(f"a{l}" for l in letters) + "->" + "".join(letters)
-        components = [self.products[col] for col in attrs]
+        products = self.products
+        components = [products[col] for col in attrs]
         values = (
             jnp.einsum(formula, *components) * self.total / self.num_components
         )
@@ -64,12 +108,13 @@ class MixtureOfProducts:
         total = max(1, int(rows or self.total))
         rng = np.random.default_rng()
         subtotal = total // self.num_components + 1
+        products = self.products
 
         blocks = []
         for k in range(self.num_components):
             comp_data = {}
             for col in self.domain.attrs:
-                counts = np.asarray(self.products[col][k])
+                counts = np.asarray(products[col][k])
                 counts = counts * subtotal / counts.sum()
                 frac, integ = np.modf(counts)
                 integ = integ.astype(int)
@@ -132,39 +177,24 @@ def estimate(
     if optimizer is None:
         optimizer = optax.adam(learning_rate)
 
-    key = jax.random.PRNGKey(seed)
-    one_hot_features = sum(domain.shape)
-    params = jax.random.normal(key, (num_components, one_hot_features)) * 0.25
+    model = MixtureOfProducts.random(domain, known_total, num_components, seed)
 
     cliques = loss_fn.cliques
 
-    def get_products(params):
-        products = {}
-        idx = 0
-        for col in domain:
-            n = domain[col]
-            products[col] = jax.nn.softmax(params[:, idx : idx + n], axis=1)
-            idx += n
-        return products
-
-    def model_from_params(params):
-        return MixtureOfProducts(get_products(params), domain, known_total)
-
-    def params_loss(params: jax.Array) -> float:
-        model = model_from_params(params)
+    def model_loss(model: MixtureOfProducts) -> float:
         arrays = {cl: model.project(cl) for cl in cliques}
         mu = CliqueVector(domain, cliques, arrays)
         return loss_fn(mu)
 
-    params_loss_and_grad = jax.jit(jax.value_and_grad(params_loss))
-    opt_state = optimizer.init(params)
+    model_loss_and_grad = jax.jit(jax.value_and_grad(model_loss))
+    opt_state = optimizer.init(model)
 
     def step(carry, _):
-        params, opt_state = carry
-        loss, grad = params_loss_and_grad(params)
-        updates, opt_state = optimizer.update(grad, opt_state, params)
-        params = optax.apply_updates(params, updates)
-        return (params, opt_state), loss
+        model, opt_state = carry
+        loss, grad = model_loss_and_grad(model)
+        updates, opt_state = optimizer.update(grad, opt_state, model)
+        model = optax.apply_updates(model, updates)
+        return (model, opt_state), loss
 
     scan_block = jax.jit(
         lambda carry: jax.lax.scan(step, carry, None, length=callback_every)
@@ -172,8 +202,8 @@ def estimate(
 
     num_blocks = -(-iters // callback_every)  # ceil division
     for _ in range(num_blocks):
-        (params, opt_state), _ = scan_block((params, opt_state))
+        (model, opt_state), _ = scan_block((model, opt_state))
         if callback_fn is not None:
-            callback_fn(model_from_params(params))
+            callback_fn(model)
 
-    return model_from_params(params)
+    return model
