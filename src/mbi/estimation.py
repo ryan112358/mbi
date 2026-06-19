@@ -16,7 +16,6 @@ support the cliques of the marginal-based loss function can be used here.
 from __future__ import annotations
 
 import functools
-import math
 from collections.abc import Callable
 from typing import Any, NamedTuple, Protocol
 
@@ -251,12 +250,9 @@ def _optimize(loss_and_grad_fn, params, iters=250, callback_fn=lambda _: None):
         linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
     )
     state = optimizer.init(params)
-    prev_loss = math.inf
     for _ in range(iters):
-        params, state, loss = update(params, state)
+        params, state, _loss = update(params, state)
         callback_fn(params)
-        # if loss == prev_loss: break
-        prev_loss = loss
     return params
 
 

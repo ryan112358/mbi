@@ -5,7 +5,7 @@
 
 # Files or directories to be skipped. They should be base names, not paths.
 # Add things like virtualenv directories here if needed (e.g., venv, .venv, env)
-ignore=CVS,experimental/public_support.py,experimental/mixture_of_products.py
+ignore=CVS
 
 
 # Pickle collected data for later comparisons.
