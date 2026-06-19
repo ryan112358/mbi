@@ -73,6 +73,21 @@ disable=
     multiple-statements, # Let formatters handle this
     import-outside-toplevel, # Sometimes necessary
     # Keep missing-docstring ENABLED (by not disabling it) for Google style
+    missing-function-docstring, # Handled by pydocstyle
+    missing-class-docstring, # Handled by pydocstyle
+    missing-module-docstring, # Handled by pydocstyle
+    missing-param-doc, # Too strict for OSS
+    missing-type-doc, # Too strict for OSS
+    differing-param-doc, # Too strict for OSS
+    no-member, # False positives with attrs/jax
+    no-name-in-module, # False positives with jax
+    not-an-iterable, # False positives with attrs
+    unsubscriptable-object, # False positives with attrs
+    unsupported-membership-test, # False positives with attrs
+    import-error, # Dependencies may not be installed
+    redefined-outer-name, # Common in scientific code
+    too-many-positional-arguments, # Already disabled via too-many-arguments
+    cell-var-from-loop, # Sometimes needed for closures
 
 
 [REPORTS]
