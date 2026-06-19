@@ -12,6 +12,7 @@ This is a cleaned-up, optimized replacement for
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 
 import jax
 import jax.nn
@@ -27,28 +28,14 @@ from ..factor import Factor
 from ..marginal_loss import LinearMeasurement
 
 
-@jax.tree_util.register_pytree_node_class
+@jax.tree_util.register_dataclass
+@dataclass
 class MixtureOfProducts:
     """A discrete distribution as a mixture of product distributions."""
 
-    def __init__(
-        self, _logits: dict[str, jax.Array], domain: Domain, total: float
-    ):
-        """Initialize from per-attribute logit arrays, domain, and total."""
-        self._logits = _logits
-        self.domain = domain
-        self.total = total
-
-    def tree_flatten(self):
-        """Logits are dynamic leaves; domain and total are static."""
-        return (self._logits,), (self.domain, self.total)
-
-    @classmethod
-    def tree_unflatten(cls, aux, children):
-        """Reconstruct from flattened pytree."""
-        domain, total = aux
-        (logits,) = children
-        return cls(logits, domain, total)
+    _logits: dict[str, jax.Array]
+    domain: Domain = field(metadata={"static": True})
+    total: float = field(metadata={"static": True})
 
     @classmethod
     def random(
