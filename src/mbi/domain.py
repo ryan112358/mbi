@@ -137,11 +137,11 @@ class Domain:
         """Checks if this domain contains all attributes present in another domain."""
         return set(other.attributes) <= set(self.attributes)
 
-    def canonical(self, attrs):
+    def canonical(self, attrs: Sequence[str]) -> tuple[str, ...]:
         """Returns attributes common to the domain and input, maintaining the domain's order."""
         return tuple(a for a in self.attributes if a in attrs)
 
-    def invert(self, attrs):
+    def invert(self, attrs: Sequence[str]) -> list[str]:
         """Returns attributes present in the domain but not in the provided list."""
         return [a for a in self.attributes if a not in attrs]
 
@@ -218,7 +218,7 @@ class Domain:
         return self.project(attributes).size()
 
     @property
-    def attrs(self):
+    def attrs(self) -> tuple[str, ...]:
         """Alias for the `attributes` tuple."""
         return self.attributes
 

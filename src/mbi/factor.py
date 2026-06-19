@@ -87,7 +87,7 @@ class Factor:
         values = jnp.moveaxis(self.values, range(len(ax)), ax)
         return Factor(newdom, values)
 
-    def expand(self, domain):
+    def expand(self, domain: Domain) -> Factor:
         """Expands the factor's domain to include new attributes."""
         if not domain.contains(self.domain):
             raise ValueError("Expanded domain must contain domain.")
@@ -213,7 +213,7 @@ class Factor:
         """Returns a copy of the factor (potentially shallow due to JAX)."""
         return self
 
-    def __float__(self):
+    def __float__(self) -> float:
         if len(self.domain) > 0:
             raise ValueError("Domain must be empty to convert to float.")
         return float(self.values)
