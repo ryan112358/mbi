@@ -77,7 +77,7 @@ class Estimator(Protocol):
             A Projectable object that is maximally consistent with the
             noisy measurements taken in some sense.
         """
-        ...
+        pass
 
 
 def minimum_variance_unbiased_total(measurements: list[LinearMeasurement]) -> float:
@@ -91,7 +91,7 @@ def minimum_variance_unbiased_total(measurements: list[LinearMeasurement]) -> fl
             if M.query == Factor.datavector:  # query = Identity
                 estimates.append(y.sum())
                 variances.append(M.stddev**2 * y.size)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             continue
     estimates, variances = np.array(estimates), np.array(variances)
     if len(estimates) == 0:
@@ -212,7 +212,7 @@ def mirror_descent(
     L = loss_fn.lipschitz or 1.0
     alpha = 2.0 / (L * known_total) if stepsize is None else stepsize
     mu, state = marginal_oracle(potentials, known_total, state=None)
-    for t in range(iters):
+    for _ in range(iters):
         potentials, loss, alpha, mu, state = update(potentials, alpha, state)
         callback_fn(mu)
 
@@ -249,7 +249,7 @@ def _optimize(loss_and_grad_fn, params, iters=250, callback_fn=lambda _: None):
     )
     state = optimizer.init(params)
     prev_loss = float("inf")
-    for t in range(iters):
+    for _ in range(iters):
         params, state, loss = update(params, state)
         callback_fn(params)
         # if loss == prev_loss: break
@@ -483,7 +483,7 @@ def interior_gradient(
     # a jitted "init" function.
     x = y = z = marginal_oracle(potentials, known_total, mesh)
     theta = potentials
-    for t in range(1, iters + 1):
+    for _ in range(1, iters + 1):
         theta, c, x, y, z = update(theta, c, x, y, z)
         callback_fn(x)
 

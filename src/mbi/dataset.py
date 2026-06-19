@@ -12,19 +12,18 @@ from __future__ import annotations
 import csv
 import functools
 import json
+import math
+import warnings
 from collections.abc import Sequence
-from typing import Any
 
 import attr
 import jax
 import jax.numpy as jnp
-import math
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .domain import Domain
 from .factor import Factor
-import warnings
 
 
 def _validate_column(data: np.ndarray, size: int):
@@ -95,7 +94,7 @@ class Dataset:
 
         _validate_data(data, domain)
 
-        if n == None:
+        if n is None:
             if weights is None:
                 raise ValueError(
                     "Weights must be provided if data is empty (cannot infer N)"
