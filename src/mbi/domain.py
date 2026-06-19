@@ -175,9 +175,6 @@ class Domain:
     def merge(self, other: "Domain") -> "Domain":
         """Merge this Domain object with another.
 
-        :param other: another Domain object
-        :return: a new domain object covering the full domain
-
         Example:
             >>> D1 = Domain(['a','b'], [10,20])
             >>> D2 = Domain(['b','c'], [20,30])

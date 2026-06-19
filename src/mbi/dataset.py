@@ -68,9 +68,11 @@ class Dataset:
     ):
         """Create a Dataset object.
 
-        :param data: a numpy array (n x d) or a dictionary of 1d arrays (length n), keyed by attribute.
-        :param domain: a domain object
-        :param weight: weight for each row
+        Args:
+            data: A numpy array (n x d) or a dictionary of 1d arrays (length n),
+                keyed by attribute.
+            domain: A Domain object.
+            weights: Weight for each row.
         """
 
         if isinstance(data, np.ndarray):
@@ -128,8 +130,9 @@ class Dataset:
     def synthetic(domain: Domain, N: int) -> Dataset:
         """Generate synthetic data conforming to the given domain.
 
-        :param domain: The domain object
-        :param N: the number of individuals
+        Args:
+            domain: The domain object.
+            N: The number of individuals.
         """
         arr = [np.random.randint(low=0, high=n, size=N) for n in domain.shape]
         values = np.array(arr).T
@@ -139,8 +142,9 @@ class Dataset:
     def load(path: str, domain: str | Domain) -> Dataset:
         """Load data into a dataset object.
 
-        :param path: path to csv file
-        :param domain: path to json file encoding the domain information
+        Args:
+            path: Path to csv file.
+            domain: Path to json file encoding the domain information.
         """
         if isinstance(domain, str):
             with open(domain, "r", encoding="utf-8") as f:
@@ -333,8 +337,9 @@ class JaxDataset:
     def synthetic(domain: Domain, records: int) -> JaxDataset:
         """Generate synthetic data conforming to the given domain.
 
-        :param domain: The domain object
-        :param records: the number of individuals
+        Args:
+            domain: The domain object.
+            records: The number of individuals.
         """
         data = {}
         for attr, n in zip(domain.attrs, domain.shape):
