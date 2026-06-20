@@ -91,6 +91,62 @@ def _get_stateful_oracle(
     return wrapper
 
 
+class MirrorDescentState(NamedTuple):
+    """State for Algorithm 1 of https://arxiv.org/pdf/1901.09136."""
+
+    potentials: CliqueVector
+    alpha: jax.Array | float
+    loss: jax.Array | float
+    mu: CliqueVector
+    oracle_state: Any
+
+
+def mirror_descent_step(
+    state: MirrorDescentState,
+    loss_fn: marginal_loss.MarginalLossFn,
+    marginal_oracle: StatefulMarginalOracle,
+    total: jax.Array | float,
+    linesearch: bool = True,
+) -> MirrorDescentState:
+    """Performs a single mirror descent step.
+
+    Args:
+        state: Current algorithm state.
+        loss_fn: The marginal loss function.
+        marginal_oracle: A stateful marginal oracle with signature
+            ``(potentials, total, state) -> (marginals, state)``.
+        total: The known or estimated total number of records.
+        linesearch: If True (default), uses Armijo line search to adapt the
+            step size. If False, uses a fixed step size.
+
+    Returns:
+        Updated ``MirrorDescentState``.
+    """
+    mu, oracle_state = marginal_oracle(
+        state.potentials, total, state.oracle_state
+    )
+    loss, dL = jax.value_and_grad(loss_fn)(mu)
+    theta2 = state.potentials - state.alpha * dL
+
+    if not linesearch:
+        return MirrorDescentState(theta2, state.alpha, loss, mu, oracle_state)
+
+    mu2, _ = marginal_oracle(theta2, total, oracle_state)
+    loss2 = loss_fn(mu2)
+
+    sufficient_decrease = loss - loss2 >= 0.5 * state.alpha * dL.dot(mu - mu2)
+    alpha = jax.lax.select(
+        sufficient_decrease, 1.01 * state.alpha, 0.5 * state.alpha
+    )
+    potentials = jax.lax.cond(
+        sufficient_decrease, lambda: theta2, lambda: state.potentials
+    )
+    accepted_loss = jax.lax.select(sufficient_decrease, loss2, loss)
+    return MirrorDescentState(
+        potentials, alpha, accepted_loss, mu, oracle_state
+    )
+
+
 def mirror_descent(
     domain: Domain,
     loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
@@ -144,39 +200,36 @@ def mirror_descent(
     marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
     marginal_oracle = _get_stateful_oracle(marginal_oracle, stateful)
 
-    @jax.jit
-    def update(theta, alpha, state=None):
-        mu, state = marginal_oracle(theta, known_total, state)
-        loss, dL = jax.value_and_grad(loss_fn)(mu)
-
-        theta2 = theta - alpha * dL
-        if stepsize is not None:
-            return theta2, loss, alpha, mu, state
-
-        mu2, _ = marginal_oracle(theta2, known_total, state)
-        loss2 = loss_fn(mu2)
-
-        sufficient_decrease = loss - loss2 >= 0.5 * alpha * dL.dot(mu - mu2)
-        alpha = jax.lax.select(sufficient_decrease, 1.01 * alpha, 0.5 * alpha)
-        theta = jax.lax.cond(sufficient_decrease, lambda: theta2, lambda: theta)
-        loss = jax.lax.select(sufficient_decrease, loss2, loss)
-
-        return theta, loss, alpha, mu, state
-
     # Theory suggests the initial learning rate should be inversely
     # proportional to L. We also divide by scaling factor to account for
     # the fact that gradients are scaled up by a factor of known_total.
     # See Eq 75. of https://www.cs.uic.edu/~zhangx/teaching/bregman.pdf.
     L = loss_fn.lipschitz or 1.0
     alpha = 2.0 / (L * known_total) if stepsize is None else stepsize
-    mu, state = marginal_oracle(potentials, known_total, state=None)
-    for _ in range(iters):
-        potentials, loss, alpha, mu, state = update(potentials, alpha, state)
-        callback_fn(mu)
+    mu, oracle_state = marginal_oracle(potentials, known_total, state=None)
+    initial_loss = loss_fn(mu)
 
-    marginals, _ = marginal_oracle(potentials, known_total, state)
+    state = MirrorDescentState(
+        potentials, alpha, initial_loss, mu, oracle_state
+    )
+    step = jax.jit(
+        functools.partial(
+            mirror_descent_step,
+            loss_fn=loss_fn,
+            marginal_oracle=marginal_oracle,
+            total=known_total,
+            linesearch=stepsize is None,
+        )
+    )
+    for _ in range(iters):
+        state = step(state)
+        callback_fn(state.mu)
+
+    marginals, _ = marginal_oracle(
+        state.potentials, known_total, state.oracle_state
+    )
     return MarkovRandomField(
-        potentials=potentials, marginals=marginals, total=known_total
+        potentials=state.potentials, marginals=marginals, total=known_total
     )
 
 
@@ -310,6 +363,51 @@ def mle_from_marginals(
     )
 
 
+class DualAveragingState(NamedTuple):
+    """State for Regularized Dual Averaging (https://proceedings.neurips.cc/paper_files/paper/2009/file/7cce53cf90577442771720a370c3c723-Paper.pdf)."""
+
+    w: CliqueVector
+    v: CliqueVector
+    gbar: CliqueVector
+    loss: jax.Array | float
+
+
+def dual_averaging_step(
+    state: DualAveragingState,
+    loss_fn: marginal_loss.MarginalLossFn,
+    marginal_oracle: marginal_oracles.MarginalOracle,
+    total: jax.Array | float,
+    lipschitz: float,
+    gamma: float,
+    t: int,
+) -> DualAveragingState:
+    """Performs a single dual averaging step.
+
+    Args:
+        state: Current algorithm state.
+        loss_fn: The marginal loss function.
+        marginal_oracle: A marginal oracle with signature
+            ``(potentials, total) -> marginals``.
+        total: The known or estimated total number of records.
+        lipschitz: Lipschitz constant of the gradient, divided by ``total``.
+        gamma: Variance-related parameter (typically 0 for deterministic).
+        t: Current iteration number (1-indexed).
+
+    Returns:
+        Updated ``DualAveragingState``.
+    """
+    c = 2.0 / (t + 1)
+    beta = gamma * (t + 1) ** 1.5 / 2
+    u = (1 - c) * state.w + c * state.v
+    loss, g = jax.value_and_grad(loss_fn)(u)
+    g = g / total
+    gbar = (1 - c) * state.gbar + c * g
+    theta = -t * (t + 1) / (4 * lipschitz + beta) * gbar
+    v = marginal_oracle(theta, total)
+    w = (1 - c) * state.w + c * v
+    return DualAveragingState(w, v, gbar, loss)
+
+
 def dual_averaging(
     domain: Domain,
     loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
@@ -350,32 +448,75 @@ def dual_averaging(
         raise ValueError(
             "Dual Averaging requires a loss function with Lipschitz gradients."
         )
+    marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
 
     D = np.sqrt(domain.size() * np.log(domain.size()))  # upper bound on entropy
     Q = 0  # upper bound on variance of stochastic gradients
     gamma = Q / D
-
     L = loss_fn.lipschitz / known_total
 
-    @jax.jit
-    def update(w, v, gbar, c, beta, t):
-        u = (1 - c) * w + c * v
-        g = jax.grad(loss_fn)(u) / known_total
-        gbar = (1 - c) * gbar + c * g
-        theta = -t * (t + 1) / (4 * L + beta) * gbar
-        v = marginal_oracle(theta, known_total, mesh)
-        w = (1 - c) * w + c * v
-        return w, v, gbar
-
-    w = v = marginal_oracle(potentials, known_total, mesh)
+    w = v = marginal_oracle(potentials, known_total)
     gbar = CliqueVector.zeros(domain, loss_fn.cliques)
-    for t in range(1, iters + 1):
-        c = 2.0 / (t + 1)
-        beta = gamma * (t + 1) ** 1.5 / 2
-        w, v, gbar = update(w, v, gbar, c, beta, t)
-        callback_fn(w)
+    initial_loss = loss_fn(w)
+    da_state = DualAveragingState(w, v, gbar, initial_loss)
 
-    return mle_from_marginals(w, known_total)
+    step = jax.jit(
+        functools.partial(
+            dual_averaging_step,
+            loss_fn=loss_fn,
+            marginal_oracle=marginal_oracle,
+            total=known_total,
+            lipschitz=L,
+            gamma=gamma,
+        )
+    )
+    for t in range(1, iters + 1):
+        da_state = step(da_state, t=t)
+        callback_fn(da_state.w)
+
+    return mle_from_marginals(da_state.w, known_total)
+
+
+class InteriorGradientState(NamedTuple):
+    """State for Interior Gradient (https://doi.org/10.1137/S1052623403427823)."""
+
+    potentials: CliqueVector
+    c: jax.Array | float
+    x: CliqueVector
+    y: CliqueVector
+    z: CliqueVector
+    loss: jax.Array | float
+
+
+def interior_gradient_step(
+    state: InteriorGradientState,
+    loss_fn: marginal_loss.MarginalLossFn,
+    marginal_oracle: marginal_oracles.MarginalOracle,
+    total: jax.Array | float,
+    inv_lipschitz: float,
+) -> InteriorGradientState:
+    """Performs a single interior gradient step.
+
+    Args:
+        state: Current algorithm state.
+        loss_fn: The marginal loss function.
+        marginal_oracle: A marginal oracle with signature
+            ``(potentials, total) -> marginals``.
+        total: The known or estimated total number of records.
+        inv_lipschitz: Reciprocal of the Lipschitz constant (``sigma / lipschitz``).
+
+    Returns:
+        Updated ``InteriorGradientState``.
+    """
+    l = inv_lipschitz
+    a = (((state.c * l) ** 2 + 4 * state.c * l) ** 0.5 - l * state.c) / 2
+    y = (1 - a) * state.x + a * state.z
+    c = state.c * (1 - a)
+    loss, g = jax.value_and_grad(loss_fn)(y)
+    potentials = state.potentials - a / c / total * g
+    z = marginal_oracle(potentials, total)
+    x = (1 - a) * state.x + a * z
+    return InteriorGradientState(potentials, c, x, y, z, loss)
 
 
 def interior_gradient(
@@ -421,32 +562,28 @@ def interior_gradient(
             "Interior Gradient requires a loss function with Lipschitz"
             " gradients."
         )
+    marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
 
-    # Algorithm parameters
-    c = 1
-    sigma = 1
-    l = sigma / loss_fn.lipschitz
+    inv_lipschitz = 1.0 / (loss_fn.lipschitz or 1.0)
 
-    @jax.jit
-    def update(theta, c, x, y, z):
-        a = (((c * l) ** 2 + 4 * c * l) ** 0.5 - l * c) / 2
-        y = (1 - a) * x + a * z
-        c = c * (1 - a)
-        g = jax.grad(loss_fn)(y)
-        theta = theta - a / c / known_total * g
-        z = marginal_oracle(theta, known_total, mesh)
-        x = (1 - a) * x + a * z
-        return theta, c, x, y, z
+    x = y = z = marginal_oracle(potentials, known_total)
+    initial_loss = loss_fn(x)
+    ig_state = InteriorGradientState(potentials, 1.0, x, y, z, initial_loss)
 
-    # If we remove jit from marginal oracle, then we'll need to wrap this in
-    # a jitted "init" function.
-    x = y = z = marginal_oracle(potentials, known_total, mesh)
-    theta = potentials
+    step = jax.jit(
+        functools.partial(
+            interior_gradient_step,
+            loss_fn=loss_fn,
+            marginal_oracle=marginal_oracle,
+            total=known_total,
+            inv_lipschitz=inv_lipschitz,
+        )
+    )
     for _ in range(1, iters + 1):
-        theta, c, x, y, z = update(theta, c, x, y, z)
-        callback_fn(x)
+        ig_state = step(ig_state)
+        callback_fn(ig_state.x)
 
-    return mle_from_marginals(x, known_total)
+    return mle_from_marginals(ig_state.x, known_total)
 
 
 class _AcceleratedStepSearchState(NamedTuple):
@@ -479,15 +616,15 @@ class _AcceleratedStepSearchState(NamedTuple):
     x: CliqueVector
     z: CliqueVector
     u: CliqueVector
-    prev_stepsize: jnp.ndarray | float
-    stepsize: jnp.ndarray | float
-    prev_theta: jnp.ndarray | float
-    accept: jnp.ndarray | bool
-    iter_search: jnp.ndarray | int
+    prev_stepsize: jax.Array | float
+    stepsize: jax.Array | float
+    prev_theta: jax.Array | float
+    accept: jax.Array | bool
+    iter_search: jax.Array | int
 
 
 def _universal_accelerated_method_step_init(
-    fun: Callable[[CliqueVector], jnp.ndarray],
+    fun: Callable[[CliqueVector], jax.Array],
     dual_init_params,
     dual_proj: Callable[..., Any],
     max_iter_search: int = 30,
@@ -546,7 +683,7 @@ def _universal_accelerated_method_step_init(
         Acceleration](https://arxiv.org/pdf/1702.03828)
     """
 
-    def cond_fun(carry: _AcceleratedStepSearchState) -> bool | jnp.ndarray:
+    def cond_fun(carry: _AcceleratedStepSearchState) -> bool | jax.Array:
         """Continuation criterion when searching for next step."""
         return jnp.logical_not(
             jnp.logical_or(carry.accept, carry.iter_search >= max_iter_search),
