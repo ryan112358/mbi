@@ -101,7 +101,7 @@ def calculate_l2_lipschitz(
         Hv = compute_Hv(v)
         estimate = optax.tree.norm(Hv)
         v = Hv / (estimate + 1e-12)
-    return estimate
+    return float(estimate)
 
 
 def from_linear_measurements(
