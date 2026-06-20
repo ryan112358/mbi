@@ -3,7 +3,7 @@ from mbi.domain import Domain
 from mbi.factor import Factor
 from mbi.clique_vector import CliqueVector
 from mbi.marginal_loss import LinearMeasurement
-from mbi import approximate_oracles, estimation
+from mbi import approximate_oracles
 import numpy as np
 from parameterized import parameterized
 import itertools
@@ -48,22 +48,20 @@ class TestApproximateOracles(unittest.TestCase):
         for cl in cliques:
             self.assertEqual(marginals[cl].domain.attrs, cl)
 
-    @parameterized.expand(itertools.product(_ORACLES, _CLIQUE_SETS))
-    def test_mirror_descent(self, oracle, cliques):
+    @parameterized.expand(itertools.product(_CLIQUE_SETS))
+    def test_mirror_descent(self, cliques):
         # Here we check that the mirror descent algorithm converges to
         # the true marginals even with an approximate marginal oracle.
         measurements = fake_measurements(cliques)
 
-        model = estimation.mirror_descent(
+        mu = approximate_oracles.mirror_descent(
             _DOMAIN,
             measurements,
             known_total=1.0,
             iters=250,
-            marginal_oracle=oracle,
-            stateful=True,
             stepsize=1.0,
         )
         for M in measurements:
             expected = M.noisy_measurement
-            actual = model.project(M.clique).datavector()
+            actual = mu.project(M.clique).datavector()
             np.testing.assert_allclose(actual, expected, atol=1e-2)

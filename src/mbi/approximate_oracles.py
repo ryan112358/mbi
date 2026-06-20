@@ -240,3 +240,83 @@ def convex_generalized_belief_propagation(
             )
 
     return CliqueVector(domain, cliques, mu), messages
+
+
+def _approx_step(potentials, messages, *, loss_fn, oracle, total, stepsize):
+    """Single mirror descent step with approximate marginal oracle."""
+    mu, messages = oracle(potentials, total, state=messages)
+    dL = jax.grad(loss_fn)(mu)
+    potentials = potentials - stepsize * dL
+    return potentials, mu, messages
+
+
+def mirror_descent(
+    domain: Domain,
+    loss_fn,
+    *,
+    known_total: float | None = None,
+    potentials: CliqueVector | None = None,
+    stepsize: float,
+    iters: int = 1000,
+    oracle_iters: int = 1,
+    damping: float = 0.5,
+    callback_fn=lambda _: None,
+    mesh=None,
+) -> CliqueVector:
+    """Mirror descent with approximate marginal inference.
+
+    Fork of ``estimation.mirror_descent`` specialized for approximate marginal
+    oracles. Uses ``convex_generalized_belief_propagation`` internally and
+    warm-starts messages between optimization iterations.
+
+    Unlike ``estimation.mirror_descent``, this does not return a
+    ``MarkovRandomField`` because approximate region graphs cannot generate
+    synthetic data.
+
+    Args:
+        domain: The domain over which the model should be defined.
+        loss_fn: A ``MarginalLossFn`` or a list of ``LinearMeasurement``.
+        known_total: The known or estimated number of records.
+        potentials: Initial potentials.
+        stepsize: Fixed step size (required; no line search).
+        iters: Number of optimization iterations.
+        oracle_iters: Belief propagation iterations per optimization step.
+        damping: Damping factor for belief propagation messages.
+        callback_fn: Called with pseudo-marginals at each iteration.
+        mesh: JAX sharding mesh.
+
+    Returns:
+        Pseudo-marginals as a ``CliqueVector``.
+    """
+    from . import estimation  # local import to avoid circular dependency
+
+    loss_fn, known_total, potentials = estimation._initialize(
+        domain, loss_fn, known_total, potentials
+    )
+
+    oracle = functools.partial(
+        convex_generalized_belief_propagation,
+        mesh=mesh,
+        iters=oracle_iters,
+        damping=damping,
+    )
+
+    # Initialize messages so jit sees a consistent pytree structure.
+    mu, messages = oracle(potentials, known_total, state=None)
+
+    # Use partial to capture non-hashable args (MarginalLossFn has list fields).
+    step = jax.jit(
+        functools.partial(
+            _approx_step,
+            loss_fn=loss_fn,
+            oracle=oracle,
+            total=known_total,
+            stepsize=stepsize,
+        )
+    )
+    for _ in range(iters):
+        potentials, mu, messages = step(potentials, messages)
+        callback_fn(mu)
+
+    mu, _ = oracle(potentials, known_total, state=messages)
+    return mu
