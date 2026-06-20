@@ -30,7 +30,7 @@ class ReweightedDataset:
     """A discrete distribution as a reweighted set of seed records."""
 
     _log_weights: jax.Array
-    _data: tuple[tuple[int, ...], ...] = field(metadata={"static": True})
+    _data: dict[str, jax.Array]
     domain: Domain = field(metadata={"static": True})
     total: float = field(metadata={"static": True})
 
@@ -38,13 +38,10 @@ class ReweightedDataset:
     def from_dataset(cls, dataset: Dataset, total: float | None = None):
         """Initialize from a Dataset with uniform weights."""
         data_dict = dataset.to_dict()
-        data = tuple(
-            tuple(data_dict[col].tolist()) for col in dataset.domain.attrs
-        )
-        n = len(data[0])
+        data = {col: jnp.array(data_dict[col]) for col in dataset.domain.attrs}
+        n = dataset.records
         total = total if total is not None else float(n)
-        log_weights = jnp.zeros(n)
-        return cls(log_weights, data, dataset.domain, total)
+        return cls(jnp.zeros(n), data, dataset.domain, total)
 
     @property
     def weights(self) -> jax.Array:
@@ -54,7 +51,7 @@ class ReweightedDataset:
     @property
     def num_records(self) -> int:
         """Number of seed records."""
-        return len(self._data[0])
+        return next(iter(self._data.values())).shape[0]
 
     def project(self, attrs) -> Factor:
         """Compute the weighted marginal over ``attrs``."""
@@ -62,10 +59,9 @@ class ReweightedDataset:
             attrs = (attrs,)
         attrs = tuple(attrs)
         proj_domain = self.domain.project(attrs)
-        col_indices = [self.domain.attrs.index(a) for a in attrs]
         weights = self.weights
 
-        indices = tuple(jnp.array(self._data[i]) for i in col_indices)
+        indices = tuple(self._data[a] for a in attrs)
         values = jnp.zeros(proj_domain.shape)
         values = values.at[indices].add(weights)
         return Factor(proj_domain, values)
@@ -93,8 +89,8 @@ class ReweightedDataset:
         rng.shuffle(row_indices)
         row_indices = row_indices[:total]
         data = {
-            col: np.array(self._data[i])[row_indices]
-            for i, col in enumerate(self.domain.attrs)
+            col: np.asarray(self._data[col])[row_indices]
+            for col in self.domain.attrs
         }
         return Dataset(data, self.domain)
 
@@ -139,29 +135,36 @@ def estimate(
     model = ReweightedDataset.from_dataset(seed_data, known_total)
     cliques = loss_fn.cliques
 
-    def model_loss(model: ReweightedDataset) -> float:
-        arrays = {cl: model.project(cl) for cl in cliques}
+    # Optimize only _log_weights.  model._data (JAX arrays) is closed over
+    # and passed as implicit arguments to JIT, not baked as HLO constants.
+    def params_loss(log_weights: jax.Array) -> float:
+        m = ReweightedDataset(log_weights, model._data, domain, known_total)
+        arrays = {cl: m.project(cl) for cl in cliques}
         mu = CliqueVector(domain, cliques, arrays)
         return loss_fn(mu)
 
-    model_loss_and_grad = jax.jit(jax.value_and_grad(model_loss))
-    opt_state = optimizer.init(model)
+    params_loss_and_grad = jax.jit(jax.value_and_grad(params_loss))
+    log_weights = model._log_weights
+    opt_state = optimizer.init(log_weights)
 
     def step(carry, _):
-        model, opt_state = carry
-        loss, grad = model_loss_and_grad(model)
-        updates, opt_state = optimizer.update(grad, opt_state, model)
-        model = optax.apply_updates(model, updates)
-        return (model, opt_state), loss
+        log_weights, opt_state = carry
+        loss, grad = params_loss_and_grad(log_weights)
+        updates, opt_state = optimizer.update(grad, opt_state, log_weights)
+        log_weights = optax.apply_updates(log_weights, updates)
+        return (log_weights, opt_state), loss
 
     scan_block = jax.jit(
         lambda carry: jax.lax.scan(step, carry, None, length=callback_every)
     )
 
+    def make_model(log_weights):
+        return ReweightedDataset(log_weights, model._data, domain, known_total)
+
     num_blocks = -(-iters // callback_every)  # ceil division
     for _ in range(num_blocks):
-        (model, opt_state), _ = scan_block((model, opt_state))
+        (log_weights, opt_state), _ = scan_block((log_weights, opt_state))
         if callback_fn is not None:
-            callback_fn(model)
+            callback_fn(make_model(log_weights))
 
-    return model
+    return make_model(log_weights)
