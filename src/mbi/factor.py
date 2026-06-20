@@ -14,7 +14,7 @@ import numpy as np
 
 from .domain import Domain
 
-jax.config.update("jax_enable_x64", True)
+
 
 
 @functools.partial(
@@ -75,7 +75,7 @@ class Factor:
 
     @classmethod
     def abstract(cls, domain: Domain) -> Factor:
-        return cls(domain, jax.ShapeDtypeStruct(domain.shape, jnp.float64))
+        return cls(domain, jax.ShapeDtypeStruct(domain.shape, jnp.float32))
 
     # Reshaping operations
     def transpose(self, attrs: Sequence[str]) -> Factor:

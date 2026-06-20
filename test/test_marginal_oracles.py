@@ -96,7 +96,7 @@ class TestMarginalOracles(unittest.TestCase):
         marginals = oracle(zeros, total)
         for cl in cliques:
             expected = total / _DOMAIN.size(cl)
-            np.testing.assert_allclose(marginals[cl].datavector(), expected)
+            np.testing.assert_allclose(marginals[cl].datavector(), expected, rtol=1e-5)
 
     @parameterized.expand(itertools.product(_ORACLES, _CLIQUE_SETS))
     def test_matches_brute_force(self, oracle, cliques, total=10):
@@ -105,7 +105,7 @@ class TestMarginalOracles(unittest.TestCase):
         mu2 = marginal_oracles.brute_force_marginals(theta, total)
         for cl in cliques:
             np.testing.assert_allclose(
-                mu1[cl].datavector(), mu2[cl].datavector()
+                mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
             )
 
     @parameterized.expand(itertools.product(_CLIQUE_SETS, _ALL_CLIQUES))
@@ -144,7 +144,7 @@ class TestMarginalOracles(unittest.TestCase):
 
         ans2 = ans2.transpose(ans1.domain.attributes)
 
-        np.testing.assert_allclose(ans1.values, ans2.values, atol=1e-12)
+        np.testing.assert_allclose(ans1.values, ans2.values, atol=1e-5)
         self.assertEqual(ans1.domain, ans2.domain)
 
     @parameterized.expand(_STABLE_ORACLES)
