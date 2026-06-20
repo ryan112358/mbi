@@ -7,11 +7,11 @@ and various estimation and oracle modules.
 """
 
 from . import callbacks, estimation, junction_tree, marginal_oracles
+from ._api import Estimator, Model, PGMEstimator, Projectable
 from .clique_vector import CliqueVector
 from .dataset import Dataset
 from .domain import Domain
-from .estimation import Estimator
-from .factor import Factor, Projectable
+from .factor import Factor
 from .marginal_loss import LinearMeasurement, MarginalLossFn
 from .marginal_oracles import MarginalOracle
 from .markov_random_field import MarkovRandomField
@@ -28,8 +28,10 @@ __all__ = [
     "MarginalLossFn",
     "MarkovRandomField",
     "Projectable",
+    "Model",
     "MarginalOracle",
     "Estimator",
+    "PGMEstimator",
     "estimation",
     "callbacks",
     "junction_tree",

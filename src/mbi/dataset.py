@@ -404,3 +404,34 @@ class JaxDataset:
             else jax.lax.with_sharding_constraint(self.weights, sharding)
         )
         return JaxDataset(new_data, self.domain, weights)
+
+    def synthetic_data(self, rows: int | None = None) -> Dataset:
+        """Generate synthetic data via randomized rounding of weights.
+
+        Args:
+            rows: Number of rows to generate.  Defaults to the sum of weights.
+
+        Returns:
+            A Dataset with integer-valued rows.
+        """
+        weights = np.asarray(
+            self.weights if self.weights is not None else np.ones(self.records)
+        )
+        total = max(1, int(rows or weights.sum()))
+        rng = np.random.default_rng()
+        counts = weights * total / weights.sum()
+        frac, integ = np.modf(counts)
+        integ = integ.astype(int)
+        extra = total - integ.sum()
+        if extra > 0:
+            p = frac / frac.sum()
+            idx = rng.choice(len(counts), extra, replace=False, p=p)
+            integ[idx] += 1
+        row_indices = np.repeat(np.arange(len(counts)), integ)
+        rng.shuffle(row_indices)
+        row_indices = row_indices[:total]
+        data = {
+            col: np.asarray(self.data[col])[row_indices]
+            for col in self.domain.attrs
+        }
+        return Dataset(data, self.domain)
