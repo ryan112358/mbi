@@ -8,6 +8,8 @@ and various estimation and oracle modules.
 
 from . import callbacks, estimation, junction_tree, marginal_oracles
 from ._api import Estimator, Model, PGMEstimator, Projectable
+from .extensions import constraints
+from .extensions.constraints import DeterministicConstraint
 from .clique_vector import CliqueVector
 from .dataset import Dataset
 from .domain import Domain
@@ -19,6 +21,7 @@ from .markov_random_field import MarkovRandomField
 Clique = tuple[str, ...]
 
 __all__ = [
+    "DeterministicConstraint",
     "Domain",
     "Dataset",
     "Factor",
