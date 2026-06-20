@@ -375,7 +375,7 @@ class JaxDataset:
         )
 
         counts = jnp.bincount(
-            linear_indices, weights=self.weights, minlength=length
+            linear_indices, weights=self.weights, length=length
         )
 
         return Factor(domain, counts.reshape(dims))
