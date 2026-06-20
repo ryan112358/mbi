@@ -88,8 +88,8 @@ class Estimator(Protocol):
         *,
         known_total: float | None = None,
         **kwargs: Any,
-    ) -> Projectable:
-        """Estimate a Projectable from noisy marginal measurements."""
+    ) -> Model:
+        """Estimate a Model from noisy marginal measurements."""
 
 
 class PGMEstimator(Protocol):
