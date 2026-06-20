@@ -3,6 +3,7 @@ from mbi.domain import Domain
 from mbi.factor import Factor
 from mbi.clique_vector import CliqueVector
 from mbi import marginal_oracles
+from mbi.extensions.constraints import message_passing_with_constraints
 import jax.numpy as jnp
 import numpy as np
 from parameterized import parameterized
@@ -48,6 +49,7 @@ _ORACLES = [
     marginal_oracles.message_passing_shafer_shenoy,
     marginal_oracles.message_passing_fast,
     message_passing_fast_v1,
+    message_passing_with_constraints,
     _variable_elimination_oracle,
     _calculate_many_oracle,
     _bulk_variable_elimination_oracle,
@@ -56,6 +58,7 @@ _ORACLES = [
 _STABLE_ORACLES = [
     marginal_oracles.brute_force_marginals,
     marginal_oracles.message_passing_shafer_shenoy,
+    message_passing_with_constraints,
 ]
 
 _DOMAIN = Domain(["a", "b", "c", "d"], [2, 3, 4, 5])
