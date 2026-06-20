@@ -7,10 +7,10 @@ import jax.numpy as jnp
 import numpy as np
 from parameterized import parameterized
 
-from mbi import Domain, marginal_loss
+from mbi import Domain, Model, Projectable, marginal_loss
 from mbi.clique_vector import CliqueVector
 from mbi.dataset import Dataset, JaxDataset
-from mbi.extensions.reweighted_dataset import estimate, synthetic_data
+from mbi.extensions.reweighted_dataset import estimate
 from mbi.factor import Factor
 
 np.random.seed(42)  # Avoid flaky tests
@@ -97,16 +97,16 @@ class TestJaxDatasetBasics(unittest.TestCase):
         self.assertFalse(self.model.supports("z"))
 
     def test_synthetic_data(self):
-        data = synthetic_data(self.model, rows=500)
+        data = self.model.synthetic_data(rows=500)
         self.assertEqual(data.records, 500)
         self.assertEqual(data.domain, self.model.domain)
 
     def test_synthetic_data_default_rows(self):
-        data = synthetic_data(self.model)
+        data = self.model.synthetic_data()
         self.assertEqual(data.records, 100)
 
     def test_synthetic_data_values_in_range(self):
-        data = synthetic_data(self.model, rows=200)
+        data = self.model.synthetic_data(rows=200)
         data_dict = data.to_dict()
         for col in self.model.domain.attrs:
             col_data = data_dict[col]
@@ -133,7 +133,7 @@ class TestEstimation(unittest.TestCase):
         model = estimate(
             _DOMAIN,
             measurements,
-            seed_data,
+            seed_data=seed_data,
             iters=500,
             learning_rate=0.1,
         )
@@ -155,7 +155,7 @@ class TestEstimation(unittest.TestCase):
         model = estimate(
             _DOMAIN,
             loss_fn,
-            seed_data,
+            seed_data=seed_data,
             known_total=1.0,
             iters=500,
             learning_rate=0.01,
@@ -178,7 +178,7 @@ class TestEstimation(unittest.TestCase):
         model = estimate(
             _DOMAIN,
             loss_fn,
-            seed_data,
+            seed_data=seed_data,
             known_total=1.0,
             iters=500,
         )
@@ -196,13 +196,31 @@ class TestEstimation(unittest.TestCase):
         model = estimate(
             _DOMAIN,
             measurements,
-            seed_data,
+            seed_data=seed_data,
             iters=50,
         )
 
         self.assertIsInstance(model, JaxDataset)
         self.assertEqual(model.domain, _DOMAIN)
         self.assertTrue(model.supports(("a", "b")))
+
+    def test_conforms_to_model_protocol(self):
+        """JaxDataset should satisfy the Model protocol."""
+        cliques = [("a", "b"), ("c", "d")]
+        measurements, _ = _fake_measurements(_DOMAIN, cliques)
+        seed_data = _make_seed_data(_DOMAIN)
+        model = estimate(
+            _DOMAIN,
+            measurements,
+            seed_data=seed_data,
+            iters=50,
+        )
+
+        # Model extends Projectable with synthetic_data
+        self.assertTrue(hasattr(model, "domain"))
+        self.assertTrue(hasattr(model, "project"))
+        self.assertTrue(hasattr(model, "supports"))
+        self.assertTrue(hasattr(model, "synthetic_data"))
 
     def test_synthetic_data_from_estimation(self):
         """Synthetic data should be generatable from an estimated model."""
@@ -212,11 +230,11 @@ class TestEstimation(unittest.TestCase):
         model = estimate(
             _DOMAIN,
             measurements,
-            seed_data,
+            seed_data=seed_data,
             iters=100,
         )
 
-        data = synthetic_data(model, rows=1000)
+        data = model.synthetic_data(rows=1000)
         self.assertEqual(data.records, 1000)
         self.assertEqual(data.domain, _DOMAIN)
 
@@ -234,7 +252,7 @@ class TestEstimation(unittest.TestCase):
         estimate(
             _DOMAIN,
             measurements,
-            seed_data,
+            seed_data=seed_data,
             iters=100,
             callback_fn=callback,
             callback_every=25,
@@ -251,7 +269,7 @@ class TestEstimation(unittest.TestCase):
         model = estimate(
             _DOMAIN,
             measurements,
-            seed_data,
+            seed_data=seed_data,
             iters=100,
             optimizer=optax.sgd(0.01),
         )
@@ -269,7 +287,7 @@ class TestNonNegativity(unittest.TestCase):
         model = estimate(
             _DOMAIN,
             measurements,
-            seed_data,
+            seed_data=seed_data,
             iters=100,
         )
 
@@ -288,7 +306,7 @@ class TestNonNegativity(unittest.TestCase):
         model = estimate(
             _DOMAIN,
             measurements,
-            seed_data,
+            seed_data=seed_data,
             iters=100,
         )
 

@@ -331,22 +331,9 @@ class Factor:
         )
 
 
-class Projectable(Protocol):
-    """A projectable is an object that can be projected onto a subset of attributes to compute a marginal.
+# Re-export for backward compatibility; canonical definition is in _api.py.
+from ._api import Projectable  # noqa: E402
 
-    Example projectables:
-        * Dataset
-        * Factor
-        * CliqueVector
-        * MarkovRandomField
-    """
-
-    @property
-    def domain(self) -> Domain:
-        """Returns the domain over which this projectable is defined."""
-
-    def project(self, attrs: str | Sequence[str]) -> Factor:
-        """Projection onto a subset of attributes."""
-
-    def supports(self, attrs: str | Sequence[str]) -> bool:
-        """Returns true if the given attributes can be projected onto."""
+__all__ = [name for name in dir() if not name.startswith("_")] + [
+    "Projectable",
+]

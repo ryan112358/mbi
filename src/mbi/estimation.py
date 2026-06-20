@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable
-from typing import Any, NamedTuple, Protocol
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -25,57 +25,13 @@ import numpy as np
 import optax
 
 from . import marginal_loss, marginal_oracles
+from ._api import Estimator, PGMEstimator  # noqa: F401
 from .approximate_oracles import StatefulMarginalOracle
 from .clique_vector import CliqueVector
 from .domain import Domain
 from .factor import Factor, Projectable
 from .marginal_loss import LinearMeasurement
 from .markov_random_field import MarkovRandomField
-
-
-class Estimator(Protocol):
-    """Defines the callable signature for marginal-based estimators.
-
-    An estimator estimates a discrete distribution, or more generally
-    a `Projectable' object from a loss function defined over it's
-    low-dimensional marginals.
-
-    Examples of conforming functions from `mbi.estimation`:
-    - `mirror_descent`
-    - `lbfgs`
-    - `dual_averaging`
-    - `interior_gradient`
-    - `universal_accelerated_method`
-    - ... and more from other modules
-    """
-
-    def __call__(
-        self,
-        domain: Domain,
-        loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
-        *,
-        known_total: float | None = None,
-        **kwargs: Any,
-    ) -> Projectable:
-        """Estimate a Projectable from noisy marginal measurements.
-
-        Args:
-            domain: The Domain object specifying the attributes and their
-                cardinalities over which the model is defined.
-            loss_fn: Either a MarginalLossFn object or a list of
-                LinearMeasurement objects. This defines the objective function
-                to be minimized.
-            known_total: An optional float for the known or estimated total
-                number of records. If not specified, the estimator will attempt
-                to learn this automatically.
-            **kwargs: Additional optional keyword arguments specific to the
-                estimation algorithm.
-
-        Returns:
-            A Projectable object that is maximally consistent with the
-            noisy measurements taken in some sense.
-        """
-        pass
 
 
 def minimum_variance_unbiased_total(
