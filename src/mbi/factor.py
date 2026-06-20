@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable, Sequence
-from typing import Literal, Protocol
+from typing import Literal
 
 import attr
 import chex
@@ -13,8 +13,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from .domain import Domain
-
-jax.config.update("jax_enable_x64", True)
 
 
 @functools.partial(
@@ -75,7 +73,7 @@ class Factor:
 
     @classmethod
     def abstract(cls, domain: Domain) -> Factor:
-        return cls(domain, jax.ShapeDtypeStruct(domain.shape, jnp.float64))
+        return cls(domain, jax.ShapeDtypeStruct(domain.shape, jnp.float32))
 
     # Reshaping operations
     def transpose(self, attrs: Sequence[str]) -> Factor:
@@ -332,7 +330,7 @@ class Factor:
 
 
 # Re-export for backward compatibility; canonical definition is in _api.py.
-from ._api import Projectable  # noqa: E402
+from ._api import Projectable  # noqa: E402  # pylint: disable=wrong-import-position,unused-import
 
 __all__ = [name for name in dir() if not name.startswith("_")] + [
     "Projectable",

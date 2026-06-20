@@ -84,6 +84,7 @@ class MarkovRandomField:
 
         def synthetic_col(counts, total):
             """Generates a synthetic column by sampling or rounding based on counts and total."""
+            counts = np.asarray(counts, dtype=np.float64)
             dtype = np.min_scalar_type(counts.size)
             options = np.arange(counts.size, dtype=dtype)
             if total == 0:
