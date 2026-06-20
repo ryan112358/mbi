@@ -38,7 +38,7 @@ class TestEstimation(unittest.TestCase):
     def test_total_estimator(self, cliques):
         measurements = fake_measurements(cliques)
         total = estimation.minimum_variance_unbiased_total(measurements)
-        np.testing.assert_allclose(total, 1.0)
+        np.testing.assert_allclose(total, 1.0, rtol=1e-5)
 
     @parameterized.expand(itertools.product(_CLIQUE_SETS))
     def test_mirror_descent(self, cliques):

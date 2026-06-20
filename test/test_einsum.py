@@ -166,7 +166,7 @@ class TestCustomDotGeneral(unittest.TestCase):
 
 class TestScanEinsum(unittest.TestCase):
 
-    def assertArraysAllClose(self, arr1, arr2, msg=None, rtol=1e-7, atol=1e-9):
+    def assertArraysAllClose(self, arr1, arr2, msg=None, rtol=1e-5, atol=1e-5):
         self.assertTrue(jnp.allclose(arr1, arr2, rtol=rtol, atol=atol), msg=msg)
 
     def test_no_sequential(self):

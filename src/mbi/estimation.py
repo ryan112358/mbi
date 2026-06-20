@@ -25,11 +25,11 @@ import numpy as np
 import optax
 
 from . import marginal_loss, marginal_oracles
-from ._api import Estimator, PGMEstimator  # noqa: F401
+from ._api import Estimator, PGMEstimator  # noqa: F401  # pylint: disable=unused-import
 from .approximate_oracles import StatefulMarginalOracle
 from .clique_vector import CliqueVector
 from .domain import Domain
-from .factor import Factor, Projectable
+from .factor import Factor, Projectable  # pylint: disable=unused-import
 from .marginal_loss import LinearMeasurement
 from .markov_random_field import MarkovRandomField
 
