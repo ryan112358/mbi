@@ -4,6 +4,8 @@ from mbi.domain import Domain
 import numpy as np
 import jax.numpy as jnp
 
+np.random.seed(0)
+
 
 class TestFactor(unittest.TestCase):
 

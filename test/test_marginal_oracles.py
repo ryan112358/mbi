@@ -10,6 +10,8 @@ from parameterized import parameterized
 import itertools
 import functools
 
+np.random.seed(0)
+
 
 def _variable_elimination_oracle(
     potentials: CliqueVector, total: float = 1

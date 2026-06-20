@@ -4,6 +4,8 @@ import jax.numpy as jnp
 from mbi.einsum import scan_einsum, custom_dot_general
 import numpy as np
 
+np.random.seed(0)
+
 
 class TestCustomDotGeneral(unittest.TestCase):
 

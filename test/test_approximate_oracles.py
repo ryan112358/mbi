@@ -8,6 +8,8 @@ import numpy as np
 from parameterized import parameterized
 import itertools
 
+np.random.seed(0)
+
 
 _ORACLES = [approximate_oracles.convex_generalized_belief_propagation]
 
