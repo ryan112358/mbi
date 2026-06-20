@@ -12,7 +12,6 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import optax
 
 from .. import estimation, marginal_loss
@@ -22,44 +21,11 @@ from ..domain import Domain
 from ..marginal_loss import LinearMeasurement
 
 
-def synthetic_data(model: JaxDataset, rows: int | None = None) -> Dataset:
-    """Generate synthetic data via randomized rounding of weights.
-
-    Args:
-        model: A JaxDataset with weights representing the distribution.
-        rows: Number of rows to generate.  Defaults to the sum of weights.
-
-    Returns:
-        A Dataset with integer-valued rows.
-    """
-    weights = np.asarray(
-        model.weights if model.weights is not None else np.ones(model.records)
-    )
-    total = max(1, int(rows or weights.sum()))
-    rng = np.random.default_rng()
-    counts = weights * total / weights.sum()
-    frac, integ = np.modf(counts)
-    integ = integ.astype(int)
-    extra = total - integ.sum()
-    if extra > 0:
-        p = frac / frac.sum()
-        idx = rng.choice(len(counts), extra, replace=False, p=p)
-        integ[idx] += 1
-    row_indices = np.repeat(np.arange(len(counts)), integ)
-    rng.shuffle(row_indices)
-    row_indices = row_indices[:total]
-    data = {
-        col: np.asarray(model.data[col])[row_indices]
-        for col in model.domain.attrs
-    }
-    return Dataset(data, model.domain)
-
-
 def estimate(
     domain: Domain,
     loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
-    seed_data: Dataset,
     *,
+    seed_data: Dataset,
     known_total: float | None = None,
     iters: int = 2500,
     learning_rate: float = 0.1,
