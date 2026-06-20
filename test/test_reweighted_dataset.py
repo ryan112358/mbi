@@ -2,14 +2,15 @@
 
 import unittest
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from parameterized import parameterized
 
 from mbi import Domain, marginal_loss
 from mbi.clique_vector import CliqueVector
-from mbi.dataset import Dataset
-from mbi.extensions.reweighted_dataset import ReweightedDataset, estimate
+from mbi.dataset import Dataset, JaxDataset
+from mbi.extensions.reweighted_dataset import estimate, synthetic_data
 from mbi.factor import Factor
 
 np.random.seed(42)  # Avoid flaky tests
@@ -42,17 +43,22 @@ def _fake_measurements(domain, cliques):
     return measurements, P
 
 
-class TestReweightedDatasetClass(unittest.TestCase):
-    """Tests for the ReweightedDataset data structure."""
+class TestJaxDatasetBasics(unittest.TestCase):
+    """Tests for JaxDataset used as the reweighted model."""
 
     def setUp(self):
         self.domain = Domain(["x", "y"], [3, 4])
         data = {"x": np.array([0, 1, 2, 0, 1]), "y": np.array([0, 1, 2, 3, 0])}
         self.dataset = Dataset(data, self.domain)
-        self.model = ReweightedDataset.from_dataset(self.dataset, total=100.0)
+        weights = jax.nn.softmax(jnp.zeros(5)) * 100.0
+        self.model = JaxDataset(
+            {col: jnp.array(data[col]) for col in self.domain.attrs},
+            self.domain,
+            weights,
+        )
 
     def test_num_records(self):
-        self.assertEqual(self.model.num_records, 5)
+        self.assertEqual(self.model.records, 5)
 
     def test_weights_sum_to_total(self):
         np.testing.assert_allclose(
@@ -91,16 +97,16 @@ class TestReweightedDatasetClass(unittest.TestCase):
         self.assertFalse(self.model.supports("z"))
 
     def test_synthetic_data(self):
-        data = self.model.synthetic_data(rows=500)
+        data = synthetic_data(self.model, rows=500)
         self.assertEqual(data.records, 500)
         self.assertEqual(data.domain, self.model.domain)
 
     def test_synthetic_data_default_rows(self):
-        data = self.model.synthetic_data()
+        data = synthetic_data(self.model)
         self.assertEqual(data.records, 100)
 
     def test_synthetic_data_values_in_range(self):
-        data = self.model.synthetic_data(rows=200)
+        data = synthetic_data(self.model, rows=200)
         data_dict = data.to_dict()
         for col in self.model.domain.attrs:
             col_data = data_dict[col]
@@ -116,10 +122,7 @@ class TestReweightedDatasetClass(unittest.TestCase):
         )
 
 
-import jax  # noqa: E402 (needed for pytree test above)
-
-
-class TestReweightedDatasetEstimation(unittest.TestCase):
+class TestEstimation(unittest.TestCase):
     """Tests for the reweighted_dataset.estimate function."""
 
     @parameterized.expand([(cliques,) for cliques in _CLIQUE_SETS])
@@ -185,8 +188,8 @@ class TestReweightedDatasetEstimation(unittest.TestCase):
             actual = model.project(M.clique).datavector()
             np.testing.assert_allclose(actual, expected, atol=5e-2)
 
-    def test_projectable_protocol(self):
-        """ReweightedDataset should satisfy the Projectable protocol."""
+    def test_returns_jax_dataset(self):
+        """estimate() should return a JaxDataset."""
         cliques = [("a", "b"), ("c", "d")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
         seed_data = _make_seed_data(_DOMAIN)
@@ -197,10 +200,9 @@ class TestReweightedDatasetEstimation(unittest.TestCase):
             iters=50,
         )
 
-        self.assertTrue(hasattr(model, "domain"))
-        self.assertTrue(hasattr(model, "project"))
-        self.assertTrue(hasattr(model, "supports"))
+        self.assertIsInstance(model, JaxDataset)
         self.assertEqual(model.domain, _DOMAIN)
+        self.assertTrue(model.supports(("a", "b")))
 
     def test_synthetic_data_from_estimation(self):
         """Synthetic data should be generatable from an estimated model."""
@@ -214,7 +216,7 @@ class TestReweightedDatasetEstimation(unittest.TestCase):
             iters=100,
         )
 
-        data = model.synthetic_data(rows=1000)
+        data = synthetic_data(model, rows=1000)
         self.assertEqual(data.records, 1000)
         self.assertEqual(data.domain, _DOMAIN)
 
@@ -253,10 +255,10 @@ class TestReweightedDatasetEstimation(unittest.TestCase):
             iters=100,
             optimizer=optax.sgd(0.01),
         )
-        self.assertIsInstance(model, ReweightedDataset)
+        self.assertIsInstance(model, JaxDataset)
 
 
-class TestReweightedDatasetNonNegativity(unittest.TestCase):
+class TestNonNegativity(unittest.TestCase):
     """Test that the softmax parameterization guarantees non-negativity."""
 
     def test_marginals_nonnegative(self):
@@ -293,7 +295,7 @@ class TestReweightedDatasetNonNegativity(unittest.TestCase):
         for cl in cliques:
             marg = model.project(cl)
             np.testing.assert_allclose(
-                float(marg.sum()), model.total, atol=1e-5
+                float(marg.sum()), float(model.weights.sum()), atol=1e-5
             )
 
 

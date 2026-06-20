@@ -9,7 +9,6 @@ with softmax normalization to guarantee non-negativity.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
 
 import jax
 import jax.numpy as jnp
@@ -20,75 +19,40 @@ from .. import estimation, marginal_loss
 from ..clique_vector import CliqueVector
 from ..dataset import Dataset, JaxDataset
 from ..domain import Domain
-from ..factor import Factor
 from ..marginal_loss import LinearMeasurement
 
 
-@jax.tree_util.register_dataclass
-@dataclass
-class ReweightedDataset:
-    """A discrete distribution as a reweighted set of seed records."""
+def synthetic_data(model: JaxDataset, rows: int | None = None) -> Dataset:
+    """Generate synthetic data via randomized rounding of weights.
 
-    _log_weights: jax.Array
-    _data: JaxDataset = field(metadata={"static": True})
-    domain: Domain = field(metadata={"static": True})
-    total: float = field(metadata={"static": True})
+    Args:
+        model: A JaxDataset with weights representing the distribution.
+        rows: Number of rows to generate.  Defaults to the sum of weights.
 
-    @classmethod
-    def from_dataset(cls, dataset: Dataset, total: float | None = None):
-        """Initialize from a Dataset with uniform weights."""
-        n = dataset.records
-        total = total if total is not None else float(n)
-        data_dict = dataset.to_dict()
-        jax_data = JaxDataset(
-            {col: jnp.array(data_dict[col]) for col in dataset.domain.attrs},
-            dataset.domain,
-        )
-        return cls(jnp.zeros(n), jax_data, dataset.domain, total)
-
-    @property
-    def weights(self) -> jax.Array:
-        """Non-negative weights summing to total (softmax of log-weights)."""
-        return jax.nn.softmax(self._log_weights) * self.total
-
-    @property
-    def num_records(self) -> int:
-        """Number of seed records."""
-        return self._data.records
-
-    def _weighted_data(self) -> JaxDataset:
-        """Return a JaxDataset with current softmax weights applied."""
-        return JaxDataset(self._data.data, self.domain, self.weights)
-
-    def project(self, attrs) -> Factor:
-        """Compute the weighted marginal over ``attrs``."""
-        return self._weighted_data().project(attrs)
-
-    def supports(self, attrs) -> bool:
-        """Any subset of domain attributes is supported."""
-        return self._data.supports(attrs)
-
-    def synthetic_data(self, rows=None) -> Dataset:
-        """Generate synthetic data via randomized rounding of weights."""
-        total = max(1, int(rows or self.total))
-        rng = np.random.default_rng()
-        weights = np.asarray(self.weights)
-        counts = weights * total / weights.sum()
-        frac, integ = np.modf(counts)
-        integ = integ.astype(int)
-        extra = total - integ.sum()
-        if extra > 0:
-            p = frac / frac.sum()
-            idx = rng.choice(len(counts), extra, replace=False, p=p)
-            integ[idx] += 1
-        row_indices = np.repeat(np.arange(len(counts)), integ)
-        rng.shuffle(row_indices)
-        row_indices = row_indices[:total]
-        data = {
-            col: np.asarray(self._data.data[col])[row_indices]
-            for col in self.domain.attrs
-        }
-        return Dataset(data, self.domain)
+    Returns:
+        A Dataset with integer-valued rows.
+    """
+    weights = np.asarray(
+        model.weights if model.weights is not None else np.ones(model.records)
+    )
+    total = max(1, int(rows or weights.sum()))
+    rng = np.random.default_rng()
+    counts = weights * total / weights.sum()
+    frac, integ = np.modf(counts)
+    integ = integ.astype(int)
+    extra = total - integ.sum()
+    if extra > 0:
+        p = frac / frac.sum()
+        idx = rng.choice(len(counts), extra, replace=False, p=p)
+        integ[idx] += 1
+    row_indices = np.repeat(np.arange(len(counts)), integ)
+    rng.shuffle(row_indices)
+    row_indices = row_indices[:total]
+    data = {
+        col: np.asarray(model.data[col])[row_indices]
+        for col in model.domain.attrs
+    }
+    return Dataset(data, model.domain)
 
 
 def estimate(
@@ -100,9 +64,9 @@ def estimate(
     iters: int = 2500,
     learning_rate: float = 0.1,
     optimizer: optax.GradientTransformation | None = None,
-    callback_fn: Callable[[ReweightedDataset], None] | None = None,
+    callback_fn: Callable[[JaxDataset], None] | None = None,
     callback_every: int = 100,
-) -> ReweightedDataset:
+) -> JaxDataset:
     """Estimate a distribution by reweighting seed records.
 
     Args:
@@ -115,11 +79,11 @@ def estimate(
         learning_rate: Learning rate for the optimizer.
         optimizer: An optax optimizer.  Defaults to ``optax.adam``.
         callback_fn: Called every ``callback_every`` iterations with the
-            current model.
+            current JaxDataset.
         callback_every: Controls callback frequency and ``lax.scan`` chunk size.
 
     Returns:
-        A ReweightedDataset fitted to the measurements.
+        A JaxDataset with learned weights fitted to the measurements.
     """
     loss_fn, known_total, _ = estimation._initialize(
         domain, loss_fn, known_total, None
@@ -128,22 +92,21 @@ def estimate(
     if optimizer is None:
         optimizer = optax.adam(learning_rate)
 
-    model = ReweightedDataset.from_dataset(seed_data, known_total)
+    data_dict = seed_data.to_dict()
+    jax_data = {col: jnp.array(data_dict[col]) for col in domain.attrs}
+    log_weights = jnp.zeros(seed_data.records)
     cliques = loss_fn.cliques
 
-    # Precompute a JaxDataset with the seed data.  Its JAX arrays are closed
-    # over in params_loss and passed as implicit arguments to JIT.
-    jax_data = model._data
-
+    # jax_data values (JAX arrays) are closed over and passed as implicit
+    # arguments to JIT — not baked as HLO constants.
     def params_loss(log_weights: jax.Array) -> float:
         weights = jax.nn.softmax(log_weights) * known_total
-        weighted = JaxDataset(jax_data.data, domain, weights)
+        weighted = JaxDataset(jax_data, domain, weights)
         arrays = {cl: weighted.project(cl) for cl in cliques}
         mu = CliqueVector(domain, cliques, arrays)
         return loss_fn(mu)
 
     params_loss_and_grad = jax.jit(jax.value_and_grad(params_loss))
-    log_weights = model._log_weights
     opt_state = optimizer.init(log_weights)
 
     def step(carry, _):
@@ -158,7 +121,8 @@ def estimate(
     )
 
     def make_model(log_weights):
-        return ReweightedDataset(log_weights, model._data, domain, known_total)
+        weights = jax.nn.softmax(log_weights) * known_total
+        return JaxDataset(jax_data, domain, weights)
 
     num_blocks = -(-iters // callback_every)  # ceil division
     for _ in range(num_blocks):
