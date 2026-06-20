@@ -26,7 +26,6 @@ import optax
 
 from . import marginal_loss, marginal_oracles
 from ._api import Estimator, PGMEstimator  # noqa: F401  # pylint: disable=unused-import
-from .approximate_oracles import StatefulMarginalOracle
 from .clique_vector import CliqueVector
 from .domain import Domain
 from .factor import Factor, Projectable  # pylint: disable=unused-import
@@ -78,19 +77,6 @@ def _initialize(domain, loss_fn, known_total, potentials):
     return loss_fn, known_total, potentials
 
 
-def _get_stateful_oracle(
-    marginal_oracle: marginal_oracles.MarginalOracle | StatefulMarginalOracle,
-    stateful: bool,
-) -> StatefulMarginalOracle:
-    if stateful:
-        return marginal_oracle
-
-    def wrapper(theta, total, state):
-        return marginal_oracle(theta, total), state
-
-    return wrapper
-
-
 class MirrorDescentState(NamedTuple):
     """State for Algorithm 1 of https://arxiv.org/pdf/1901.09136."""
 
@@ -98,13 +84,12 @@ class MirrorDescentState(NamedTuple):
     alpha: jax.Array | float
     loss: jax.Array | float
     mu: CliqueVector
-    oracle_state: Any
 
 
 def mirror_descent_step(
     state: MirrorDescentState,
     loss_fn: marginal_loss.MarginalLossFn,
-    marginal_oracle: StatefulMarginalOracle,
+    marginal_oracle: marginal_oracles.MarginalOracle,
     total: jax.Array | float,
     linesearch: bool = True,
 ) -> MirrorDescentState:
@@ -113,8 +98,8 @@ def mirror_descent_step(
     Args:
         state: Current algorithm state.
         loss_fn: The marginal loss function.
-        marginal_oracle: A stateful marginal oracle with signature
-            ``(potentials, total, state) -> (marginals, state)``.
+        marginal_oracle: A marginal oracle with signature
+            ``(potentials, total) -> marginals``.
         total: The known or estimated total number of records.
         linesearch: If True (default), uses Armijo line search to adapt the
             step size. If False, uses a fixed step size.
@@ -122,16 +107,14 @@ def mirror_descent_step(
     Returns:
         Updated ``MirrorDescentState``.
     """
-    mu, oracle_state = marginal_oracle(
-        state.potentials, total, state.oracle_state
-    )
+    mu = marginal_oracle(state.potentials, total)
     loss, dL = jax.value_and_grad(loss_fn)(mu)
     theta2 = state.potentials - state.alpha * dL
 
     if not linesearch:
-        return MirrorDescentState(theta2, state.alpha, loss, mu, oracle_state)
+        return MirrorDescentState(theta2, state.alpha, loss, mu)
 
-    mu2, _ = marginal_oracle(theta2, total, oracle_state)
+    mu2 = marginal_oracle(theta2, total)
     loss2 = loss_fn(mu2)
 
     sufficient_decrease = loss - loss2 >= 0.5 * state.alpha * dL.dot(mu - mu2)
@@ -142,9 +125,7 @@ def mirror_descent_step(
         sufficient_decrease, lambda: theta2, lambda: state.potentials
     )
     accepted_loss = jax.lax.select(sufficient_decrease, loss2, loss)
-    return MirrorDescentState(
-        potentials, alpha, accepted_loss, mu, oracle_state
-    )
+    return MirrorDescentState(potentials, alpha, accepted_loss, mu)
 
 
 def mirror_descent(
@@ -153,11 +134,8 @@ def mirror_descent(
     *,
     known_total: float | None = None,
     potentials: CliqueVector | None = None,
-    marginal_oracle: (
-        marginal_oracles.MarginalOracle | StatefulMarginalOracle
-    ) = marginal_oracles.message_passing_fast,
+    marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_fast,
     iters: int = 1000,
-    stateful: bool = False,
     stepsize: float | None = None,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
     mesh: jax.sharding.Mesh | None = None,
@@ -189,16 +167,10 @@ def mirror_descent(
     Returns:
         A MarkovRandomField object with the estimated potentials and marginals.
     """
-    if stepsize is None and stateful:
-        raise ValueError(
-            "Stepsize should be manually tuned when using a stateful oracle."
-        )
-
     loss_fn, known_total, potentials = _initialize(
         domain, loss_fn, known_total, potentials
     )
     marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
-    marginal_oracle = _get_stateful_oracle(marginal_oracle, stateful)
 
     # Theory suggests the initial learning rate should be inversely
     # proportional to L. We also divide by scaling factor to account for
@@ -206,12 +178,11 @@ def mirror_descent(
     # See Eq 75. of https://www.cs.uic.edu/~zhangx/teaching/bregman.pdf.
     L = loss_fn.lipschitz or 1.0
     alpha = 2.0 / (L * known_total) if stepsize is None else stepsize
-    mu, oracle_state = marginal_oracle(potentials, known_total, state=None)
+    mu = marginal_oracle(potentials, known_total)
     initial_loss = loss_fn(mu)
 
-    state = MirrorDescentState(
-        potentials, alpha, initial_loss, mu, oracle_state
-    )
+    # Use partial to capture non-hashable args (MarginalLossFn has list fields).
+    state = MirrorDescentState(potentials, alpha, initial_loss, mu)
     step = jax.jit(
         functools.partial(
             mirror_descent_step,
@@ -225,9 +196,7 @@ def mirror_descent(
         state = step(state)
         callback_fn(state.mu)
 
-    marginals, _ = marginal_oracle(
-        state.potentials, known_total, state.oracle_state
-    )
+    marginals = marginal_oracle(state.potentials, known_total)
     return MarkovRandomField(
         potentials=state.potentials, marginals=marginals, total=known_total
     )
