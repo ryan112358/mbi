@@ -38,9 +38,8 @@ def _bulk_variable_elimination_oracle(
     )
 
 
-message_passing_fast_v1 = functools.partial(
-    marginal_oracles.message_passing_fast,
-    logspace_sum_product_fn=marginal_oracles.logspace_sum_product_stable_v1,
+message_passing_fast_v1 = marginal_oracles.MessagePassingOracle(
+    contraction=marginal_oracles.einsum_materialized,
 )
 
 
