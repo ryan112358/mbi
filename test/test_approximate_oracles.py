@@ -43,7 +43,7 @@ class TestApproximateOracles(unittest.TestCase):
         zeros = CliqueVector.zeros(_DOMAIN, cliques)
         marginals, _ = oracle(zeros)
         self.assertEqual(marginals.domain, _DOMAIN)
-        self.assertEqual(marginals.cliques, cliques)
+        self.assertEqual(marginals.cliques, tuple(cliques))
         self.assertEqual(set(zeros.arrays.keys()), set(marginals.arrays.keys()))
         for cl in cliques:
             self.assertEqual(marginals[cl].domain.attrs, cl)

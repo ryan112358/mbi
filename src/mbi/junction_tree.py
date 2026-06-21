@@ -9,7 +9,7 @@ computing greedy elimination orders, and estimating model size.
 
 import itertools
 from collections import OrderedDict
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from typing import TypeAlias
 
 import networkx as nx
@@ -68,7 +68,7 @@ def _triangulated(graph: nx.Graph, order: list[str]) -> nx.Graph:
 
 def greedy_order(
     domain: Domain,
-    cliques: list[Clique],
+    cliques: Sequence[Clique],
     stochastic: bool = False,
     elim: list[str] | None = None,
 ) -> tuple[list[str], int]:
@@ -142,7 +142,7 @@ def make_junction_tree(
     return spanning, elimination_order
 
 
-def hypothetical_model_size(domain: Domain, cliques: list[Clique]) -> float:
+def hypothetical_model_size(domain: Domain, cliques: Sequence[Clique]) -> float:
     """Size of the full junction tree parameters, measured in megabytes."""
     jtree, _ = make_junction_tree(domain, cliques)
     max_cliques = maximal_cliques(jtree)

@@ -7,7 +7,7 @@ attribute names (strings).
 """
 
 import itertools
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from typing import TypeAlias
 
 from .domain import Domain
@@ -24,7 +24,7 @@ def powerset(iterable: Iterable) -> Iterator[tuple]:
 
 
 def downward_closure(
-    cliques: list[Clique], include_empty: bool = False
+    cliques: Sequence[Clique], include_empty: bool = False
 ) -> list[Clique]:
     """Returns the downward closure of the given cliques.
 
@@ -50,8 +50,8 @@ def downward_closure(
 
 
 def reverse_clique_mapping(
-    maximal_cliques: list[Clique],
-    all_cliques: list[Clique],
+    maximal_cliques: Sequence[Clique],
+    all_cliques: Sequence[Clique],
     domain: Domain | None = None,
 ) -> dict[Clique, list[Clique]]:
     """Creates a mapping from maximal cliques to a list of cliques they contain.
@@ -81,7 +81,7 @@ def reverse_clique_mapping(
     return mapping
 
 
-def maximal_subset(cliques: list[Clique]) -> list[Clique]:
+def maximal_subset(cliques: Sequence[Clique]) -> list[Clique]:
     """Given a list of cliques, finds a maximal subset of non-nested cliques.
 
     A clique is considered nested in another if all its vertices are a subset
@@ -106,8 +106,8 @@ def maximal_subset(cliques: list[Clique]) -> list[Clique]:
 
 
 def clique_mapping(
-    maximal_cliques: list[Clique],
-    all_cliques: list[Clique],
+    maximal_cliques: Sequence[Clique],
+    all_cliques: Sequence[Clique],
     domain: Domain | None = None,
 ) -> dict[Clique, Clique]:
     """Creates a mapping from cliques to their corresponding maximal clique.
