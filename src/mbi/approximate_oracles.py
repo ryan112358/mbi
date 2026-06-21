@@ -12,17 +12,23 @@ https://github.com/ryan112358/private-pgm/tree/approx-experiments-snapshot
 Pull requests are welcome to add support for other approximate oracles.
 """
 
+from __future__ import annotations
+
 import functools
 import itertools
-from typing import Any, Protocol, TypeAlias
+from typing import Any, NamedTuple, Protocol, TypeAlias
 
+import attr
 import jax
 import networkx as nx
 from scipy.cluster.hierarchy import DisjointSet
 
+from . import estimation
+from . import marginal_loss
 from .clique_vector import CliqueVector
 from .domain import Domain
 from .factor import Factor
+from .marginal_loss import LinearMeasurement
 
 Clique: TypeAlias = tuple[str, ...]
 
@@ -242,12 +248,153 @@ def convex_generalized_belief_propagation(
     return CliqueVector(domain, cliques, mu), messages
 
 
-def _approx_step(potentials, messages, *, loss_fn, oracle, total, stepsize):
-    """Single mirror descent step with approximate marginal oracle."""
-    mu, messages = oracle(potentials, total, state=messages)
-    dL = jax.grad(loss_fn)(mu)
-    potentials = potentials - stepsize * dL
-    return potentials, mu, messages
+class ApproxMirrorDescentState(NamedTuple):
+    """State for mirror descent with approximate marginal inference."""
+
+    potentials: CliqueVector
+    mu: CliqueVector
+    messages: Any
+
+
+@attr.dataclass(frozen=True)
+class ApproxMirrorDescent:
+    """Mirror descent estimator using approximate marginal inference.
+
+    Uses ``convex_generalized_belief_propagation`` as the marginal oracle and
+    warm-starts messages between optimization iterations.  Unlike the exact
+    mirror descent in ``estimation.py``, this does not produce a
+    ``MarkovRandomField`` because approximate region graphs cannot generate
+    synthetic data.
+
+    This class holds optimizer configuration only.  All data (loss function,
+    potentials, totals) is passed to methods as arguments.
+
+    Example::
+
+        estimator = ApproxMirrorDescent(stepsize=1.0)
+        mu = estimator.estimate(domain, measurements)
+
+    Attributes:
+        stepsize: Fixed step size (required; no line search).
+        oracle_iters: Belief propagation iterations per optimization step.
+        damping: Damping factor for belief propagation messages.
+        mesh: JAX sharding mesh.
+    """
+
+    stepsize: float
+    oracle_iters: int = 1
+    damping: float = 0.5
+    mesh: jax.sharding.Mesh | None = None
+
+    def _init(
+        self,
+        potentials: CliqueVector,
+        total: float,
+    ) -> ApproxMirrorDescentState:
+        """Initialize the optimization state."""
+        # Initialize messages so jit sees a consistent pytree structure.
+        mu, messages = convex_generalized_belief_propagation(
+            potentials,
+            total,
+            state=None,
+            mesh=self.mesh,
+            iters=self.oracle_iters,
+            damping=self.damping,
+        )
+        return ApproxMirrorDescentState(potentials, mu, messages)
+
+    @functools.partial(jax.jit, static_argnames=["self", "loss_fn"])
+    def _step(
+        self,
+        state: ApproxMirrorDescentState,
+        total: jax.Array | float,
+        *,
+        loss_fn: marginal_loss.MarginalLossFn,
+    ) -> ApproxMirrorDescentState:
+        """Perform a single mirror descent step."""
+        mu, messages = convex_generalized_belief_propagation(
+            state.potentials,
+            total,
+            state=state.messages,
+            mesh=self.mesh,
+            iters=self.oracle_iters,
+            damping=self.damping,
+        )
+        dL = jax.grad(loss_fn)(mu)
+        potentials = state.potentials - self.stepsize * dL
+        return ApproxMirrorDescentState(potentials, mu, messages)
+
+    def estimate(
+        self,
+        domain: Domain,
+        loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
+        *,
+        known_total: float | None = None,
+        potentials: CliqueVector | None = None,
+        iters: int = 1000,
+        callback_fn=lambda _: None,
+    ) -> CliqueVector:
+        """Run mirror descent and return pseudo-marginals.
+
+        Args:
+            domain: The domain over which the model is defined.
+            loss_fn: A ``MarginalLossFn`` or a list of ``LinearMeasurement``.
+            known_total: The known or estimated number of records.
+            potentials: Initial potentials.
+            iters: Number of optimization iterations.
+            callback_fn: Called with pseudo-marginals at each iteration.
+
+        Returns:
+            Pseudo-marginals as a ``CliqueVector``.
+        """
+        loss_fn, known_total, potentials = estimation._initialize(
+            domain, loss_fn, known_total, potentials
+        )
+        state = self._init(potentials, known_total)
+
+        for _ in range(iters):
+            state = self._step(state, known_total, loss_fn=loss_fn)
+            callback_fn(state.mu)
+
+        # Final oracle call with warm-started messages.
+        mu, _ = convex_generalized_belief_propagation(
+            state.potentials,
+            known_total,
+            state=state.messages,
+            mesh=self.mesh,
+            iters=self.oracle_iters,
+            damping=self.damping,
+        )
+        return mu
+
+    def precompile(
+        self,
+        domain: Domain,
+        loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
+        *,
+        known_total: float | None = None,
+        potentials: CliqueVector | None = None,
+    ) -> None:
+        """Warm up the JIT cache for ``estimate``.
+
+        Triggers ahead-of-time compilation of the jitted step function using
+        ``lower().compile()``.  The compiled program is discarded, but it
+        populates the JIT cache so that subsequent calls to ``estimate`` with
+        the same ``loss_fn`` skip compilation entirely.
+
+        Args:
+            domain: The domain over which the model is defined.
+            loss_fn: A ``MarginalLossFn`` or a list of ``LinearMeasurement``.
+            known_total: The known or estimated number of records.
+            potentials: Initial potentials.
+        """
+        loss_fn, known_total, potentials = estimation._initialize(
+            domain, loss_fn, known_total, potentials
+        )
+        state = self._init(potentials, known_total)
+
+        # lower().compile() populates the jit cache without executing.
+        self._step.lower(self, state, known_total, loss_fn=loss_fn).compile()
 
 
 def mirror_descent(
@@ -265,13 +412,7 @@ def mirror_descent(
 ) -> CliqueVector:
     """Mirror descent with approximate marginal inference.
 
-    Fork of ``estimation.mirror_descent`` specialized for approximate marginal
-    oracles. Uses ``convex_generalized_belief_propagation`` internally and
-    warm-starts messages between optimization iterations.
-
-    Unlike ``estimation.mirror_descent``, this does not return a
-    ``MarkovRandomField`` because approximate region graphs cannot generate
-    synthetic data.
+    Convenience wrapper around :class:`ApproxMirrorDescent`.
 
     Args:
         domain: The domain over which the model should be defined.
@@ -288,35 +429,17 @@ def mirror_descent(
     Returns:
         Pseudo-marginals as a ``CliqueVector``.
     """
-    from . import estimation  # local import to avoid circular dependency
-
-    loss_fn, known_total, potentials = estimation._initialize(
-        domain, loss_fn, known_total, potentials
-    )
-
-    oracle = functools.partial(
-        convex_generalized_belief_propagation,
-        mesh=mesh,
-        iters=oracle_iters,
+    estimator = ApproxMirrorDescent(
+        stepsize=stepsize,
+        oracle_iters=oracle_iters,
         damping=damping,
+        mesh=mesh,
     )
-
-    # Initialize messages so jit sees a consistent pytree structure.
-    mu, messages = oracle(potentials, known_total, state=None)
-
-    # Use partial to capture non-hashable args (MarginalLossFn has list fields).
-    step = jax.jit(
-        functools.partial(
-            _approx_step,
-            loss_fn=loss_fn,
-            oracle=oracle,
-            total=known_total,
-            stepsize=stepsize,
-        )
+    return estimator.estimate(
+        domain,
+        loss_fn,
+        known_total=known_total,
+        potentials=potentials,
+        iters=iters,
+        callback_fn=callback_fn,
     )
-    for _ in range(iters):
-        potentials, mu, messages = step(potentials, messages)
-        callback_fn(mu)
-
-    mu, _ = oracle(potentials, known_total, state=messages)
-    return mu

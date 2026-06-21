@@ -10,7 +10,7 @@ included.
 """
 
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import attr
 import chex
@@ -63,7 +63,7 @@ class MarginalLossFn:
             gradient of the loss function. This is used for optimization algorithms.
     """
 
-    cliques: list[Clique]
+    cliques: Sequence[Clique] = attr.field(converter=tuple)
     loss_fn: Callable[[CliqueVector], chex.Numeric]
     lipschitz: float | None = None
 

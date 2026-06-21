@@ -670,6 +670,6 @@ def kron_query(
         target_clique.append(key2)
 
     domain = potentials.domain.merge(Domain.fromdict(extra_domain))
-    cliques = potentials.cliques + extra_cliques
+    cliques = potentials.cliques + tuple(extra_cliques)
     inputs = CliqueVector(domain, cliques, new_factors)
     return variable_elimination(inputs, tuple(target_clique), total, mesh)

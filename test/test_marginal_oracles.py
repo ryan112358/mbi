@@ -90,7 +90,7 @@ class TestMarginalOracles(unittest.TestCase):
         zeros = CliqueVector.zeros(_DOMAIN, cliques)
         marginals = oracle(zeros)
         self.assertEqual(marginals.domain, _DOMAIN)
-        self.assertEqual(marginals.cliques, cliques)
+        self.assertEqual(marginals.cliques, tuple(cliques))
         self.assertEqual(set(zeros.arrays.keys()), set(marginals.arrays.keys()))
         for cl in cliques:
             self.assertEqual(marginals[cl].domain.attrs, cl)
@@ -172,8 +172,11 @@ class TestMarginalOracles(unittest.TestCase):
         con = Factor(
             dom.project(["A", "C"]), jnp.array([[0, -np.inf], [-np.inf, 0]])
         )
-        potentials.arrays[("A", "C")] = con
-        potentials.cliques.append(("A", "C"))
+        potentials = CliqueVector(
+            potentials.domain,
+            potentials.cliques + (("A", "C"),),
+            {**potentials.arrays, ("A", "C"): con},
+        )
 
         marginals = oracle(potentials)
 

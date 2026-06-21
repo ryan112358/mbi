@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 import operator
+from collections.abc import Sequence
 
 import attr
 import chex
@@ -38,14 +39,14 @@ class CliqueVector:
 
     Attributes:
         domain (Domain): The overall domain that encompasses all cliques.
-        cliques (list[Clique]): A list of cliques (tuples of attribute names)
+        cliques (Sequence[Clique]): A tuple of cliques (tuples of attribute names)
             for which factors are stored.
         arrays (dict[Clique, Factor]): A dictionary mapping each clique in
             `cliques` to its corresponding `Factor` object.
     """
 
     domain: Domain
-    cliques: list[Clique]
+    cliques: Sequence[Clique] = attr.field(converter=tuple)
     arrays: dict[Clique, Factor]
 
     def __attrs_post_init__(self):
@@ -55,31 +56,33 @@ class CliqueVector:
             raise ValueError("Cliques must be unique.")
 
     @classmethod
-    def zeros(cls, domain: Domain, cliques: list[Clique]) -> CliqueVector:
+    def zeros(cls, domain: Domain, cliques: Sequence[Clique]) -> CliqueVector:
         """Creates a CliqueVector initialized with zero factors for each clique."""
         arrays = {cl: Factor.zeros(domain.project(cl)) for cl in cliques}
         return cls(domain, cliques, arrays)
 
     @classmethod
-    def ones(cls, domain: Domain, cliques: list[Clique]) -> CliqueVector:
+    def ones(cls, domain: Domain, cliques: Sequence[Clique]) -> CliqueVector:
         """Creates a CliqueVector initialized with one factors for each clique."""
         arrays = {cl: Factor.ones(domain.project(cl)) for cl in cliques}
         return cls(domain, cliques, arrays)
 
     @classmethod
-    def random(cls, domain: Domain, cliques: list[Clique]) -> CliqueVector:
+    def random(cls, domain: Domain, cliques: Sequence[Clique]) -> CliqueVector:
         """Creates a CliqueVector initialized with random factors for each clique."""
         arrays = {cl: Factor.random(domain.project(cl)) for cl in cliques}
         return cls(domain, cliques, arrays)
 
     @classmethod
-    def abstract(cls, domain: Domain, cliques: list[Clique]) -> CliqueVector:
+    def abstract(
+        cls, domain: Domain, cliques: Sequence[Clique]
+    ) -> CliqueVector:
         arrays = {cl: Factor.abstract(domain.project(cl)) for cl in cliques}
         return cls(domain, cliques, arrays)
 
     @classmethod
     def from_projectable(
-        cls, data: Projectable, cliques: list[Clique]
+        cls, data: Projectable, cliques: Sequence[Clique]
     ) -> CliqueVector:
         """Creates a CliqueVector by projecting a data source onto the specified cliques."""
         arrays = {cl: data.project(cl) for cl in cliques}
@@ -112,7 +115,7 @@ class CliqueVector:
             return self[self.parent(clique)].project(clique, log=log)
         raise ValueError(f"Cannot project onto unsupported clique {clique}.")
 
-    def expand(self, cliques: list[Clique]) -> CliqueVector:
+    def expand(self, cliques: Sequence[Clique]) -> CliqueVector:
         """Re-expresses this CliqueVector over an expanded set of cliques.
 
         If the original CliqueVector represents the potentials of a Graphical Model,
@@ -138,7 +141,7 @@ class CliqueVector:
         return CliqueVector(self.domain, cliques, arrays)
 
     def contract(
-        self, cliques: list[Clique], log: bool = False
+        self, cliques: Sequence[Clique], log: bool = False
     ) -> CliqueVector:
         """Computes a new CliqueVector by projecting this one onto a smaller set of cliques."""
         arrays = {cl: self.project(cl, log=log) for cl in cliques}
