@@ -15,22 +15,143 @@ support the cliques of the marginal-based loss function can be used here.
 
 from __future__ import annotations
 
+import concurrent.futures
 import functools
+import warnings
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
+import attr
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
 
 from . import marginal_loss, marginal_oracles
-from ._api import Estimator, PGMEstimator  # noqa: F401  # pylint: disable=unused-import
+from ._api import Model, Projectable  # noqa: F401  # pylint: disable=unused-import
 from .clique_vector import CliqueVector
 from .domain import Domain
-from .factor import Factor, Projectable  # pylint: disable=unused-import
-from .marginal_loss import LinearMeasurement
+from .factor import Factor
+from .marginal_loss import LinearMeasurement, MarginalLossFn
 from .markov_random_field import MarkovRandomField
+
+# Shared thread pool for background JIT compilation.
+_COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+
+class Estimator(ABC):
+    """An object that estimates a Model from a marginal-based loss function.
+
+    Subclasses implement ``_init``, ``_step``, and ``_finalize``.  The ABC
+    provides a default ``estimate`` loop and a shared asynchronous
+    ``precompile`` that works for any estimator with a jitted ``_step``.
+
+    **State convention:** the first element of the state tuple returned by
+    ``_init`` / ``_step`` is the current solution (passed to ``callback_fn``).
+    Override ``_callback_value`` only if the callback needs a transformation.
+
+    Examples of subclasses:
+        * ``MirrorDescent``
+        * ``DualAveraging``
+        * ``InteriorGradient``
+        * ``extensions.MixtureOfProductsEstimator``
+        * ``extensions.ReweightedDatasetEstimator``
+    """
+
+    # ------------------------------------------------------------------
+    # Abstract interface — subclasses must implement
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    def _init(
+        self,
+        domain: Domain,
+        loss_fn: MarginalLossFn,
+        known_total: float,
+        **kwargs: Any,
+    ) -> Any:
+        """Initialize the optimization state."""
+
+    @abstractmethod
+    def _step(
+        self,
+        state: Any,
+        loss_fn: MarginalLossFn,
+        known_total: float,
+    ) -> Any:
+        """Perform one optimization step (or one scan block)."""
+
+    @abstractmethod
+    def _finalize(self, state: Any, known_total: float) -> Model:
+        """Convert the final optimization state into a Model."""
+
+    # ------------------------------------------------------------------
+    # Overridable hooks
+    # ------------------------------------------------------------------
+
+    def _callback_value(self, state: Any, known_total: float) -> Any:  # pylint: disable=unused-argument
+        """Extract the value to pass to ``callback_fn``.
+
+        Default: ``state[0]`` (first element of the state tuple).
+        """
+        return state[0]
+
+    # ------------------------------------------------------------------
+    # Default implementations
+    # ------------------------------------------------------------------
+
+    def estimate(
+        self,
+        domain: Domain,
+        loss_fn: MarginalLossFn | list[LinearMeasurement],
+        *,
+        known_total: float | None = None,
+        iters: int = 1000,
+        callback_fn: Callable | None = None,
+        callback_every: int = 1,
+        **kwargs: Any,
+    ) -> Model:
+        """Estimate a Model from noisy marginal measurements."""
+        if isinstance(loss_fn, list):
+            if known_total is None:
+                known_total = minimum_variance_unbiased_total(loss_fn)
+            loss_fn = marginal_loss.from_linear_measurements(loss_fn)
+        if known_total is None:
+            known_total = 1.0
+
+        state = self._init(domain, loss_fn, known_total, **kwargs)
+        for i in range(iters):
+            state = self._step(state, loss_fn, known_total)
+            if callback_fn is not None and (i + 1) % callback_every == 0:  # pylint: disable=use-implicit-booleaness-not-comparison-to-zero
+                callback_fn(self._callback_value(state, known_total))
+        return self._finalize(state, known_total)
+
+    def precompile(
+        self,
+        domain: Domain,
+        measurements: list[LinearMeasurement] | None = None,
+        *,
+        extra_cliques: list[tuple[str, ...]] | None = None,
+    ) -> concurrent.futures.Future:
+        """Warm up the JIT cache for ``estimate`` asynchronously.
+
+        Returns a ``Future`` that completes when compilation finishes.
+        Callers may ignore the return value (fire-and-forget) or call
+        ``future.result()`` to block until compilation is done.
+        """
+        all_measurements = list(measurements or [])
+        for cl in extra_cliques or []:
+            shape = (domain.project(cl).size(),)
+            abstract_values = jax.ShapeDtypeStruct(shape, jnp.float32)
+            all_measurements.append(
+                marginal_loss.LinearMeasurement(abstract_values, cl)
+            )
+
+        loss_fn = marginal_loss.from_linear_measurements(all_measurements)
+        abstract_state = jax.eval_shape(self._init, domain, loss_fn, 1.0)
+        lowered = self._step.lower(self, abstract_state, loss_fn, 1.0)  # pytype: disable=attribute-error
+        return _COMPILE_POOL.submit(lowered.compile)
 
 
 def minimum_variance_unbiased_total(
@@ -50,82 +171,338 @@ def minimum_variance_unbiased_total(
             continue
     estimates, variances = np.array(estimates), np.array(variances)
     if len(estimates) == 0:
-        return 1
-
-    variance = 1.0 / np.sum(1.0 / variances)
-    estimate = variance * np.sum(estimates / variances)
-    return max(1, estimate)
+        return 1.0
+    else:
+        weights = 1.0 / variances
+        return max(1, float(np.average(estimates, weights=weights)))
 
 
 def _initialize(domain, loss_fn, known_total, potentials):
-    """Initializes loss function, total records, and potentials for estimation algorithms."""
+    """Normalize inputs for estimation functions.
+
+    Converts a list of ``LinearMeasurement`` objects to a ``MarginalLossFn``,
+    estimates the total if not given, and creates zero potentials if needed.
+    """
     if isinstance(loss_fn, list):
         if known_total is None:
             known_total = minimum_variance_unbiased_total(loss_fn)
-        loss_fn = marginal_loss.from_linear_measurements(loss_fn, domain=domain)
-    elif known_total is None:
-        raise ValueError(
-            "Must set known_total if giving a custom MarginalLossFn"
-        )
+        loss_fn = marginal_loss.from_linear_measurements(loss_fn)
 
-    if potentials is None:
+    if known_total is None:
+        known_total = 1.0
+
+    if potentials is not None:
+        potentials = potentials.expand(loss_fn.cliques)
+    else:
         potentials = CliqueVector.zeros(domain, loss_fn.cliques)
 
-    if not all(potentials.supports(cl) for cl in loss_fn.cliques):
-        potentials = potentials.expand(loss_fn.cliques)
-
     return loss_fn, known_total, potentials
+
+
+# ---------------------------------------------------------------------------
+# State NamedTuples (module-level; they are JAX pytrees)
+# ---------------------------------------------------------------------------
 
 
 class MirrorDescentState(NamedTuple):
     """State for Algorithm 1 of https://arxiv.org/pdf/1901.09136."""
 
+    mu: CliqueVector
     potentials: CliqueVector
     alpha: jax.Array | float
     loss: jax.Array | float
-    mu: CliqueVector
 
 
-def mirror_descent_step(
-    state: MirrorDescentState,
-    loss_fn: marginal_loss.MarginalLossFn,
-    marginal_oracle: marginal_oracles.MarginalOracle,
-    total: jax.Array | float,
-    linesearch: bool = True,
-) -> MirrorDescentState:
-    """Performs a single mirror descent step.
+class DualAveragingState(NamedTuple):
+    """State for Regularized Dual Averaging (https://proceedings.neurips.cc/paper_files/paper/2009/file/7cce53cf90577442771720a370c3c723-Paper.pdf)."""
 
-    Args:
-        state: Current algorithm state.
-        loss_fn: The marginal loss function.
-        marginal_oracle: A marginal oracle with signature
-            ``(potentials, total) -> marginals``.
-        total: The known or estimated total number of records.
-        linesearch: If True (default), uses Armijo line search to adapt the
-            step size. If False, uses a fixed step size.
+    w: CliqueVector
+    v: CliqueVector
+    gbar: CliqueVector
+    loss: jax.Array | float
+    lipschitz: jax.Array | float
+    gamma: jax.Array | float
+    t: jax.Array | int
 
-    Returns:
-        Updated ``MirrorDescentState``.
+
+class InteriorGradientState(NamedTuple):
+    """State for Interior Gradient (https://doi.org/10.1137/S1052623403427823)."""
+
+    x: CliqueVector
+    potentials: CliqueVector
+    c: jax.Array | float
+    y: CliqueVector
+    z: CliqueVector
+    loss: jax.Array | float
+    inv_lipschitz: jax.Array | float
+
+
+# ---------------------------------------------------------------------------
+# Class-based estimators
+# ---------------------------------------------------------------------------
+
+
+@attr.dataclass(frozen=True)
+class MirrorDescent(Estimator):
+    """Mirror descent estimator for graphical models.
+
+    This is a first-order proximal optimization algorithm for solving
+    a (possibly nonsmooth) convex optimization problem over the marginal polytope.
+    This is an implementation of Algorithm 1 from the paper
+    `"Graphical-model based estimation and inference for differential privacy"
+    <https://arxiv.org/pdf/1901.09136>`_.
+
+    Attributes:
+        stepsize: Fixed step size, or ``None`` (default) to use Armijo line
+            search.
+        marginal_oracle: The function to compute marginals from potentials.
+        mesh: JAX sharding mesh.
     """
-    mu = marginal_oracle(state.potentials, total)
-    loss, dL = jax.value_and_grad(loss_fn)(mu)
-    theta2 = state.potentials - state.alpha * dL
 
-    if not linesearch:
-        return MirrorDescentState(theta2, state.alpha, loss, mu)
-
-    mu2 = marginal_oracle(theta2, total)
-    loss2 = loss_fn(mu2)
-
-    sufficient_decrease = loss - loss2 >= 0.5 * state.alpha * dL.dot(mu - mu2)
-    alpha = jax.lax.select(
-        sufficient_decrease, 1.01 * state.alpha, 0.5 * state.alpha
+    stepsize: float | None = None
+    marginal_oracle: marginal_oracles.MarginalOracle = (
+        marginal_oracles.message_passing_fast
     )
-    potentials = jax.lax.cond(
-        sufficient_decrease, lambda: theta2, lambda: state.potentials
+    mesh: jax.sharding.Mesh | None = None
+
+    def _init(
+        self,
+        domain: Domain,
+        loss_fn: marginal_loss.MarginalLossFn,
+        known_total: float,
+        *,
+        potentials: CliqueVector | None = None,
+    ) -> MirrorDescentState:
+        """Initialize the optimization state."""
+        if potentials is None:
+            potentials = CliqueVector.zeros(domain, loss_fn.cliques)
+        else:
+            potentials = potentials.expand(loss_fn.cliques)
+        marginal_oracle = functools.partial(
+            self.marginal_oracle, mesh=self.mesh
+        )
+        # Theory suggests the initial learning rate should be inversely
+        # proportional to L. We also divide by scaling factor to account for
+        # the fact that gradients are scaled up by a factor of known_total.
+        # See Eq 75. of https://www.cs.uic.edu/~zhangx/teaching/bregman.pdf.
+        L = loss_fn.lipschitz or 1.0
+        alpha = (
+            2.0 / (L * known_total) if self.stepsize is None else self.stepsize
+        )
+        mu = marginal_oracle(potentials, known_total)
+        initial_loss = loss_fn(mu)
+        return MirrorDescentState(mu, potentials, alpha, initial_loss)
+
+    @jax.jit(static_argnames=["self"])
+    def _step(
+        self,
+        state: MirrorDescentState,
+        loss_fn: marginal_loss.MarginalLossFn,
+        known_total: jax.Array | float,
+    ) -> MirrorDescentState:
+        """Perform a single mirror descent step."""
+        marginal_oracle = functools.partial(
+            self.marginal_oracle, mesh=self.mesh
+        )
+        mu = marginal_oracle(state.potentials, known_total)
+        loss, dL = jax.value_and_grad(loss_fn)(mu)
+        theta2 = state.potentials - state.alpha * dL
+
+        if self.stepsize is not None:
+            # Fixed step size — no line search.
+            return MirrorDescentState(mu, theta2, state.alpha, loss)
+
+        # Armijo line search.
+        mu2 = marginal_oracle(theta2, known_total)
+        loss2 = loss_fn(mu2)
+
+        sufficient_decrease = loss - loss2 >= 0.5 * state.alpha * dL.dot(
+            mu - mu2
+        )
+        alpha = jax.lax.select(
+            sufficient_decrease, 1.01 * state.alpha, 0.5 * state.alpha
+        )
+        potentials = jax.lax.cond(
+            sufficient_decrease, lambda: theta2, lambda: state.potentials
+        )
+        accepted_loss = jax.lax.select(sufficient_decrease, loss2, loss)
+        return MirrorDescentState(mu, potentials, alpha, accepted_loss)
+
+    def _finalize(
+        self,
+        state: MirrorDescentState,
+        known_total: float,
+    ) -> MarkovRandomField:
+        marginal_oracle = functools.partial(
+            self.marginal_oracle, mesh=self.mesh
+        )
+        marginals = marginal_oracle(state.potentials, known_total)
+        return MarkovRandomField(
+            potentials=state.potentials,
+            marginals=marginals,
+            total=known_total,
+        )
+
+
+@attr.dataclass(frozen=True)
+class DualAveraging(Estimator):
+    """Regularized Dual Averaging estimator for graphical models.
+
+    RDA is an accelerated proximal algorithm for solving a smooth convex
+    optimization problem over the marginal polytope.  This algorithm requires
+    knowledge of the Lipschitz constant of the gradient of the loss function.
+
+    Attributes:
+        marginal_oracle: The function to compute marginals from potentials.
+        mesh: JAX sharding mesh.
+    """
+
+    marginal_oracle: marginal_oracles.MarginalOracle = (
+        marginal_oracles.message_passing_stable
     )
-    accepted_loss = jax.lax.select(sufficient_decrease, loss2, loss)
-    return MirrorDescentState(potentials, alpha, accepted_loss, mu)
+    mesh: jax.sharding.Mesh | None = None
+
+    def _init(
+        self,
+        domain: Domain,
+        loss_fn: marginal_loss.MarginalLossFn,
+        known_total: float,
+        *,
+        potentials: CliqueVector | None = None,
+    ) -> DualAveragingState:
+        """Initialize the optimization state."""
+        if potentials is None:
+            potentials = CliqueVector.zeros(domain, loss_fn.cliques)
+        else:
+            potentials = potentials.expand(loss_fn.cliques)
+        marginal_oracle = functools.partial(
+            self.marginal_oracle, mesh=self.mesh
+        )
+
+        D = np.sqrt(
+            domain.size() * np.log(domain.size())
+        )  # upper bound on entropy
+        Q = 0  # upper bound on variance of stochastic gradients
+        gamma = Q / D
+        L = (loss_fn.lipschitz or 1.0) / known_total
+
+        w = v = marginal_oracle(potentials, known_total)
+        gbar = CliqueVector.zeros(domain, loss_fn.cliques)
+        initial_loss = loss_fn(w)
+        return DualAveragingState(w, v, gbar, initial_loss, L, gamma, 1)
+
+    @jax.jit(static_argnames=["self"])
+    def _step(
+        self,
+        state: DualAveragingState,
+        loss_fn: marginal_loss.MarginalLossFn,
+        known_total: jax.Array | float,
+    ) -> DualAveragingState:
+        """Perform a single dual averaging step."""
+        marginal_oracle = functools.partial(
+            self.marginal_oracle, mesh=self.mesh
+        )
+        t = state.t
+        c = 2.0 / (t + 1)
+        beta = state.gamma * (t + 1) ** 1.5 / 2
+        u = (1 - c) * state.w + c * state.v
+        loss, g = jax.value_and_grad(loss_fn)(u)
+        g = g / known_total
+        gbar = (1 - c) * state.gbar + c * g
+        theta = -t * (t + 1) / (4 * state.lipschitz + beta) * gbar
+        v = marginal_oracle(theta, known_total)
+        w = (1 - c) * state.w + c * v
+        return DualAveragingState(
+            w, v, gbar, loss, state.lipschitz, state.gamma, t + 1
+        )
+
+    def _finalize(
+        self,
+        state: DualAveragingState,
+        known_total: float,
+    ) -> MarkovRandomField:
+        return mle_from_marginals(state.w, known_total)
+
+
+@attr.dataclass(frozen=True)
+class InteriorGradient(Estimator):
+    """Interior Gradient estimator for graphical models.
+
+    Interior Gradient is an accelerated proximal algorithm for solving a smooth
+    convex optimization problem over the marginal polytope.  This algorithm
+    requires knowledge of the Lipschitz constant of the gradient of the loss
+    function.  Based on the paper
+    `"Interior Gradient and Proximal Methods for Convex and Conic Optimization"
+    <https://epubs.siam.org/doi/abs/10.1137/S1052623403427823>`_.
+
+    Attributes:
+        marginal_oracle: The function to compute marginals from potentials.
+        mesh: JAX sharding mesh.
+    """
+
+    marginal_oracle: marginal_oracles.MarginalOracle = (
+        marginal_oracles.message_passing_stable
+    )
+    mesh: jax.sharding.Mesh | None = None
+
+    def _init(
+        self,
+        domain: Domain,
+        loss_fn: marginal_loss.MarginalLossFn,
+        known_total: float,
+        *,
+        potentials: CliqueVector | None = None,
+    ) -> InteriorGradientState:
+        """Initialize the optimization state."""
+        if potentials is None:
+            potentials = CliqueVector.zeros(domain, loss_fn.cliques)
+        else:
+            potentials = potentials.expand(loss_fn.cliques)
+        marginal_oracle = functools.partial(
+            self.marginal_oracle, mesh=self.mesh
+        )
+
+        inv_lipschitz = 1.0 / (loss_fn.lipschitz or 1.0)
+        x = y = z = marginal_oracle(potentials, known_total)
+        initial_loss = loss_fn(x)
+        return InteriorGradientState(
+            x, potentials, 1.0, y, z, initial_loss, inv_lipschitz
+        )
+
+    @jax.jit(static_argnames=["self"])
+    def _step(
+        self,
+        state: InteriorGradientState,
+        loss_fn: marginal_loss.MarginalLossFn,
+        known_total: jax.Array | float,
+    ) -> InteriorGradientState:
+        """Perform a single interior gradient step."""
+        marginal_oracle = functools.partial(
+            self.marginal_oracle, mesh=self.mesh
+        )
+        l = state.inv_lipschitz
+        a = (((state.c * l) ** 2 + 4 * state.c * l) ** 0.5 - l * state.c) / 2
+        y = (1 - a) * state.x + a * state.z
+        c = state.c * (1 - a)
+        loss, g = jax.value_and_grad(loss_fn)(y)
+        potentials = state.potentials - a / c / known_total * g
+        z = marginal_oracle(potentials, known_total)
+        x = (1 - a) * state.x + a * z
+        return InteriorGradientState(
+            x, potentials, c, y, z, loss, state.inv_lipschitz
+        )
+
+    def _finalize(
+        self,
+        state: InteriorGradientState,
+        known_total: float,
+    ) -> MarkovRandomField:
+        return mle_from_marginals(state.x, known_total)
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible function wrappers (deprecated)
+# ---------------------------------------------------------------------------
 
 
 def mirror_descent(
@@ -140,66 +517,89 @@ def mirror_descent(
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
     mesh: jax.sharding.Mesh | None = None,
 ) -> MarkovRandomField:
-    """Optimization using the Mirror Descent algorithm.
-
-    This is a first-order proximal optimization algorithm for solving
-    a (possibly nonsmooth) convex optimization problem over the marginal polytope.
-    This is an  implementation of Algorithm 1 from the paper
-    ["Graphical-model based estimation and inference for differential privacy"]
-    (https://arxiv.org/pdf/1901.09136).  If stepsize is not provided, this algorithm
-    uses a line search to automatically choose appropriate step sizes that satisfy
-    the Armijo condition.
-
-    Args:
-        domain: The domain over which the model should be defined.
-        loss_fn: A MarginalLossFn or a list of Linear Measurements.
-        known_total: The known or estimated number of records in the data.
-        potentials: The initial potentials.  Must be defind over a set of cliques
-            that supports the cliques in the loss_fn.
-        marginal_oracle: The function to use to compute marginals from potentials.
-        iters: The maximum number of optimization iterations.
-        stepsize: The step size for the optimization.  If not provided, this algorithm
-            will use a line search to automatically choose appropriate step sizes.
-        callback_fn: A function to call at each iteration with the iteration number.
-        mesh: Determines how the marginal oracle and loss calculation
-                will be sharded across devices.
-
-    Returns:
-        A MarkovRandomField object with the estimated potentials and marginals.
-    """
-    loss_fn, known_total, potentials = _initialize(
-        domain, loss_fn, known_total, potentials
+    """Deprecated: use ``MirrorDescent(...).estimate(...)`` instead."""
+    warnings.warn(
+        "mirror_descent() is deprecated, use MirrorDescent().estimate()",
+        DeprecationWarning,
+        stacklevel=2,
     )
-    marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
-
-    # Theory suggests the initial learning rate should be inversely
-    # proportional to L. We also divide by scaling factor to account for
-    # the fact that gradients are scaled up by a factor of known_total.
-    # See Eq 75. of https://www.cs.uic.edu/~zhangx/teaching/bregman.pdf.
-    L = loss_fn.lipschitz or 1.0
-    alpha = 2.0 / (L * known_total) if stepsize is None else stepsize
-    mu = marginal_oracle(potentials, known_total)
-    initial_loss = loss_fn(mu)
-
-    # Use partial to capture loss_fn and marginal_oracle as closed-over args.
-    state = MirrorDescentState(potentials, alpha, initial_loss, mu)
-    step = jax.jit(
-        functools.partial(
-            mirror_descent_step,
-            loss_fn=loss_fn,
-            marginal_oracle=marginal_oracle,
-            total=known_total,
-            linesearch=stepsize is None,
-        )
+    return MirrorDescent(
+        stepsize=stepsize,
+        marginal_oracle=marginal_oracle,
+        mesh=mesh,
+    ).estimate(
+        domain,
+        loss_fn,
+        known_total=known_total,
+        iters=iters,
+        callback_fn=callback_fn,
+        potentials=potentials,
     )
-    for _ in range(iters):
-        state = step(state)
-        callback_fn(state.mu)
 
-    marginals = marginal_oracle(state.potentials, known_total)
-    return MarkovRandomField(
-        potentials=state.potentials, marginals=marginals, total=known_total
+
+def dual_averaging(
+    domain: Domain,
+    loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
+    *,
+    known_total: float | None = None,
+    potentials: CliqueVector | None = None,
+    marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
+    iters: int = 1000,
+    callback_fn: Callable[[CliqueVector], None] = lambda _: None,
+    mesh: jax.sharding.Mesh | None = None,
+) -> MarkovRandomField:
+    """Deprecated: use ``DualAveraging(...).estimate(...)`` instead."""
+    warnings.warn(
+        "dual_averaging() is deprecated, use DualAveraging().estimate()",
+        DeprecationWarning,
+        stacklevel=2,
     )
+    return DualAveraging(
+        marginal_oracle=marginal_oracle,
+        mesh=mesh,
+    ).estimate(
+        domain,
+        loss_fn,
+        known_total=known_total,
+        iters=iters,
+        callback_fn=callback_fn,
+        potentials=potentials,
+    )
+
+
+def interior_gradient(
+    domain: Domain,
+    loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
+    *,
+    known_total: float | None = None,
+    potentials: CliqueVector | None = None,
+    marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
+    iters: int = 1000,
+    callback_fn: Callable[[CliqueVector], None] = lambda _: None,
+    mesh: jax.sharding.Mesh | None = None,
+) -> MarkovRandomField:
+    """Deprecated: use ``InteriorGradient(...).estimate(...)`` instead."""
+    warnings.warn(
+        "interior_gradient() is deprecated, use InteriorGradient().estimate()",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return InteriorGradient(
+        marginal_oracle=marginal_oracle,
+        mesh=mesh,
+    ).estimate(
+        domain,
+        loss_fn,
+        known_total=known_total,
+        iters=iters,
+        callback_fn=callback_fn,
+        potentials=potentials,
+    )
+
+
+# ---------------------------------------------------------------------------
+# L-BFGS (not refactored to class — complex optax integration)
+# ---------------------------------------------------------------------------
 
 
 def _optimize(loss_and_grad_fn, params, iters=250, callback_fn=lambda _: None):
@@ -332,227 +732,9 @@ def mle_from_marginals(
     )
 
 
-class DualAveragingState(NamedTuple):
-    """State for Regularized Dual Averaging (https://proceedings.neurips.cc/paper_files/paper/2009/file/7cce53cf90577442771720a370c3c723-Paper.pdf)."""
-
-    w: CliqueVector
-    v: CliqueVector
-    gbar: CliqueVector
-    loss: jax.Array | float
-
-
-def dual_averaging_step(
-    state: DualAveragingState,
-    loss_fn: marginal_loss.MarginalLossFn,
-    marginal_oracle: marginal_oracles.MarginalOracle,
-    total: jax.Array | float,
-    lipschitz: float,
-    gamma: float,
-    t: int,
-) -> DualAveragingState:
-    """Performs a single dual averaging step.
-
-    Args:
-        state: Current algorithm state.
-        loss_fn: The marginal loss function.
-        marginal_oracle: A marginal oracle with signature
-            ``(potentials, total) -> marginals``.
-        total: The known or estimated total number of records.
-        lipschitz: Lipschitz constant of the gradient, divided by ``total``.
-        gamma: Variance-related parameter (typically 0 for deterministic).
-        t: Current iteration number (1-indexed).
-
-    Returns:
-        Updated ``DualAveragingState``.
-    """
-    c = 2.0 / (t + 1)
-    beta = gamma * (t + 1) ** 1.5 / 2
-    u = (1 - c) * state.w + c * state.v
-    loss, g = jax.value_and_grad(loss_fn)(u)
-    g = g / total
-    gbar = (1 - c) * state.gbar + c * g
-    theta = -t * (t + 1) / (4 * lipschitz + beta) * gbar
-    v = marginal_oracle(theta, total)
-    w = (1 - c) * state.w + c * v
-    return DualAveragingState(w, v, gbar, loss)
-
-
-def dual_averaging(
-    domain: Domain,
-    loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
-    *,
-    known_total: float | None = None,
-    potentials: CliqueVector | None = None,
-    marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
-    iters: int = 1000,
-    callback_fn: Callable[[CliqueVector], None] = lambda _: None,
-    mesh: jax.sharding.Mesh | None = None,
-) -> MarkovRandomField:
-    """Optimization using the Regularized Dual Averaging (RDA) algorithm.
-
-    RDA is an accelerated proximal algorithm for solving a smooth convex optimization
-    problem over the marginal polytope.  This algorithm requires knowledge of
-    the Lipschitz constant of the gradient of the loss function.
-
-    Args:
-        domain: The domain over which the model should be defined.
-        loss_fn: A MarginalLossFn or a list of Linear Measurements.
-        lipschitz: The Lipschitz constant of the gradient of the loss function.
-        known_total: The known or estimated number of records in the data.
-        potentials: The initial potentials.  Must be defind over a set of cliques
-            that supports the cliques in the loss_fn.
-        marginal_oracle: The function to use to compute marginals from potentials.
-        iters: The maximum number of optimization iterations.
-        callback_fn: A function to call with intermediate solution at each iteration.
-        mesh: Determines how the marginal oracle and loss calculation
-                will be sharded across devices.
-
-    Returns:
-        A MarkovRandomField object with the final potentials and marginals.
-    """
-    loss_fn, known_total, potentials = _initialize(
-        domain, loss_fn, known_total, potentials
-    )
-    if loss_fn.lipschitz is None:
-        raise ValueError(
-            "Dual Averaging requires a loss function with Lipschitz gradients."
-        )
-    marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
-
-    D = np.sqrt(domain.size() * np.log(domain.size()))  # upper bound on entropy
-    Q = 0  # upper bound on variance of stochastic gradients
-    gamma = Q / D
-    L = loss_fn.lipschitz / known_total
-
-    w = v = marginal_oracle(potentials, known_total)
-    gbar = CliqueVector.zeros(domain, loss_fn.cliques)
-    initial_loss = loss_fn(w)
-    da_state = DualAveragingState(w, v, gbar, initial_loss)
-
-    step = jax.jit(
-        functools.partial(
-            dual_averaging_step,
-            loss_fn=loss_fn,
-            marginal_oracle=marginal_oracle,
-            total=known_total,
-            lipschitz=L,
-            gamma=gamma,
-        )
-    )
-    for t in range(1, iters + 1):
-        da_state = step(da_state, t=t)
-        callback_fn(da_state.w)
-
-    return mle_from_marginals(da_state.w, known_total)
-
-
-class InteriorGradientState(NamedTuple):
-    """State for Interior Gradient (https://doi.org/10.1137/S1052623403427823)."""
-
-    potentials: CliqueVector
-    c: jax.Array | float
-    x: CliqueVector
-    y: CliqueVector
-    z: CliqueVector
-    loss: jax.Array | float
-
-
-def interior_gradient_step(
-    state: InteriorGradientState,
-    loss_fn: marginal_loss.MarginalLossFn,
-    marginal_oracle: marginal_oracles.MarginalOracle,
-    total: jax.Array | float,
-    inv_lipschitz: float,
-) -> InteriorGradientState:
-    """Performs a single interior gradient step.
-
-    Args:
-        state: Current algorithm state.
-        loss_fn: The marginal loss function.
-        marginal_oracle: A marginal oracle with signature
-            ``(potentials, total) -> marginals``.
-        total: The known or estimated total number of records.
-        inv_lipschitz: Reciprocal of the Lipschitz constant (``sigma / lipschitz``).
-
-    Returns:
-        Updated ``InteriorGradientState``.
-    """
-    l = inv_lipschitz
-    a = (((state.c * l) ** 2 + 4 * state.c * l) ** 0.5 - l * state.c) / 2
-    y = (1 - a) * state.x + a * state.z
-    c = state.c * (1 - a)
-    loss, g = jax.value_and_grad(loss_fn)(y)
-    potentials = state.potentials - a / c / total * g
-    z = marginal_oracle(potentials, total)
-    x = (1 - a) * state.x + a * z
-    return InteriorGradientState(potentials, c, x, y, z, loss)
-
-
-def interior_gradient(
-    domain: Domain,
-    loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
-    *,
-    known_total: float | None = None,
-    potentials: CliqueVector | None = None,
-    marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
-    iters: int = 1000,
-    callback_fn: Callable[[CliqueVector], None] = lambda _: None,
-    mesh: jax.sharding.Mesh | None = None,
-) -> MarkovRandomField:
-    """Optimization using the Interior Point Gradient Descent algorithm.
-
-    Interior Gradient is an accelerated proximal algorithm for solving a smooth
-    convex optimization problem over the marginal polytope.  This algorithm
-    requires knowledge of the Lipschitz constant of the gradient of the loss function.
-    This algorithm is based on the paper titled
-    ["Interior Gradient and Proximal Methods for Convex and Conic Optimization"](https://epubs.siam.org/doi/abs/10.1137/S1052623403427823?journalCode=sjope8).
-
-    Args:
-        domain: The domain over which the model should be defined.
-        loss_fn: A MarginalLossFn or a list of Linear Measurements.
-        lipschitz: The Lipschitz constant of the gradient of the loss function.
-        known_total: The known or estimated number of records in the data.
-        potentials: The initial potentials.  Must be defind over a set of cliques
-            that supports the cliques in the loss_fn.
-        marginal_oracle: The function to use to compute marginals from potentials.
-        iters: The maximum number of optimization iterations.
-        callback_fn: A function to call at each iteration with the iteration number.
-        mesh: Determines how the marginal oracle and loss calculation
-                will be sharded across devices.
-
-    Returns:
-        A MarkovRandomField object with the optimized potentials and marginals.
-    """
-    loss_fn, known_total, potentials = _initialize(
-        domain, loss_fn, known_total, potentials
-    )
-    if loss_fn.lipschitz is None:
-        raise ValueError(
-            "Interior Gradient requires a loss function with Lipschitz"
-            " gradients."
-        )
-    marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
-
-    inv_lipschitz = 1.0 / (loss_fn.lipschitz or 1.0)
-
-    x = y = z = marginal_oracle(potentials, known_total)
-    initial_loss = loss_fn(x)
-    ig_state = InteriorGradientState(potentials, 1.0, x, y, z, initial_loss)
-
-    step = jax.jit(
-        functools.partial(
-            interior_gradient_step,
-            loss_fn=loss_fn,
-            marginal_oracle=marginal_oracle,
-            total=known_total,
-            inv_lipschitz=inv_lipschitz,
-        )
-    )
-    for _ in range(1, iters + 1):
-        ig_state = step(ig_state)
-        callback_fn(ig_state.x)
-
-    return mle_from_marginals(ig_state.x, known_total)
+# ---------------------------------------------------------------------------
+# Universal Accelerated Method (not refactored — complex while_loop)
+# ---------------------------------------------------------------------------
 
 
 class _AcceleratedStepSearchState(NamedTuple):

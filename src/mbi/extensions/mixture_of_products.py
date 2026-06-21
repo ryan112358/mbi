@@ -11,8 +11,9 @@ This is a cleaned-up, optimized replacement for
 
 from __future__ import annotations
 
-from collections.abc import Callable
+
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import jax
 import jax.nn
@@ -20,12 +21,14 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from .. import estimation, marginal_loss
+import attr
+
+
+from ..estimation import Estimator
 from ..clique_vector import CliqueVector
 from ..dataset import Dataset
 from ..domain import Domain
 from ..factor import Factor
-from ..marginal_loss import LinearMeasurement
 
 
 @jax.tree_util.register_dataclass
@@ -125,72 +128,63 @@ class MixtureOfProducts:
         return Dataset(data, self.domain)
 
 
-def estimate(
-    domain: Domain,
-    loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
-    *,
-    known_total: float | None = None,
-    num_components: int = 100,
-    iters: int = 2500,
-    learning_rate: float = 0.1,
-    optimizer: optax.GradientTransformation | None = None,
-    seed: int = 0,
-    callback_fn: Callable[[MixtureOfProducts], None] | None = None,
-    callback_every: int = 100,
-) -> MixtureOfProducts:
-    """Estimate a distribution as a mixture of product distributions.
+class MixtureOfProductsState(NamedTuple):
+    """Optimization state for MixtureOfProductsEstimator."""
 
-    Args:
-        domain: The discrete domain over which the distribution is defined.
-        loss_fn: A MarginalLossFn or list of LinearMeasurement objects.
-        known_total: Known or estimated number of records.  If None and
-            ``loss_fn`` is a list, estimated automatically.
+    model: MixtureOfProducts
+    opt_state: optax.OptState
+
+
+@attr.dataclass(frozen=True)
+class MixtureOfProductsEstimator(Estimator):
+    """Estimates a distribution as a mixture of product distributions.
+
+    Inspired by RAP (https://arxiv.org/abs/2103.06641) and RAP^{softmax}
+    (https://arxiv.org/abs/2106.07153).  Instead of parameterizing via a
+    graphical model with potentials, the distribution is represented as a
+    mixture of K product distributions optimized via gradient descent.
+
+    Attributes:
         num_components: Number of mixture components K.
-        iters: Number of optimization iterations.
         learning_rate: Learning rate for the optimizer.
         optimizer: An optax optimizer.  Defaults to ``optax.adam``.
         seed: Random seed for parameter initialization.
-        callback_fn: Called every ``callback_every`` iterations with the
-            current model.
-        callback_every: Controls callback frequency and ``lax.scan`` chunk size.
-
-    Returns:
-        A MixtureOfProducts fitted to the measurements.
     """
-    loss_fn, known_total, _ = estimation._initialize(
-        domain, loss_fn, known_total, None
-    )
 
-    if optimizer is None:
-        optimizer = optax.adam(learning_rate)
+    num_components: int = 100
+    learning_rate: float = 0.1
+    optimizer: optax.GradientTransformation | None = None
+    seed: int = 0
 
-    model = MixtureOfProducts.random(domain, known_total, num_components, seed)
+    def __attrs_post_init__(self):
+        if self.optimizer is None:
+            object.__setattr__(
+                self, "optimizer", optax.adam(self.learning_rate)
+            )
 
-    cliques = loss_fn.cliques
+    def _init(self, domain, loss_fn, known_total, **kwargs):
+        """Initialize model and optimizer state."""
+        model = MixtureOfProducts.random(
+            domain, known_total, self.num_components, self.seed
+        )
+        opt_state = self.optimizer.init(model)
+        return MixtureOfProductsState(model, opt_state)
 
-    def model_loss(model: MixtureOfProducts) -> float:
-        arrays = {cl: model.project(cl) for cl in cliques}
-        mu = CliqueVector(domain, cliques, arrays)
-        return loss_fn(mu)
+    @jax.jit(static_argnames=["self"])
+    def _step(self, state, loss_fn, known_total):
+        """Run one gradient step."""
 
-    model_loss_and_grad = jax.jit(jax.value_and_grad(model_loss))
-    opt_state = optimizer.init(model)
+        def model_loss(m):
+            arrays = {cl: m.project(cl) for cl in loss_fn.cliques}
+            mu = CliqueVector(m.domain, loss_fn.cliques, arrays)
+            return loss_fn(mu)
 
-    def step(carry, _):
-        model, opt_state = carry
-        loss, grad = model_loss_and_grad(model)
-        updates, opt_state = optimizer.update(grad, opt_state, model)
-        model = optax.apply_updates(model, updates)
-        return (model, opt_state), loss
+        _, grad = jax.value_and_grad(model_loss)(state.model)
+        updates, opt_state = self.optimizer.update(
+            grad, state.opt_state, state.model
+        )
+        model = optax.apply_updates(state.model, updates)
+        return MixtureOfProductsState(model, opt_state)
 
-    scan_block = jax.jit(
-        lambda carry: jax.lax.scan(step, carry, None, length=callback_every)
-    )
-
-    num_blocks = -(-iters // callback_every)  # ceil division
-    for _ in range(num_blocks):
-        (model, opt_state), _ = scan_block((model, opt_state))
-        if callback_fn is not None:
-            callback_fn(model)
-
-    return model
+    def _finalize(self, state, known_total):
+        return state.model

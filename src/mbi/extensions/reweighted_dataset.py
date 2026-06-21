@@ -8,92 +8,87 @@ with softmax normalization to guarantee non-negativity.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import NamedTuple
 
+import attr
 import jax
 import jax.numpy as jnp
 import optax
 
-from .. import estimation, marginal_loss
+
+from ..estimation import Estimator
 from ..clique_vector import CliqueVector
 from ..dataset import Dataset, JaxDataset
-from ..domain import Domain
-from ..marginal_loss import LinearMeasurement
 
 
-def estimate(
-    domain: Domain,
-    loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
-    *,
-    seed_data: Dataset,
-    known_total: float | None = None,
-    iters: int = 2500,
-    learning_rate: float = 0.1,
-    optimizer: optax.GradientTransformation | None = None,
-    callback_fn: Callable[[JaxDataset], None] | None = None,
-    callback_every: int = 100,
-) -> JaxDataset:
-    """Estimate a distribution by reweighting seed records.
+class ReweightedDatasetState(NamedTuple):
+    """Optimization state for ReweightedDatasetEstimator."""
 
-    Args:
-        domain: The discrete domain over which the distribution is defined.
-        loss_fn: A MarginalLossFn or list of LinearMeasurement objects.
+    log_weights: jax.Array
+    opt_state: optax.OptState
+
+
+@attr.dataclass(frozen=True)
+class ReweightedDatasetEstimator(Estimator):
+    """Estimates a distribution by reweighting seed records.
+
+    Inspired by PMW^Pub (https://arxiv.org/abs/2102.08598).  Given a seed
+    set of records, the distribution is represented by learning a weight for
+    each record to minimize the marginal loss.
+
+    Attributes:
         seed_data: A Dataset of seed records to reweight.
-        known_total: Known or estimated number of records.  If None and
-            ``loss_fn`` is a list, estimated automatically.
-        iters: Number of optimization iterations.
         learning_rate: Learning rate for the optimizer.
         optimizer: An optax optimizer.  Defaults to ``optax.adam``.
-        callback_fn: Called every ``callback_every`` iterations with the
-            current JaxDataset.
-        callback_every: Controls callback frequency and ``lax.scan`` chunk size.
-
-    Returns:
-        A JaxDataset with learned weights fitted to the measurements.
     """
-    loss_fn, known_total, _ = estimation._initialize(
-        domain, loss_fn, known_total, None
-    )
 
-    if optimizer is None:
-        optimizer = optax.adam(learning_rate)
+    seed_data: Dataset = attr.field()
+    learning_rate: float = 0.1
+    optimizer: optax.GradientTransformation | None = None
 
-    data_dict = seed_data.to_dict()
-    jax_data = {col: jnp.array(data_dict[col]) for col in domain.attrs}
-    log_weights = jnp.zeros(seed_data.records)
-    cliques = loss_fn.cliques
+    def __attrs_post_init__(self):
+        if self.optimizer is None:
+            object.__setattr__(
+                self, "optimizer", optax.adam(self.learning_rate)
+            )
+        # Precompute JAX arrays from seed data once.
+        data_dict = self.seed_data.to_dict()
+        jax_data = {
+            col: jnp.asarray(data_dict[col])
+            for col in self.seed_data.domain.attrs
+        }
+        object.__setattr__(self, "_jax_data", jax_data)
 
-    # jax_data values (JAX arrays) are closed over and passed as implicit
-    # arguments to JIT — not baked as HLO constants.
-    def params_loss(log_weights: jax.Array) -> float:
-        weights = jax.nn.softmax(log_weights) * known_total
-        weighted = JaxDataset(jax_data, domain, weights)
-        arrays = {cl: weighted.project(cl) for cl in cliques}
-        mu = CliqueVector(domain, cliques, arrays)
-        return loss_fn(mu)
+    def _init(self, domain, loss_fn, known_total, **kwargs):
+        """Initialize log-weights and optimizer state."""
+        log_weights = jnp.zeros(self.seed_data.records)
+        opt_state = self.optimizer.init(log_weights)
+        return ReweightedDatasetState(log_weights, opt_state)
 
-    params_loss_and_grad = jax.jit(jax.value_and_grad(params_loss))
-    opt_state = optimizer.init(log_weights)
+    @jax.jit(static_argnames=["self"])
+    def _step(self, state, loss_fn, known_total):
+        """Run one gradient step."""
+        domain = self.seed_data.domain
+        jax_data = self._jax_data
 
-    def step(carry, _):
-        log_weights, opt_state = carry
-        loss, grad = params_loss_and_grad(log_weights)
-        updates, opt_state = optimizer.update(grad, opt_state, log_weights)
-        log_weights = optax.apply_updates(log_weights, updates)
-        return (log_weights, opt_state), loss
+        def params_loss(lw):
+            weights = jax.nn.softmax(lw) * known_total
+            weighted = JaxDataset(jax_data, domain, weights)
+            arrays = {cl: weighted.project(cl) for cl in loss_fn.cliques}
+            mu = CliqueVector(domain, loss_fn.cliques, arrays)
+            return loss_fn(mu)
 
-    scan_block = jax.jit(
-        lambda carry: jax.lax.scan(step, carry, None, length=callback_every)
-    )
+        _, grad = jax.value_and_grad(params_loss)(state.log_weights)
+        updates, opt_state = self.optimizer.update(
+            grad, state.opt_state, state.log_weights
+        )
+        log_weights = optax.apply_updates(state.log_weights, updates)
+        return ReweightedDatasetState(log_weights, opt_state)
 
-    def make_model(log_weights):
-        weights = jax.nn.softmax(log_weights) * known_total
-        return JaxDataset(jax_data, domain, weights)
+    def _callback_value(self, state, known_total):
+        weights = jax.nn.softmax(state.log_weights) * known_total
+        return JaxDataset(self._jax_data, self.seed_data.domain, weights)
 
-    num_blocks = -(-iters // callback_every)  # ceil division
-    for _ in range(num_blocks):
-        (log_weights, opt_state), _ = scan_block((log_weights, opt_state))
-        if callback_fn is not None:
-            callback_fn(make_model(log_weights))
-
-    return make_model(log_weights)
+    def _finalize(self, state, known_total):
+        weights = jax.nn.softmax(state.log_weights) * known_total
+        return JaxDataset(self._jax_data, self.seed_data.domain, weights)
