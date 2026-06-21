@@ -2,15 +2,16 @@
 
 This module provides structures and functions for defining and calculating loss
 based on potentially noisy linear measurements of marginal distributions. Key
-components include the `LinearMeasurement` class to represent individual
-measurements and the `MarginalLossFn` class to define loss functions over
-`CliqueVector` objects, enabling the evaluation of model fit against observed
+components include the ``LinearMeasurement`` class to represent individual
+measurements and the ``MarginalLossFn`` class to define loss functions over
+``CliqueVector`` objects, enabling the evaluation of model fit against observed
 or noisy data. Utilities for clique manipulation and feasibility checks are also
 included.
 """
 
 import functools
 from collections.abc import Callable, Sequence
+from typing import Any
 
 import attr
 import chex
@@ -27,7 +28,7 @@ from .factor import Factor
 @functools.partial(
     jax.tree_util.register_dataclass,
     meta_fields=["clique", "stddev", "query"],
-    data_fields=["values"],
+    data_fields=["noisy_measurement"],
 )
 @attr.dataclass(frozen=True)
 class LinearMeasurement:
@@ -47,28 +48,85 @@ class LinearMeasurement:
     query: Callable[[Factor], jax.Array] = Factor.datavector
 
 
-# this class might need to be refactored so that loss_fn consumes measurements
-# that way measurements can be included as an input to the jitted.
-# Or it can be a pytree where the measurements are one node in the PyTree.
+@functools.partial(
+    jax.tree_util.register_dataclass,
+    data_fields=["data"],
+    meta_fields=["cliques", "loss_fn", "lipschitz"],
+)
 @attr.dataclass(frozen=True)
 class MarginalLossFn:
-    """A Loss function over the concatenated vector of marginals.
+    """A loss function over the concatenated vector of marginals.
+
+    Separates the computation (``loss_fn``, static) from the captured data
+    (``data``, dynamic JAX pytree leaves).  This allows ``MarginalLossFn``
+    to be passed through ``jax.jit`` as a regular traced argument rather
+    than a static one, so that different measurement values with the same
+    structure reuse the same compiled program.
 
     Attributes:
-        cliques: A list of cliques (tuples of attribute names) that define the
-            scope of the marginals used in the loss function.
-        loss_fn: A callable that takes a `CliqueVector` (representing the
-            marginals) and returns a numeric loss value.
-        lipschitz: An optional float representing the Lipschitz constant of the
-            gradient of the loss function. This is used for optimization algorithms.
+        cliques: Cliques defining the scope of the marginals.
+        loss_fn: A pure function ``(marginals, data) -> loss``.  This is
+            treated as static metadata for JIT compilation.
+        data: Arbitrary pytree of arrays captured by ``loss_fn``.  This is
+            traced through JIT and can change without recompilation.
+        lipschitz: Optional Lipschitz constant of the gradient.
     """
 
     cliques: Sequence[Clique] = attr.field(converter=tuple)
-    loss_fn: Callable[[CliqueVector], chex.Numeric]
+    loss_fn: Callable[[CliqueVector, Any], chex.Numeric]
+    data: Any = ()
     lipschitz: float | None = None
 
     def __call__(self, marginals: CliqueVector) -> chex.Numeric:
-        return self.loss_fn(marginals)
+        return self.loss_fn(marginals, self.data)
+
+
+def _l2_loss(
+    marginals: CliqueVector,
+    measurements: tuple[LinearMeasurement, ...],
+) -> chex.Numeric:
+    """Weighted L2 loss over linear measurements."""
+    loss = 0.0
+    for M in measurements:
+        mu = marginals.project(M.clique)
+        stddev = jnp.maximum(M.stddev, 1e-12)
+        diff = (M.query(mu) - M.noisy_measurement) / stddev
+        loss += 0.5 * jnp.vdot(diff, diff)
+    return loss
+
+
+def _l1_loss(
+    marginals: CliqueVector,
+    measurements: tuple[LinearMeasurement, ...],
+) -> chex.Numeric:
+    """Weighted L1 loss over linear measurements."""
+    loss = 0.0
+    for M in measurements:
+        mu = marginals.project(M.clique)
+        stddev = jnp.maximum(M.stddev, 1e-12)
+        diff = (M.query(mu) - M.noisy_measurement) / stddev
+        loss += jnp.sum(jnp.abs(diff))
+    return loss
+
+
+def _normalized_l2_loss(
+    marginals: CliqueVector,
+    measurements: tuple[LinearMeasurement, ...],
+) -> chex.Numeric:
+    """Normalized L2 loss over linear measurements."""
+    loss = _l2_loss(marginals, measurements)
+    total = marginals.project(()).datavector(flatten=False)
+    return jnp.sqrt(loss / len(measurements) / total)
+
+
+def _normalized_l1_loss(
+    marginals: CliqueVector,
+    measurements: tuple[LinearMeasurement, ...],
+) -> chex.Numeric:
+    """Normalized L1 loss over linear measurements."""
+    loss = _l1_loss(marginals, measurements)
+    total = marginals.project(()).datavector(flatten=False)
+    return loss / len(measurements) / total
 
 
 def calculate_l2_lipschitz(
@@ -126,31 +184,20 @@ def from_linear_measurements(
         raise ValueError(f"Unknown norm {norm}.")
     cliques = [m.clique for m in measurements]
     maximal_cliques = maximal_subset(cliques)
+    data = tuple(measurements)
 
-    def loss_fn(marginals: CliqueVector) -> chex.Numeric:
-        loss = 0.0
-        for M in measurements:
-            mu = marginals.project(M.clique)
-            # avoid introducing inf/nan from invariants
-            stddev = jnp.maximum(M.stddev, 1e-12)
-            diff = (M.query(mu) - M.noisy_measurement) / stddev
-            if norm == "l2":
-                loss += 0.5 * jnp.vdot(diff, diff)
-            elif norm == "l1":
-                loss += jnp.sum(jnp.abs(diff))
+    if normalize:
+        loss_fn = _normalized_l2_loss if norm == "l2" else _normalized_l1_loss
+    else:
+        loss_fn = _l2_loss if norm == "l2" else _l1_loss
 
-        if normalize:
-            total = marginals.project(()).datavector(flatten=False)
-            loss = loss / len(measurements) / total
-            if norm == "l2":
-                loss = jnp.sqrt(loss)
-        return loss
+    loss = MarginalLossFn(maximal_cliques, loss_fn, data)
 
     if norm == "l2" and not normalize and domain is not None:
-        lipschitz = calculate_l2_lipschitz(domain, maximal_cliques, loss_fn)
-        return MarginalLossFn(maximal_cliques, loss_fn, lipschitz)
+        lipschitz = calculate_l2_lipschitz(domain, maximal_cliques, loss)
+        return MarginalLossFn(maximal_cliques, loss_fn, data, lipschitz)
 
-    return MarginalLossFn(maximal_cliques, loss_fn)
+    return loss
 
 
 def primal_feasibility(mu: CliqueVector) -> chex.Numeric:

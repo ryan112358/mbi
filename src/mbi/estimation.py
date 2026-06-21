@@ -181,7 +181,7 @@ def mirror_descent(
     mu = marginal_oracle(potentials, known_total)
     initial_loss = loss_fn(mu)
 
-    # Use partial to capture non-hashable args (MarginalLossFn has list fields).
+    # Use partial to capture loss_fn and marginal_oracle as closed-over args.
     state = MirrorDescentState(potentials, alpha, initial_loss, mu)
     step = jax.jit(
         functools.partial(
