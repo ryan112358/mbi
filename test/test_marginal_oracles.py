@@ -3,6 +3,17 @@ from mbi.domain import Domain
 from mbi.factor import Factor
 from mbi.clique_vector import CliqueVector
 from mbi import marginal_oracles
+from mbi.marginal_oracles import (
+    MessagePassingOracle,
+    MessageSchedule,
+    Semiring,
+    LOG_SUM_PRODUCT,
+    MAX_SUM,
+    SUM_PRODUCT,
+    einsum_materialized,
+    einsum_semiring,
+    einsum_stabilized,
+)
 from mbi.extensions.constraints import message_passing_with_constraints
 import jax.numpy as jnp
 import numpy as np
@@ -38,8 +49,18 @@ def _bulk_variable_elimination_oracle(
     )
 
 
-message_passing_fast_v1 = marginal_oracles.MessagePassingOracle(
-    contraction=marginal_oracles.einsum_materialized,
+# New MessagePassingOracle configurations exercising the new API.
+_implicit_materialized = MessagePassingOracle(
+    contraction=einsum_materialized,
+)
+_implicit_semiring = MessagePassingOracle(
+    contraction=einsum_semiring,
+)
+_hugin_oracle = MessagePassingOracle(
+    schedule=MessageSchedule.HUGIN,
+)
+_shafer_shenoy_oracle = MessagePassingOracle(
+    schedule=MessageSchedule.SHAFER_SHENOY,
 )
 
 
@@ -49,7 +70,10 @@ _ORACLES = [
     marginal_oracles.message_passing_stable,
     marginal_oracles.message_passing_shafer_shenoy,
     marginal_oracles.message_passing_fast,
-    message_passing_fast_v1,
+    _implicit_materialized,
+    _implicit_semiring,
+    _hugin_oracle,
+    _shafer_shenoy_oracle,
     message_passing_with_constraints,
     _variable_elimination_oracle,
     _calculate_many_oracle,
@@ -59,6 +83,7 @@ _ORACLES = [
 _STABLE_ORACLES = [
     marginal_oracles.brute_force_marginals,
     marginal_oracles.message_passing_shafer_shenoy,
+    _shafer_shenoy_oracle,
     message_passing_with_constraints,
 ]
 
@@ -80,6 +105,16 @@ _ALL_CLIQUES = list(
         itertools.combinations(_DOMAIN.attrs, r) for r in range(5)
     )
 )
+
+# Contraction functions for the IMPLICIT schedule.
+_CONTRACTIONS = [
+    einsum_stabilized,
+    einsum_materialized,
+    einsum_semiring,
+]
+
+# All three schedules for exhaustive schedule testing.
+_SCHEDULES = list(MessageSchedule)
 
 
 class TestMarginalOracles(unittest.TestCase):
@@ -190,3 +225,78 @@ class TestMarginalOracles(unittest.TestCase):
                 jnp.allclose(factor.sum().values, 1.0),
                 f"Marginal for {cl} does not sum to 1",
             )
+
+    # --- Tests for the new composable API ---
+
+    @parameterized.expand(
+        itertools.product(_SCHEDULES, _CLIQUE_SETS)
+    )
+    def test_schedule_matches_brute_force(self, schedule, cliques, total=10):
+        """Every schedule produces identical marginals to brute force."""
+        oracle = MessagePassingOracle(schedule=schedule)
+        theta = CliqueVector.random(_DOMAIN, cliques)
+        mu1 = oracle(theta, total)
+        mu2 = marginal_oracles.brute_force_marginals(theta, total)
+        for cl in cliques:
+            np.testing.assert_allclose(
+                mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
+            )
+
+    @parameterized.expand(
+        itertools.product(_CONTRACTIONS, _CLIQUE_SETS)
+    )
+    def test_contraction_matches_brute_force(self, contraction, cliques, total=10):
+        """Every contraction function produces identical marginals to brute force."""
+        oracle = MessagePassingOracle(contraction=contraction)
+        theta = CliqueVector.random(_DOMAIN, cliques)
+        mu1 = oracle(theta, total)
+        mu2 = marginal_oracles.brute_force_marginals(theta, total)
+        for cl in cliques:
+            np.testing.assert_allclose(
+                mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
+            )
+
+    @parameterized.expand([(cs,) for cs in _CLIQUE_SETS])
+    def test_sum_product_semiring(self, cliques, total=10):
+        """SUM_PRODUCT semiring on exponentiated potentials matches log-space brute force."""
+        theta = CliqueVector.random(_DOMAIN, cliques)
+        # brute force in log space as reference
+        mu_ref = marginal_oracles.brute_force_marginals(theta, total)
+        # probability-space potentials: exp(theta)
+        prob_potentials = theta.exp()
+        oracle = MessagePassingOracle(
+            contraction=einsum_materialized, semiring=SUM_PRODUCT,
+        )
+        mu = oracle(prob_potentials, total)
+        for cl in cliques:
+            np.testing.assert_allclose(
+                mu[cl].datavector(), mu_ref[cl].datavector(), atol=1e-5
+            )
+
+    @parameterized.expand([(cs,) for cs in _CLIQUE_SETS])
+    def test_max_sum_semiring(self, cliques):
+        """MAX_SUM max-marginals peak at the global MAP configuration."""
+        theta = CliqueVector.random(_DOMAIN, cliques)
+        oracle = MessagePassingOracle(
+            contraction=einsum_materialized, semiring=MAX_SUM,
+        )
+        mu = oracle(theta, 1)
+        if len(cliques) == 0:
+            return
+        # Reference: brute-force MAP via materializing the full joint
+        log_joint = sum(theta.arrays.values())
+        map_idx = jnp.unravel_index(
+            jnp.argmax(log_joint.values), log_joint.domain.shape
+        )
+        map_config = dict(zip(log_joint.domain.attributes, [int(i) for i in map_idx]))
+        for cl in cliques:
+            marginal = mu[cl]
+            # The argmax of each max-marginal should agree with the MAP projection
+            marginal_map_idx = jnp.unravel_index(
+                jnp.argmax(marginal.values), marginal.domain.shape
+            )
+            for attr, idx in zip(marginal.domain.attributes, marginal_map_idx):
+                self.assertEqual(
+                    int(idx), map_config[attr],
+                    f"MAX_SUM argmax for {attr} in clique {cl} disagrees with global MAP",
+                )
