@@ -20,6 +20,7 @@ from typing import Any, NamedTuple, Protocol, TypeAlias
 
 import attr
 import jax
+import jax.numpy as jnp
 import networkx as nx
 from scipy.cluster.hierarchy import DisjointSet
 
@@ -303,12 +304,11 @@ class ApproxMirrorDescent:
         )
         return ApproxMirrorDescentState(potentials, mu, messages)
 
-    @functools.partial(jax.jit, static_argnames=["self", "loss_fn"])
+    @functools.partial(jax.jit, static_argnames=["self"])
     def _step(
         self,
         state: ApproxMirrorDescentState,
         total: jax.Array | float,
-        *,
         loss_fn: marginal_loss.MarginalLossFn,
     ) -> ApproxMirrorDescentState:
         """Perform a single mirror descent step."""
@@ -353,7 +353,7 @@ class ApproxMirrorDescent:
         state = self._init(potentials, known_total)
 
         for _ in range(iters):
-            state = self._step(state, known_total, loss_fn=loss_fn)
+            state = self._step(state, known_total, loss_fn)
             callback_fn(state.mu)
 
         # Final oracle call with warm-started messages.
@@ -370,31 +370,43 @@ class ApproxMirrorDescent:
     def precompile(
         self,
         domain: Domain,
-        loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
+        measurements: list[LinearMeasurement] | None = None,
         *,
-        known_total: float | None = None,
-        potentials: CliqueVector | None = None,
+        extra_cliques: list[tuple[str, ...]] | None = None,
     ) -> None:
         """Warm up the JIT cache for ``estimate``.
 
-        Triggers ahead-of-time compilation of the jitted step function using
-        ``lower().compile()``.  The compiled program is discarded, but it
-        populates the JIT cache so that subsequent calls to ``estimate`` with
-        the same ``loss_fn`` skip compilation entirely.
+        Triggers ahead-of-time compilation of the jitted step function
+        without materializing any concrete arrays.  Because
+        ``MarginalLossFn`` is a JAX pytree, the compiled program depends
+        only on the clique structure and loss type (static metadata), not
+        on measurement values (dynamic leaves).
+
+        You may pass concrete ``measurements`` you already have, plus
+        ``extra_cliques`` for cliques whose measurements are not yet
+        available.  Abstract ``LinearMeasurement`` objects with
+        ``ShapeDtypeStruct`` values are constructed for extra cliques.
 
         Args:
             domain: The domain over which the model is defined.
-            loss_fn: A ``MarginalLossFn`` or a list of ``LinearMeasurement``.
-            known_total: The known or estimated number of records.
-            potentials: Initial potentials.
+            measurements: Optional list of ``LinearMeasurement`` objects.
+            extra_cliques: Optional additional cliques to compile for.
         """
-        loss_fn, known_total, potentials = estimation._initialize(
-            domain, loss_fn, known_total, potentials
-        )
-        state = self._init(potentials, known_total)
+        all_measurements = list(measurements or [])
+        for cl in extra_cliques or []:
+            shape = (domain.project(cl).size(),)
+            abstract_values = jax.ShapeDtypeStruct(shape, jnp.float32)
+            all_measurements.append(LinearMeasurement(abstract_values, cl))
+
+        loss_fn = marginal_loss.from_linear_measurements(all_measurements)
+        potentials = CliqueVector.abstract(domain, loss_fn.cliques)
+
+        # Use eval_shape to get the abstract state pytree without
+        # running any computation.
+        abstract_state = jax.eval_shape(self._init, potentials, 1.0)
 
         # lower().compile() populates the jit cache without executing.
-        self._step.lower(self, state, known_total, loss_fn=loss_fn).compile()
+        self._step.lower(self, abstract_state, 1.0, loss_fn).compile()
 
 
 def mirror_descent(
