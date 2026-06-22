@@ -24,6 +24,11 @@ from ..markov_random_field import MarkovRandomField
 _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 
+# precompile() and synthetic_data() are coupled: both must build the same
+# _GenerationPlan and call _generate_column with matching static args for
+# the JIT cache to hit.  Keep their signatures and internal logic in sync.
+
+
 def precompile(
     domain: Domain,
     cliques: list[Clique],
