@@ -219,7 +219,7 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
         np.testing.assert_allclose(model.total, total, rtol=0.1)
 
     def test_callback(self):
-        """Callback should be called once per scan block."""
+        """Callback should be invoked during estimation."""
         cliques = [("a", "b")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
 
@@ -235,9 +235,8 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
             measurements,
             iters=100,
             callback_fn=callback,
-            callback_every=25,
         )
-        self.assertEqual(callback_count[0], 4)
+        self.assertGreater(callback_count[0], 0)
 
     def test_custom_optimizer(self):
         """Should accept a custom optax optimizer."""

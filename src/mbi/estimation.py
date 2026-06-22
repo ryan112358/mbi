@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import functools
+import math
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -38,6 +39,7 @@ from .markov_random_field import MarkovRandomField
 
 # Shared thread pool for background JIT compilation.
 _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+CALLBACK_EVERY = 50
 
 
 class Estimator(ABC):
@@ -109,7 +111,6 @@ class Estimator(ABC):
         known_total: float | None = None,
         iters: int = 1000,
         callback_fn: Callable | None = None,
-        callback_every: int = 1,
         **kwargs: Any,
     ) -> Model:
         """Estimate a Model from noisy marginal measurements."""
@@ -121,11 +122,20 @@ class Estimator(ABC):
             known_total = 1.0
 
         state = self._init(domain, loss_fn, known_total, **kwargs)
-        for i in range(iters):
-            state = self._step(state, loss_fn, known_total)
-            if callback_fn is not None and (i + 1) % callback_every == 0:  # pylint: disable=use-implicit-booleaness-not-comparison-to-zero
+        for _ in range(math.ceil(iters / CALLBACK_EVERY)):
+            state = self._multi_step(state, loss_fn, known_total)
+            if callback_fn is not None:
                 callback_fn(self._callback_value(state, known_total))
         return self._finalize(state, known_total)
+
+    @jax.jit(static_argnames=["self"])
+    def _multi_step(self, state, loss_fn, known_total):
+        """Run ``CALLBACK_EVERY`` optimization steps as a fused scan."""
+
+        def step(s, _):
+            return self._step(s, loss_fn, known_total), None
+
+        return jax.lax.scan(step, state, None, length=CALLBACK_EVERY)[0]
 
     def precompile(
         self,
@@ -150,7 +160,7 @@ class Estimator(ABC):
 
         loss_fn = marginal_loss.from_linear_measurements(all_measurements)
         abstract_state = jax.eval_shape(self._init, domain, loss_fn, 1.0)
-        lowered = self._step.lower(self, abstract_state, loss_fn, 1.0)  # pytype: disable=attribute-error
+        lowered = self._multi_step.lower(self, abstract_state, loss_fn, 1.0)
         return _COMPILE_POOL.submit(lowered.compile)
 
 

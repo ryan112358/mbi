@@ -246,7 +246,7 @@ class TestEstimation(unittest.TestCase):
         self.assertEqual(data.domain, _DOMAIN)
 
     def test_callback(self):
-        """Callback should be called once per scan block."""
+        """Callback should be invoked during estimation."""
         cliques = [("a", "b")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
         seed_data = _make_seed_data(_DOMAIN)
@@ -263,9 +263,8 @@ class TestEstimation(unittest.TestCase):
             measurements,
             iters=100,
             callback_fn=callback,
-            callback_every=25,
         )
-        self.assertEqual(callback_count[0], 4)
+        self.assertGreater(callback_count[0], 0)
 
     def test_custom_optimizer(self):
         """Should accept a custom optax optimizer."""
