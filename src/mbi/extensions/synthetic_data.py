@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections
 import concurrent.futures
 import dataclasses
+import functools
 import logging
 from typing import Any
 
@@ -23,14 +24,113 @@ from ..markov_random_field import MarkovRandomField
 _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 
+def precompile(
+    domain: Domain,
+    cliques: list[Clique],
+    rows: int,
+) -> concurrent.futures.Future:
+  """Warm the JIT cache for ``synthetic_data`` asynchronously.
+
+  Only requires domain and clique structure — both are available before
+  estimation finishes.  Fire and forget; ``synthetic_data`` benefits from
+  whatever has compiled so far.
+
+  Args:
+    domain: The Domain over which the model is defined.
+    cliques: The cliques of the model (known after workload selection).
+    rows: Number of records that will be generated.
+  """
+  rows = max(1, int(rows))
+  plan = _build_plan(domain, cliques)
+
+  def _compile_all():
+    # Run dummy message passing to get Factor inputs with correct
+    # pytree structure for per-column compilation.
+    dummy_potentials = _make_dummy_potentials(domain, cliques)
+    _, dummy_messages = marginal_oracles.message_passing_implicit(
+        dummy_potentials, 1.0, jtree=plan.jtree, return_messages=True,
+    )
+    pot_map, msg_map = _build_lookups(
+        plan, dummy_potentials, dummy_messages, domain,
+    )
+    for cp in plan.columns.values():
+      inputs = _gather_inputs(cp, domain, pot_map, msg_map)
+      dummy_parents = tuple(
+          jnp.zeros(rows, dtype=jnp.int32) for _ in cp.parents
+      )
+      _generate_column.lower(
+          jax.random.PRNGKey(0), inputs, dummy_parents,
+          query=cp.query, parent_sizes=cp.parent_sizes, total=rows,
+      ).compile()
+
+  return _COMPILE_POOL.submit(_compile_all)
+
+
+def synthetic_data(
+    model: MarkovRandomField,
+    rows: int,
+    seed: int = 0,
+) -> Dataset:
+  """Generate synthetic data from a fitted model using Gumbel rounding.
+
+  Output marginals match the model within ±2 counts per cell.  If
+  ``precompile`` was called earlier with matching domain, cliques, and
+  ``rows``, the JIT cache will be warm and this call is fast.
+
+  Args:
+    model: A fitted ``MarkovRandomField``.
+    rows: Number of records to generate.
+    seed: Random seed for the JAX PRNG.
+
+  Returns:
+    A ``Dataset`` whose marginals closely match the model.
+  """
+  rows = max(1, int(rows))
+  domain = model.domain
+  plan = _build_plan(domain, model.cliques)
+
+  # Clique ordering in model.potentials must match the cliques passed to
+  # precompile() for the JIT cache to hit (cliques are pytree metadata).
+  _, messages = marginal_oracles.message_passing_implicit(
+      model.potentials, 1.0, jtree=plan.jtree, return_messages=True,
+  )
+  pot_map, msg_map = _build_lookups(
+      plan, model.potentials, messages, domain,
+  )
+
+  rng = jax.random.PRNGKey(seed)
+  data: dict[str, jax.Array] = {}
+
+  for step, col in enumerate(plan.order):
+    rng, col_rng = jax.random.split(rng)
+    cp = plan.columns[col]
+
+    inputs = _gather_inputs(cp, domain, pot_map, msg_map)
+    parent_arrays = tuple(data[p] for p in cp.parents)
+    data[col] = _generate_column(
+        col_rng, inputs, parent_arrays,
+        query=cp.query, parent_sizes=cp.parent_sizes, total=rows,
+    )
+
+    if (step + 1) % 10 == 0 or step + 1 == len(plan.order):
+      logging.info('Col %d/%d: %s done', step + 1, len(plan.order), col)
+
+  return Dataset(
+      {col: np.asarray(arr) for col, arr in data.items()}, domain,
+  )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers.
+# ---------------------------------------------------------------------------
+
+
 @dataclasses.dataclass(frozen=True)
 class _ColumnPlan:
   col: str
-  has_parents: bool
   query: tuple[str, ...]
   parents: tuple[str, ...]
   maximal_clique: tuple[str, ...]
-  domain_size: int
   parent_sizes: tuple[int, ...]
 
 
@@ -40,138 +140,9 @@ class _GenerationPlan:
   columns: dict[str, _ColumnPlan]
   jtree: Any  # nx.Graph
   maximal_cliques: list[tuple[str, ...]]
-  elimination_order: tuple[str, ...]
 
 
-class SyntheticDataGenerator:
-  """Generates synthetic data from a MarkovRandomField using JAX.
-
-  Uses Gumbel rounding so output marginals match the model within
-  ±2 counts per cell.  Precompilation only requires domain and clique
-  structure, so it can overlap with estimation.
-  """
-
-  def __init__(self):
-    self._plan: _GenerationPlan | None = None
-
-  def precompile(
-      self,
-      domain: Domain,
-      cliques: list[Clique],
-      rows: int,
-  ) -> concurrent.futures.Future:
-    """Warm up the JIT cache for ``generate`` asynchronously.
-
-    Only requires domain and clique structure.  Compilation pipelines
-    naturally with ``generate()`` via the JIT cache, so there is no
-    need to wait on the returned ``Future``.
-
-    Args:
-      domain: The Domain over which the model is defined.
-      cliques: The cliques of the model (known after workload selection).
-      rows: Number of records that will be generated.
-    """
-    rows = max(1, int(rows))
-    plan = _build_plan(domain, cliques)
-    self._plan = plan
-
-    # NOTE: JAX's JIT cache doesn't coalesce in-flight compilations, so
-    # if generate() races the background thread it may compile redundantly.
-    def _compile_all():
-      _precompile_message_passing(domain, cliques, plan)
-      for cp in plan.columns.values():
-        _precompile_column(cp, rows)
-
-    return _COMPILE_POOL.submit(_compile_all)
-
-  def generate(
-      self,
-      model: MarkovRandomField,
-      rows: int,
-      *,
-      seed: int = 0,
-  ) -> Dataset:
-    """Generate synthetic data from a fitted model.
-
-    If ``precompile`` was called earlier with the same domain, cliques,
-    and ``rows``, the JIT cache will be warm and this call is fast.
-
-    Args:
-      model: A fitted ``MarkovRandomField``.
-      rows: Number of records to generate.
-      seed: Random seed for the JAX PRNG.
-
-    Returns:
-      A ``Dataset`` whose marginals closely match the model.
-    """
-    rows = max(1, int(rows))
-    domain = model.domain
-    cliques = [set(cl) for cl in model.cliques]
-
-    if self._plan is not None:
-      plan = self._plan
-    else:
-      plan = _build_plan(domain, cliques)
-      self._plan = plan
-
-    # Phase 1: message passing (JIT'd via annotation on the function).
-    # Clique ordering in model.potentials must match the cliques passed to
-    # precompile() for the JIT cache to hit (cliques are pytree metadata).
-    _, messages = marginal_oracles.message_passing_implicit(
-        model.potentials, 1.0, jtree=plan.jtree, return_messages=True,
-    )
-
-    # Build per-maximal-clique lookups.
-    mapping = clique_mapping(
-        plan.maximal_cliques, model.cliques, domain=domain,
-    )
-    potential_mapping: dict[tuple, list[Factor]] = (
-        collections.defaultdict(list)
-    )
-    for cl in model.cliques:
-      potential_mapping[mapping[cl]].append(model.potentials[cl])
-
-    message_lookup: dict[tuple, list[Factor]] = (
-        collections.defaultdict(list)
-    )
-    for (i, j), msg in messages.items():
-      message_lookup[j].append(msg)
-
-    # Phase 2: generate columns (all on device).
-    rng = jax.random.PRNGKey(seed)
-    data_jax: dict[str, jax.Array] = {}
-
-    for step, col in enumerate(plan.order):
-      rng, col_rng = jax.random.split(rng)
-      cp = plan.columns[col]
-
-      marg_jax = _compute_marginal_jax(
-          cp.maximal_clique, cp.query, domain,
-          potential_mapping, message_lookup, rows,
-      )
-
-      if cp.has_parents:
-        parent_data = tuple(data_jax[p] for p in cp.parents)
-        parent_idx = _ravel_multi_index_jax(parent_data, cp.parent_sizes)
-      else:
-        parent_idx = jnp.zeros(rows, dtype=jnp.int32)
-        marg_jax = marg_jax[None, :]
-
-      data_jax[col] = _gumbel_round(
-          col_rng, marg_jax, parent_idx, total=rows,
-      )
-
-      if (step + 1) % 10 == 0 or step + 1 == len(plan.order):
-        logging.info(
-            'Col %d/%d: %s done', step + 1, len(plan.order), col,
-        )
-
-    data = {col: np.asarray(arr) for col, arr in data_jax.items()}
-    return Dataset(data, domain)
-
-
-def _build_plan(domain: Domain, cliques: list[Clique]) -> _GenerationPlan:
-  """Analyse the junction tree and build the per-column generation plan."""
+def _build_plan(domain: Domain, cliques) -> _GenerationPlan:
   clique_sets = [set(cl) for cl in cliques]
   jtree, elimination_order = junction_tree.make_junction_tree(
       domain, clique_sets,
@@ -187,61 +158,89 @@ def _build_plan(domain: Domain, cliques: list[Clique]) -> _GenerationPlan:
     used.add(col)
 
     query = parents + (col,) if parents else (col,)
-    query_set = set(query)
-    mc = _find_maxclique(query_set, maximal_cliques)
+    mc = _find_maxclique(set(query), maximal_cliques)
 
     columns[col] = _ColumnPlan(
         col=col,
-        has_parents=bool(parents),
         query=query,
         parents=parents,
         maximal_clique=mc,
-        domain_size=domain[col],
         parent_sizes=tuple(domain[p] for p in parents),
     )
 
   return _GenerationPlan(
-      order=order,
-      columns=columns,
-      jtree=jtree,
-      maximal_cliques=maximal_cliques,
-      elimination_order=tuple(elimination_order),
+      order=order, columns=columns,
+      jtree=jtree, maximal_cliques=maximal_cliques,
   )
 
 
-def _precompile_message_passing(domain, cliques, plan):
-  """Trace and compile the message passing program without executing it."""
-  dummy_arrays = {}
+def _make_dummy_potentials(domain, cliques):
+  arrays = {}
   for cl in cliques:
     shape = tuple(domain[attr] for attr in cl)
-    dummy_arrays[cl] = jnp.zeros(shape, dtype=jnp.float32)
-  dummy_potentials = CliqueVector(domain, list(cliques), dummy_arrays)
-  marginal_oracles.message_passing_implicit.lower(
-      dummy_potentials, 1.0, jtree=plan.jtree, return_messages=True,
-  ).compile()
+    arrays[cl] = jnp.zeros(shape, dtype=jnp.float32)
+  return CliqueVector(domain, list(cliques), arrays)
 
 
-def _precompile_column(cp: _ColumnPlan, rows: int) -> None:
-  """Trace and compile one column's generation function without executing it."""
-  dummy_rng = jax.random.PRNGKey(0)
-  parent_product = 1 if not cp.has_parents else (
-      int(np.prod(cp.parent_sizes))
+def _build_lookups(plan, potentials, messages, domain):
+  mapping = clique_mapping(
+      plan.maximal_cliques, potentials.cliques, domain=domain,
   )
-  dummy_marg = jnp.ones((parent_product, cp.domain_size), dtype=jnp.float32)
-  dummy_idx = jnp.zeros(rows, dtype=jnp.int32)
-  _gumbel_round.lower(dummy_rng, dummy_marg, dummy_idx, total=rows).compile()
+  pot_map: dict[tuple, list[Factor]] = collections.defaultdict(list)
+  for cl in potentials.cliques:
+    pot_map[mapping[cl]].append(potentials[cl])
+
+  msg_map: dict[tuple, list[Factor]] = collections.defaultdict(list)
+  for (i, j), msg in messages.items():
+    msg_map[j].append(msg)
+
+  return pot_map, msg_map
 
 
-@jax.jit(static_argnames=['total'])
-def _gumbel_round(rng_key, marg_counts_2d, flat_parent_idx, *, total):
-  """Gumbel rounding: assign each record a value matching expected marginals."""
+def _gather_inputs(cp, domain, pot_map, msg_map):
+  inputs = list(pot_map[cp.maximal_clique]) + list(
+      msg_map[cp.maximal_clique]
+  )
+  query_domain = domain.project(cp.query)
+  for attr in query_domain.attributes:
+    if not any(attr in inp.domain.attributes for inp in inputs):
+      inputs.append(Factor.zeros(domain.project([attr])))
+  return inputs
+
+
+@jax.jit(static_argnames=['query', 'parent_sizes', 'total'])
+def _generate_column(rng_key, inputs, parent_arrays, *, query, parent_sizes,
+                     total):
+  """Fused per-column program: marginal computation + Gumbel rounding."""
+  # Marginal computation (einsum_materialized, inlined).
+  combined = functools.reduce(lambda a, b: a + b, inputs)
+  query_domain = combined.domain.project(query)
+  elim_attrs = combined.domain.marginalize(query_domain).attributes
+  result = combined.logsumexp(elim_attrs).transpose(query_domain.attributes)
+  result = result.normalize(total, log=True).exp()
+  marg = result.datavector(flatten=False)
+
+  # Parent indexing.
+  if parent_arrays:
+    marg_2d = marg.reshape(-1, marg.shape[-1])
+    parent_idx = _ravel_multi_index_jax(parent_arrays, parent_sizes)
+  else:
+    marg_2d = marg[jnp.newaxis, :]
+    parent_idx = jnp.zeros(total, dtype=jnp.int32)
+
+  # Gumbel rounding.
+  return _gumbel_round(rng_key, marg_2d, parent_idx, total)
+
+
+def _gumbel_round(rng_key, marg_2d, flat_parent_idx, total):
+  """Gumbel rounding (called inside JIT, not separately decorated)."""
   rng1, rng2 = jax.random.split(rng_key)
 
-  domain_size = marg_counts_2d.shape[-1]
-  parent_product = marg_counts_2d.shape[0]
+  domain_size = marg_2d.shape[-1]
+  parent_product = marg_2d.shape[0]
 
-  marg_parents = marg_counts_2d.sum(axis=-1, keepdims=True)
-  cond_probs = jnp.where(marg_parents != 0, marg_counts_2d / marg_parents, 0.0)
+  marg_parents = marg_2d.sum(axis=-1, keepdims=True)
+  cond_probs = jnp.where(marg_parents != 0, marg_2d / marg_parents, 0.0)
 
   counts_per_parent = jnp.bincount(flat_parent_idx, length=parent_product)
 
@@ -286,24 +285,6 @@ def _gumbel_round(rng_key, marg_counts_2d, flat_parent_idx, *, total):
   result = jnp.empty(total, dtype=jnp.int32)
   result = result.at[sort_order].set(all_values)
   return result
-
-
-def _compute_marginal_jax(
-    maximal_clique, query, domain, potential_mapping, message_lookup, total,
-):
-  """Compute a query marginal on device from cached messages and potentials."""
-  inputs = list(potential_mapping[maximal_clique]) + list(
-      message_lookup[maximal_clique]
-  )
-  query_domain = domain.project(query)
-
-  for attr in query_domain.attributes:
-    if not any(attr in inp.domain.attributes for inp in inputs):
-      inputs.append(Factor.zeros(domain.project([attr])))
-
-  result = marginal_oracles.einsum_materialized(inputs, query_domain)
-  result = result.normalize(total, log=True).exp()
-  return result.datavector(flatten=False)
 
 
 def _ravel_multi_index_jax(arrays, sizes):
