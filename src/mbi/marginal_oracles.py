@@ -131,14 +131,12 @@ class MarginalOracle(Protocol):
         self,
         potentials: CliqueVector,
         total: float = 1.0,
-        mesh: jax.sharding.Mesh | None = None,
     ) -> CliqueVector:
         """Compute marginals from potentials.
 
         Args:
             potentials: Potentials of a graphical model.
             total: Normalization constant. Defaults to 1.0.
-            mesh: Optional sharding mesh.
 
         Returns:
             Marginals as a CliqueVector.
@@ -292,17 +290,6 @@ class MessageSchedule(enum.Enum):
 ContractionFn = Callable[[list[Factor], Domain, Semiring], Factor]
 
 
-@dataclasses.dataclass(frozen=True)
-class InferenceResult:
-    """Result of junction tree inference, containing marginals and messages.
-
-    Attributes:
-        marginals: Normalized marginals as a CliqueVector over the input cliques.
-        messages: Dictionary mapping ``(sender, receiver)`` clique pairs to
-            the message Factor sent along that edge of the junction tree.
-    """
-    marginals: CliqueVector
-    messages: dict[tuple, Factor]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -333,12 +320,11 @@ class MessagePassingOracle:
     contraction: ContractionFn = einsum_stabilized
     semiring: Semiring = LOG_SUM_PRODUCT
 
-    @jax.jit(static_argnames=["self", "mesh", "jtree"])
+    @jax.jit(static_argnames=["self", "jtree"])
     def __call__(
         self,
         potentials: CliqueVector,
         total: float = 1.0,
-        mesh: jax.sharding.Mesh | None = None,
         jtree: nx.Graph | None = None,
     ) -> CliqueVector:
         """Compute marginals from potentials.
@@ -347,43 +333,42 @@ class MessagePassingOracle:
             potentials: Potentials of a graphical model (log-space or
                 probability-space, depending on the semiring).
             total: Normalization constant for the output marginals.
-            mesh: Optional sharding mesh.
             jtree: Optional pre-computed junction tree.  If ``None``,
                 one is constructed automatically from the potentials.
 
         Returns:
             Marginals as a CliqueVector over the same cliques.
         """
-        return self.infer(potentials, total, mesh, jtree).marginals
+        return self.infer(potentials, total, jtree)[0]
 
     def infer(
         self,
         potentials: CliqueVector,
         total: float = 1.0,
-        mesh: jax.sharding.Mesh | None = None,
         jtree: nx.Graph | None = None,
-    ) -> InferenceResult:
+    ) -> tuple[CliqueVector, dict]:
         """Run inference and return both marginals and messages.
 
         This method has the same semantics as ``__call__`` but returns
-        an ``InferenceResult`` containing the intermediate messages in
-        addition to the marginals.
+        a ``(marginals, messages)`` tuple containing the intermediate
+        messages in addition to the marginals.
 
         Args:
             potentials: Potentials of a graphical model.
             total: Normalization constant for the output marginals.
-            mesh: Optional sharding mesh.
             jtree: Optional pre-computed junction tree.
 
         Returns:
-            An ``InferenceResult`` with ``.marginals`` and ``.messages``.
+            A tuple of (marginals, messages) where marginals is a
+            CliqueVector and messages is a dict mapping
+            ``(sender, receiver)`` clique pairs to message Factors.
         """
         if self.schedule == MessageSchedule.IMPLICIT:
-            return self._implicit(potentials, total, mesh, jtree)
+            return self._implicit(potentials, total, jtree)
         elif self.schedule == MessageSchedule.HUGIN:
-            return self._hugin(potentials, total, mesh, jtree)
+            return self._hugin(potentials, total, jtree)
         elif self.schedule == MessageSchedule.SHAFER_SHENOY:
-            return self._shafer_shenoy(potentials, total, mesh, jtree)
+            return self._shafer_shenoy(potentials, total, jtree)
         else:
             raise ValueError(f"Unknown schedule: {self.schedule}")
 
@@ -394,12 +379,11 @@ class MessagePassingOracle:
         else:
             return beliefs.normalize(total, log=False)
 
-    def _hugin(self, potentials, total, mesh, jtree):
+    def _hugin(self, potentials, total, jtree):
         """HUGIN message passing with belief subtraction."""
         if len(potentials.cliques) == 0:
-            return InferenceResult(CliqueVector(potentials.domain, [], {}), {})
+            return CliqueVector(potentials.domain, [], {}), {}
 
-        potentials = potentials.apply_sharding(mesh)
         domain, cliques = potentials.domain, potentials.cliques
 
         if jtree is None:
@@ -408,7 +392,7 @@ class MessagePassingOracle:
         maximal_cliques = junction_tree.maximal_cliques(jtree)
 
         mapping = clique_mapping(maximal_cliques, cliques, domain=domain)
-        beliefs = potentials.expand(maximal_cliques).apply_sharding(mesh)
+        beliefs = potentials.expand(maximal_cliques)
 
         messages = {}
         for i, j in message_order:
@@ -423,16 +407,14 @@ class MessagePassingOracle:
         marginals = (
             self._normalize_beliefs(beliefs, total)
             .contract(cliques)
-            .apply_sharding(mesh)
         )
-        return InferenceResult(marginals, messages)
+        return marginals, messages
 
-    def _shafer_shenoy(self, potentials, total, mesh, jtree):
+    def _shafer_shenoy(self, potentials, total, jtree):
         """Shafer-Shenoy message passing with neighbor collection."""
         if len(potentials.cliques) == 0:
-            return InferenceResult(CliqueVector(potentials.domain, [], {}), {})
+            return CliqueVector(potentials.domain, [], {}), {}
 
-        potentials = potentials.apply_sharding(mesh)
         domain, cliques = potentials.domain, potentials.cliques
 
         if jtree is None:
@@ -440,7 +422,7 @@ class MessagePassingOracle:
         message_order = junction_tree.message_passing_order(jtree)
         maximal_cliques = junction_tree.maximal_cliques(jtree)
 
-        initial_beliefs = potentials.expand(maximal_cliques).apply_sharding(mesh)
+        initial_beliefs = potentials.expand(maximal_cliques)
 
         messages = {}
         neighbors = {cl: list(jtree.neighbors(cl)) for cl in maximal_cliques}
@@ -466,16 +448,14 @@ class MessagePassingOracle:
         marginals = (
             self._normalize_beliefs(beliefs, total)
             .contract(cliques)
-            .apply_sharding(mesh)
         )
-        return InferenceResult(marginals, messages)
+        return marginals, messages
 
-    def _implicit(self, potentials, total, mesh, jtree):
+    def _implicit(self, potentials, total, jtree):
         """Implicit-factor message passing using a contraction function."""
         if len(potentials.cliques) == 0:
-            return InferenceResult(CliqueVector(potentials.domain, [], {}), {})
+            return CliqueVector(potentials.domain, [], {}), {}
 
-        potentials = potentials.apply_sharding(mesh)
         domain, cliques = potentials.active_domain, potentials.cliques
 
         if jtree is None:
@@ -511,7 +491,7 @@ class MessagePassingOracle:
 
             messages[(i, j)] = self.contraction(
                 inputs, shared, self.semiring,
-            ).apply_sharding(mesh)
+            )
 
         beliefs = {}
         for cl in maximal_cliques:
@@ -523,11 +503,11 @@ class MessagePassingOracle:
                     inputs, domain.project(cl2), self.semiring,
                 )
                 if self.semiring.log_space:
-                    beliefs[cl2] = belief.normalize(total, log=True).exp().apply_sharding(mesh)
+                    beliefs[cl2] = belief.normalize(total, log=True).exp()
                 else:
-                    beliefs[cl2] = belief.normalize(total, log=False).apply_sharding(mesh)
+                    beliefs[cl2] = belief.normalize(total, log=False)
 
-        return InferenceResult(CliqueVector(potentials.domain, cliques, beliefs), messages)
+        return CliqueVector(potentials.domain, cliques, beliefs), messages
 
     def __repr__(self) -> str:
         parts = [f"schedule={self.schedule.value}"]
@@ -562,7 +542,6 @@ message_passing_shafer_shenoy = MessagePassingOracle(
 def brute_force_marginals(
     potentials: CliqueVector,
     total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials by materializing the full joint distribution."""
     if len(potentials.cliques) == 0:
@@ -572,18 +551,16 @@ def brute_force_marginals(
         sum(potentials.arrays.values())
         .normalize(total, log=True)
         .exp()
-        .apply_sharding(mesh)
     )
     marginals = {cl: P.project(cl) for cl in potentials.cliques}
     return CliqueVector(
         potentials.domain, potentials.cliques, marginals
-    ).apply_sharding(mesh)
+    )
 
 
 def einsum_marginals(
     potentials: CliqueVector,
     total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
     einsum_fn: Callable = jnp.einsum,
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials by using einsum.
@@ -605,7 +582,6 @@ def einsum_marginals(
                 )
                 .normalize(total, log=True)
                 .exp()
-                .apply_sharding(mesh)
             )
             for cl in potentials.cliques
         },
@@ -622,7 +598,6 @@ def variable_elimination(
     potentials: CliqueVector,
     clique: Clique,
     total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
     evidence: dict[str, int] | None = None,
 ) -> Factor:
     """Compute an out-of-model/unsupported marginal from the potentials.
@@ -631,7 +606,6 @@ def variable_elimination(
         potentials: The (log-space) potentials of a Graphical Model.
         clique: The subset of attributes whose marginal you want.
         total: The normalization factor.
-        mesh: The mesh over which the computation should be sharded.
         evidence: A dictionary mapping attribute names to observed values.
 
     Returns:
@@ -674,7 +648,7 @@ def variable_elimination(
 
     for z in elim_order:
         psi2 = [psi.pop(i) for i in list(psi.keys()) if z in psi[i].domain]
-        psi[k] = sum(psi2).logsumexp([z]).apply_sharding(mesh)
+        psi[k] = sum(psi2).logsumexp([z])
         k += 1
     # this expand covers the case when clique is not in the active domain
     if has_vector_evidence:
@@ -689,7 +663,7 @@ def variable_elimination(
 
     zero = Factor(Domain([], []), jnp.asarray(0.0))
     unnormalized = (
-        sum(psi.values(), start=zero).expand(newdom).apply_sharding(mesh)
+        sum(psi.values(), start=zero).expand(newdom)
     )
 
     if has_vector_evidence:
@@ -698,13 +672,12 @@ def variable_elimination(
         ]
         log_z = unnormalized.logsumexp(sum_attrs)
         normalized = unnormalized + jnp.log(total) - log_z
-        return normalized.exp().project(clique).apply_sharding(mesh)
+        return normalized.exp().project(clique)
 
     return (
         unnormalized.normalize(total, log=True)
         .exp()
         .project(clique)
-        .apply_sharding(mesh)
     )
 
 
@@ -712,7 +685,6 @@ def bulk_variable_elimination(
     potentials: CliqueVector,
     marginal_queries: list[tuple[str, ...]],
     total: float = 1.0,
-    mesh: jax.sharding.Mesh | None = None,
 ) -> CliqueVector:
     """Compute the marginals of the graphical model with the given potentials.
 
@@ -728,16 +700,15 @@ def bulk_variable_elimination(
       potentials: The (log-space) potentials of a Graphical Model.
       marginal_queries: A list of cliques to obtain marginals for.
       total: The normalization factor.
-      mesh: The mesh over which the computation should be sharded.
 
     Returns:
       A CliqueVector with the marginals computed over the specified cliques.
     """
-    jitted = jax.jit(variable_elimination, static_argnums=(1, 3))
+    jitted = jax.jit(variable_elimination, static_argnums=(1,))
 
     # Async + parallel precompilation.
     def _precompile(query):
-        return query, jitted.lower(potentials, query, total, mesh).compile()
+        return query, jitted.lower(potentials, query, total).compile()
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = [executor.submit(_precompile, cl) for cl in marginal_queries]
@@ -755,7 +726,6 @@ def calculate_many_marginals(
     marginal_queries: list[Clique],
     total: float = 1.0,
     belief_propagation_oracle: MarginalOracle = message_passing_stable,
-    mesh: jax.sharding.Mesh | None = None,
 ) -> CliqueVector:
     """Calculate marginals for all projections using belief propagation.
 
@@ -783,7 +753,7 @@ def calculate_many_marginals(
     potentials = potentials.expand(max_cliques)
 
     # TODO: allow these to take in an optional junction tree
-    marginals = belief_propagation_oracle(potentials, total, mesh)
+    marginals = belief_propagation_oracle(potentials, total)
 
     # first calculate P(Cj | Ci) for all neighbors Ci, Cj
     conditional = {}
@@ -837,7 +807,7 @@ def calculate_many_marginals(
                 break
         if cl not in answers:
             # just use variable elimination
-            answers[cl] = variable_elimination(potentials, cl, total, mesh)
+            answers[cl] = variable_elimination(potentials, cl, total)
 
     return CliqueVector(domain, marginal_queries, answers)
 
@@ -846,7 +816,6 @@ def kron_query(
     potentials: CliqueVector,
     query_factors: dict[str, jax.Array],
     total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
     suffix: str = "_answer",
 ) -> Factor:
     new_factors = {}
@@ -866,4 +835,4 @@ def kron_query(
     domain = potentials.domain.merge(Domain.fromdict(extra_domain))
     cliques = potentials.cliques + tuple(extra_cliques)
     inputs = CliqueVector(domain, cliques, new_factors)
-    return variable_elimination(inputs, tuple(target_clique), total, mesh)
+    return variable_elimination(inputs, tuple(target_clique), total)
