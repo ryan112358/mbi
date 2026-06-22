@@ -46,19 +46,12 @@ class _GenerationPlan:
 class SyntheticDataGenerator:
   """Generates synthetic data from a MarkovRandomField using JAX.
 
-  Precompilation only requires domain and clique structure, so it can
-  overlap with estimation.
-
-  Args:
-    method: ``'round'`` for randomized rounding (default) or ``'sample'``
-      for i.i.d. categorical sampling.
+  Uses Gumbel rounding so output marginals match the model within
+  ±2 counts per cell.  Precompilation only requires domain and clique
+  structure, so it can overlap with estimation.
   """
 
-  def __init__(self, method: str = 'round'):
-    assert method in ('round', 'sample'), (
-        f"method must be 'round' or 'sample', got {method!r}"
-    )
-    self.method = method
+  def __init__(self):
     self._plan: _GenerationPlan | None = None
 
   def precompile(
@@ -87,7 +80,7 @@ class SyntheticDataGenerator:
     def _compile_all():
       _precompile_message_passing(domain, plan)
       for cp in plan.columns.values():
-        _precompile_column(cp, rows, self.method)
+        _precompile_column(cp, rows)
 
     return _COMPILE_POOL.submit(_compile_all)
 
@@ -157,14 +150,11 @@ class SyntheticDataGenerator:
       )
 
       if not cp.has_parents:
-        data_jax[col] = _dispatch_no_parents(
-            col_rng, marg_jax, rows, self.method,
-        )
+        data_jax[col] = _round_no_parents(col_rng, marg_jax, total=rows)
       else:
         parent_data = tuple(data_jax[p] for p in cp.parents)
-        data_jax[col] = _dispatch_with_parents(
-            col_rng, marg_jax, parent_data, cp.parent_sizes,
-            rows, self.method,
+        data_jax[col] = _round_with_parents(
+            col_rng, marg_jax, parent_data, cp.parent_sizes, total=rows,
         )
 
       if (step + 1) % 10 == 0 or step + 1 == len(plan.order):
@@ -229,51 +219,21 @@ def _precompile_message_passing(domain, plan):
   ).compile()
 
 
-def _precompile_column(cp: _ColumnPlan, rows: int, method: str) -> None:
+def _precompile_column(cp: _ColumnPlan, rows: int) -> None:
   """Trace and compile one column's generation function without executing it."""
   dummy_rng = jax.random.PRNGKey(0)
   if not cp.has_parents:
     dummy_marg = jnp.ones(cp.domain_size, dtype=jnp.float32)
-    fn = _sample_no_parents if method == 'sample' else _round_no_parents
-    fn.lower(dummy_rng, dummy_marg, total=rows).compile()
+    _round_no_parents.lower(dummy_rng, dummy_marg, total=rows).compile()
   else:
     shape = cp.parent_sizes + (cp.domain_size,)
     dummy_marg = jnp.ones(shape, dtype=jnp.float32)
     dummy_parents = tuple(
         jnp.zeros(rows, dtype=jnp.int32) for _ in cp.parent_sizes
     )
-    if method == 'sample':
-      _sample_with_parents.lower(
-          dummy_rng, dummy_marg, dummy_parents, cp.parent_sizes,
-      ).compile()
-    else:
-      _round_with_parents.lower(
-          dummy_rng, dummy_marg, dummy_parents, cp.parent_sizes, total=rows,
-      ).compile()
-
-
-def _dispatch_no_parents(rng_key, marg_counts, total, method):
-  if method == 'sample':
-    return _sample_no_parents(rng_key, marg_counts, total=total)
-  return _round_no_parents(rng_key, marg_counts, total=total)
-
-
-def _dispatch_with_parents(
-    rng_key, marg_counts, parent_data, parent_sizes, total, method,
-):
-  if method == 'sample':
-    return _sample_with_parents(rng_key, marg_counts, parent_data, parent_sizes)
-  return _round_with_parents(
-      rng_key, marg_counts, parent_data, parent_sizes, total=total,
-  )
-
-
-@jax.jit(static_argnames=['total'])
-def _sample_no_parents(rng_key, marg_counts, *, total):
-  probs = marg_counts / marg_counts.sum()
-  return jax.random.choice(
-      rng_key, marg_counts.shape[0], shape=(total,), p=probs,
-  ).astype(jnp.int32)
+    _round_with_parents.lower(
+        dummy_rng, dummy_marg, dummy_parents, cp.parent_sizes, total=rows,
+    ).compile()
 
 
 @jax.jit(static_argnames=['total'])
@@ -300,21 +260,6 @@ def _round_no_parents(rng_key, marg_counts, *, total):
   )
   perm = jax.random.permutation(rng2, total)
   return vals[perm]
-
-
-@jax.jit
-def _sample_with_parents(rng_key, marg_counts, parent_data, parent_sizes):
-  marg_parents = marg_counts.sum(axis=-1, keepdims=True)
-  cond_probs = jnp.where(marg_parents != 0, marg_counts / marg_parents, 0.0)
-  domain_size = marg_counts.shape[-1]
-  parent_product = cond_probs.size // domain_size
-  cond_probs_2d = cond_probs.reshape(parent_product, domain_size)
-
-  flat_parent_idx = _ravel_multi_index_jax(parent_data, parent_sizes)
-  per_record_probs = cond_probs_2d[flat_parent_idx]
-  return jax.random.categorical(
-      rng_key, jnp.log(per_record_probs + 1e-30),
-  ).astype(jnp.int32)
 
 
 @jax.jit(static_argnames=['total'])
