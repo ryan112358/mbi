@@ -249,6 +249,13 @@ class InteriorGradientState(NamedTuple):
     inv_lipschitz: jax.Array | float
 
 
+class LBFGSState(NamedTuple):
+    """State for L-BFGS optimization on potentials."""
+
+    potentials: CliqueVector
+    opt_state: Any
+
+
 # ---------------------------------------------------------------------------
 # Class-based estimators
 # ---------------------------------------------------------------------------
@@ -495,6 +502,197 @@ class InteriorGradient(Estimator):
         return mle_from_marginals(state.x, known_total)
 
 
+@attr.dataclass(frozen=True)
+class LBFGS(Estimator):
+    """L-BFGS estimator for graphical models.
+
+    Optimizes the potentials (theta) directly via L-BFGS, back-propagating
+    through the marginal inference oracle.  The loss is convex w.r.t. marginals
+    but typically non-convex w.r.t. potentials; in practice, L-BFGS still
+    converges well.
+
+    See `"Learning Graphical Model Parameters with Approximate Marginal
+    Inference" <https://arxiv.org/abs/1301.3193>`_.
+
+    Attributes:
+        marginal_oracle: The function to compute marginals from potentials.
+    """
+
+    marginal_oracle: marginal_oracles.MarginalOracle = (
+        marginal_oracles.message_passing_stable
+    )
+
+    def _init(self, domain, loss_fn, known_total, *, potentials=None):
+        if potentials is None:
+            potentials = CliqueVector.zeros(domain, loss_fn.cliques)
+        else:
+            potentials = potentials.expand(loss_fn.cliques)
+        optimizer = optax.lbfgs(
+            memory_size=1,
+            linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
+        )
+        opt_state = optimizer.init(potentials)
+        return LBFGSState(potentials, opt_state)
+
+    def _step(self, state, loss_fn, known_total):
+        marginal_oracle = self.marginal_oracle
+        optimizer = optax.lbfgs(
+            memory_size=1,
+            linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
+        )
+
+        def theta_loss(theta):
+            return loss_fn(marginal_oracle(theta, known_total))
+
+        loss, grad = jax.value_and_grad(theta_loss)(state.potentials)
+        updates, opt_state = optimizer.update(
+            grad,
+            state.opt_state,
+            state.potentials,
+            value=loss,
+            grad=grad,
+            value_fn=theta_loss,
+        )
+        potentials = optax.apply_updates(state.potentials, updates)
+        return LBFGSState(potentials, opt_state)
+
+    def _callback_value(self, state, known_total):
+        return self.marginal_oracle(state.potentials, known_total)
+
+    def _finalize(self, state, known_total):
+        marginals = self.marginal_oracle(state.potentials, known_total)
+        return MarkovRandomField(
+            potentials=state.potentials,
+            marginals=marginals,
+            total=known_total,
+        )
+
+
+@attr.dataclass(frozen=True)
+class UniversalAcceleratedMethod(Estimator):
+    """Universal Accelerated Mirror Descent estimator.
+
+    An accelerated first-order method that adapts to any smoothness level.
+    Each optimization step performs an internal line-search via
+    ``jax.lax.while_loop``.
+
+    See `Nesterov (2015) <https://optimization-online.org/wp-content/uploads/2013/04/3833.pdf>`_
+    and `Roulet & d'Aspremont (2017) <https://arxiv.org/pdf/1702.03828>`_.
+
+    Attributes:
+        marginal_oracle: The function to compute marginals from potentials.
+        max_iter_search: Max inner line-search iterations per step.
+        target_acc: Target accuracy (set > 0 for non-smooth objectives).
+        norm: Norm measuring smoothness (1 or 2).
+        linesearch: Whether to use adaptive line-search.
+    """
+
+    marginal_oracle: marginal_oracles.MarginalOracle = (
+        marginal_oracles.message_passing_stable
+    )
+    max_iter_search: int = 30
+    target_acc: float = 0.0
+    norm: int = 2
+    linesearch: bool = True
+
+    def _init(self, domain, loss_fn, known_total, *, potentials=None):
+        if potentials is None:
+            potentials = CliqueVector.zeros(domain, loss_fn.cliques)
+        else:
+            potentials = potentials.expand(loss_fn.cliques)
+        marginal_oracle = self.marginal_oracle
+        x = z = marginal_oracle(potentials, known_total)
+        stepsize = 1.0 / known_total
+        return _AcceleratedStepSearchState(
+            x=x,
+            z=z,
+            u=potentials,
+            prev_stepsize=stepsize,
+            stepsize=stepsize,
+            prev_theta=jnp.asarray(-1.0),
+            accept=jnp.asarray(False),
+            iter_search=jnp.asarray(0),
+        )
+
+    def _step(self, state, loss_fn, known_total):
+        marginal_oracle = self.marginal_oracle
+        dual_proj = lambda u: marginal_oracle(u, known_total)
+        max_iter_search = self.max_iter_search
+        target_acc = self.target_acc
+        norm = self.norm
+        use_linesearch = self.linesearch
+
+        def cond_fun(carry):
+            return jnp.logical_not(
+                jnp.logical_or(
+                    carry.accept, carry.iter_search >= max_iter_search
+                ),
+            )
+
+        def body_fun(carry):
+            prev_theta = carry.prev_theta
+            prev_smooth_estim = 1 / carry.prev_stepsize
+            smooth_estim, stepsize = 1 / carry.stepsize, carry.stepsize
+            aux = 1 + 4 * smooth_estim / (prev_theta**2 * prev_smooth_estim)
+            new_theta = 2 / (1 + jnp.sqrt(aux))
+            theta = jnp.where(prev_theta < 0.0, 1.0, new_theta)
+
+            y = (1 - theta) * carry.x + theta * carry.z
+            value_y, grad_y = jax.value_and_grad(loss_fn)(y)
+            u = carry.u - stepsize / theta * grad_y
+            z = dual_proj(u)
+            x = (1 - theta) * carry.x + theta * z
+
+            if use_linesearch:
+                new_value = loss_fn(x)
+                if norm == 1:
+                    sq_norm_diff = optax.tree.norm(
+                        optax.tree.sub(x, y), ord=1, squared=True
+                    )
+                elif norm == 2:
+                    sq_norm_diff = optax.tree.norm(
+                        optax.tree_utils.tree_sub(x, y),
+                        ord=2,
+                        squared=True,
+                    )
+                else:
+                    raise ValueError(f"norm={norm} not supported")
+                taylor_approx = (
+                    value_y
+                    + grad_y.dot(x - y)
+                    + 0.5 * smooth_estim * sq_norm_diff
+                )
+                accept = new_value <= (taylor_approx + 0.5 * target_acc * theta)
+                new_stepsize = 1.1 * stepsize
+            else:
+                accept = True
+                new_stepsize = stepsize
+
+            candidate = _AcceleratedStepSearchState(
+                x=x,
+                z=z,
+                u=u,
+                prev_stepsize=stepsize,
+                stepsize=new_stepsize,
+                prev_theta=theta,
+                accept=accept,
+                iter_search=jnp.asarray(0),
+            )
+            base = carry._replace(
+                stepsize=0.5 * carry.stepsize,
+                iter_search=carry.iter_search + 1,
+            )
+            return jax.tree.map(
+                lambda a, b: jnp.where(accept, a, b), candidate, base
+            )
+
+        carry = jax.lax.while_loop(cond_fun, body_fun, state)
+        return carry._replace(accept=jnp.asarray(False))
+
+    def _finalize(self, state, known_total):
+        return mle_from_marginals(state.x, known_total)
+
+
 # ---------------------------------------------------------------------------
 # Backward-compatible function wrappers (deprecated)
 # ---------------------------------------------------------------------------
@@ -633,56 +831,21 @@ def lbfgs(
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
 ) -> MarkovRandomField:
-    """Gradient-based optimization on the potentials (theta) via L-BFGS.
-
-    This optimizer works by calculating the gradients with respect to the
-    potentials by back-propagting through the marginal inference oracle.
-
-    This is a standard approach for fitting the parameters of a graphical model
-    without noise (i.e., when you know the exact marginals).  In this case,
-    the loss function with respect to theta is convex, and therefore this approach
-    enjoys convergence guarantees.  With generic marginal loss functions that arise
-    for instance ith noisy marginals, the loss function is typically convex with
-    respect to mu, but not with respect to theta.  Therefore, this optimizer is not
-    guaranteed to converge to the global optimum in all cases.  In practice, it
-    tends to work well in these settings despite non-convexities.  This approach
-    appeared in the paper ["Learning Graphical Model Parameters with Approximate
-    Marginal Inference"](https://arxiv.org/abs/1301.3193).
-
-    Args:
-      domain: The domain over which the model should be defined.
-      loss_fn: A MarginalLossFn or a list of Linear Measurements.
-      known_total: The known or estimated number of records in the data.
-        If loss_fn is provided as a list of LinearMeasurements, this argument
-        is optional.  Otherwise, it is required.
-      potentials: The initial potentials.  Must be defined over a set of cliques
-        that supports the cliques in the loss_fn.
-      marginal_oracle: The function to use to compute marginals from potentials.
-      iters: The maximum number of optimization iterations.
-      callback_fn: ...
-    """
-    loss_fn, known_total, potentials = _initialize(
-        domain, loss_fn, known_total, potentials
+    """Deprecated: use ``LBFGS(...).estimate(...)`` instead."""
+    warnings.warn(
+        "lbfgs() is deprecated, use LBFGS().estimate()",
+        DeprecationWarning,
+        stacklevel=2,
     )
-
-    def theta_loss(theta):
-        return loss_fn(marginal_oracle(theta, known_total))
-
-    theta_loss_and_grad = jax.value_and_grad(theta_loss)
-
-    def theta_callback_fn(theta):
-        callback_fn(marginal_oracle(theta, known_total))
-
-    potentials = _optimize(
-        theta_loss_and_grad,
-        potentials,
+    return LBFGS(
+        marginal_oracle=marginal_oracle,
+    ).estimate(
+        domain,
+        loss_fn,
+        known_total=known_total,
         iters=iters,
-        callback_fn=theta_callback_fn,
-    )
-    return MarkovRandomField(
+        callback_fn=callback_fn,
         potentials=potentials,
-        marginals=marginal_oracle(potentials, known_total),
-        total=known_total,
     )
 
 
@@ -910,25 +1073,20 @@ def universal_accelerated_method(
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
 ) -> MarkovRandomField:
-    """Optimization using the Universal Accelerated MD algorithm."""
-    loss_fn, known_total, potentials = _initialize(
-        domain, loss_fn, known_total, potentials
+    """Deprecated: use ``UniversalAcceleratedMethod(...).estimate(...)`` instead."""
+    warnings.warn(
+        "universal_accelerated_method() is deprecated, use"
+        " UniversalAcceleratedMethod().estimate()",
+        DeprecationWarning,
+        stacklevel=2,
     )
-
-    carry, cond_fun, body_fun = _universal_accelerated_method_step_init(
-        fun=loss_fn,
-        dual_init_params=potentials,
-        dual_proj=lambda x: marginal_oracle(x, known_total),
-        max_iter_search=30,
-        target_acc=0.0,
-        stepsize=1.0 / known_total,
-        norm=2,
-        linesearch=True,
+    return UniversalAcceleratedMethod(
+        marginal_oracle=marginal_oracle,
+    ).estimate(
+        domain,
+        loss_fn,
+        known_total=known_total,
+        iters=iters,
+        callback_fn=callback_fn,
+        potentials=potentials,
     )
-    for _ in range(iters):
-        # jax.lax.while_loop traces the body function, so no need to jit it.
-        carry = jax.lax.while_loop(cond_fun, body_fun, carry)
-        carry = carry._replace(accept=jnp.asarray(False))
-        callback_fn(carry.x)
-    sol = carry.x
-    return mle_from_marginals(sol, known_total)
