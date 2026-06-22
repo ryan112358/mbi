@@ -20,7 +20,7 @@ from ..domain import Domain
 from ..factor import Factor
 from ..markov_random_field import MarkovRandomField
 
-_COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+_COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -82,26 +82,14 @@ class SyntheticDataGenerator:
     plan = _build_plan(domain, cliques)
     self._plan = plan
 
-    futures: list[concurrent.futures.Future] = []
-
-    # Precompile message passing (1 XLA program).
-    futures.append(_COMPILE_POOL.submit(
-        _precompile_message_passing, domain, plan,
-    ))
-
-    # Precompile per-column generation functions (N XLA programs).
-    for cp in plan.columns.values():
-      futures.append(_COMPILE_POOL.submit(
-          _precompile_column, cp, rows, self.method,
-      ))
-
     # NOTE: JAX's JIT cache doesn't coalesce in-flight compilations, so
-    # if generate() races a background thread it may compile redundantly.
-    def _await_all() -> None:
-      for f in futures:
-        f.result()
+    # if generate() races the background thread it may compile redundantly.
+    def _compile_all():
+      _precompile_message_passing(domain, plan)
+      for cp in plan.columns.values():
+        _precompile_column(cp, rows, self.method)
 
-    return _COMPILE_POOL.submit(_await_all)
+    return _COMPILE_POOL.submit(_compile_all)
 
   def generate(
       self,
