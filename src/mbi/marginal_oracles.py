@@ -1,25 +1,21 @@
 """Marginal oracles for computing marginals from graphical model potentials.
 
-This module provides configurable marginal oracles that compute marginals
-from the potentials of a discrete graphical model.  The core abstraction
-is ``MessagePassingOracle``, which composes three independent choices:
+This module provides marginal oracles that compute marginals from the
+log-space potentials of a discrete graphical model.  Three junction tree
+schedules are available:
 
-- **Semiring**: The algebraic operations (log-sum-product for marginals,
-  max-sum for MAP, or sum-product for probability-space potentials).
-- **MessageSchedule**: How messages are routed on the junction tree
-  (HUGIN, SHAFER_SHENOY, or IMPLICIT).
-- **Contraction function**: How the inner sum-product is computed
-  (only used by the IMPLICIT schedule).
+- ``message_passing_implicit``: Implicit-factor message passing using a
+  configurable contraction function (default: ``einsum_fused``).
+- ``message_passing_hugin``: Classic HUGIN algorithm with belief subtraction.
+- ``message_passing_shafer_shenoy``: Shafer-Shenoy algorithm with neighbor collection.
 
-Pre-built oracles are available as module-level names for convenience:
-``message_passing_fast``, ``message_passing_stable``, and
-``message_passing_shafer_shenoy``.
+Backward-compatible aliases (``message_passing_fast``,
+``message_passing_stable``, ``message_passing_shafer_shenoy``) are
+also provided.
 """
 
 import collections
 import concurrent.futures
-import dataclasses
-import enum
 import functools
 import itertools
 import math
@@ -41,91 +37,21 @@ from .factor import Factor
 _EINSUM_LETTERS = list(string.ascii_lowercase) + list(string.ascii_uppercase)
 
 
-@dataclasses.dataclass(frozen=True)
-class Semiring:
-    """Defines the algebraic operations for message passing on a junction tree.
-
-    A semiring specifies how factors are combined and how variables are
-    marginalized during inference.  The default LOG_SUM_PRODUCT semiring
-    works with log-space potentials (combine=add, reduce=logsumexp),
-    which is standard for marginal inference.  Other semirings enable
-    different inference tasks:
-
-    - MAX_SUM: MAP inference (combine=add, reduce=max)
-    - SUM_PRODUCT: Probability-space inference (combine=multiply, reduce=sum)
-
-    Attributes:
-        combine_fn: Combines two Factor values element-wise.
-            Log-space: jnp.add.  Probability-space: jnp.multiply.
-        reduce_fn: Marginalizes a Factor over given attributes.
-            Log-space: jax.scipy.special.logsumexp.  Probability-space: jnp.sum.
-        log_space: Whether potentials are in log space.
-        name: Human-readable name for display/debugging.
-    """
-
-    combine_fn: Callable = jnp.add
-    reduce_fn: Callable = jax.scipy.special.logsumexp
-    log_space: bool = True
-    name: str = "log-sum-product"
-
-    def combine(self, a: Factor, b: Factor) -> Factor:
-        """Combine two factors using the semiring's combine operation."""
-        return a._binaryop(self.combine_fn, b)
-
-    def reduce(self, f: Factor, attrs: ...) -> Factor:
-        """Marginalize a factor over the given attributes."""
-        return f._aggregate(self.reduce_fn, attrs)
-
-    def __repr__(self) -> str:
-        return f"Semiring({self.name!r})"
-
-
-LOG_SUM_PRODUCT = Semiring(
-    combine_fn=jnp.add,
-    reduce_fn=jax.scipy.special.logsumexp,
-    log_space=True,
-    name="log-sum-product",
-)
-
-MAX_SUM = Semiring(
-    combine_fn=jnp.add,
-    reduce_fn=jnp.max,
-    log_space=True,
-    name="max-sum",
-)
-
-SUM_PRODUCT = Semiring(
-    combine_fn=jnp.multiply,
-    reduce_fn=jnp.sum,
-    log_space=False,
-    name="sum-product",
-)
-
-
 class MarginalOracle(Protocol):
     """Callable signature for stateless marginal oracle functions.
 
-    A marginal oracle consumes potentials of a graphical model and returns
-    its marginals over the same set of cliques.  Different oracles may have
-    different time/space complexities and numerical stabilities.
+    A marginal oracle consumes log-space potentials of a graphical model
+    and returns its marginals over the same set of cliques.  Different
+    oracles may have different time/space complexities and numerical
+    stabilities.
 
-    The recommended way to obtain a marginal oracle is via
-    ``MessagePassingOracle``, which composes a message schedule, a
-    contraction function, and a semiring::
+    Available oracles:
 
-        oracle = MessagePassingOracle(
-            schedule=MessageSchedule.IMPLICIT,
-            contraction=einsum_semiring,
-            semiring=LOG_SUM_PRODUCT,
-        )
-
-    Pre-built instances are also available as module-level names:
-
-    - ``message_passing_fast``: IMPLICIT schedule + einsum_stabilized
-    - ``message_passing_stable``: HUGIN schedule
-    - ``message_passing_shafer_shenoy``: SHAFER_SHENOY schedule
-    - ``brute_force_marginals``: Materializes the full joint distribution
-    - ``einsum_marginals``: Direct einsum (not recommended for large models)
+    - ``message_passing_implicit``: Implicit-factor message passing (configurable).
+    - ``message_passing_hugin``: Classic HUGIN algorithm with belief subtraction.
+    - ``message_passing_shafer_shenoy``: Shafer-Shenoy algorithm with neighbor collection.
+    - ``brute_force_marginals``: Materializes the full joint distribution.
+    - ``einsum_marginals``: Direct einsum (not recommended for large models).
     """
 
     def __call__(
@@ -177,26 +103,21 @@ def sum_product(
     return Factor(dom, values)
 
 
-def einsum_stabilized(
+def einsum_semistable(
     log_factors: list[Factor],
     dom: Domain,
-    semiring: Semiring = LOG_SUM_PRODUCT,
     einsum_fn: Callable = jnp.einsum,
 ) -> Factor:
-    """Compute the generalized sum-product via the exp-normalize trick.
+    """Compute the log-space sum-product via the exp-normalize trick.
 
     Subtracts per-factor maxima for numerical stability, exponentiates,
     runs a standard multiply-sum einsum, then maps back to log space.
     Fast and memory-efficient (no super-factor materialization), but
     can produce NaN when factor magnitudes span a very wide range.
 
-    Only valid for log-space semirings (``semiring.log_space`` must be True).
-
     Args:
         log_factors: Factors in log space.
         dom: Target domain for the output.
-        semiring: Must be a log-space semiring. The reduce_fn is used
-            after mapping back to log space.
         einsum_fn: Einsum implementation to use (default: ``jnp.einsum``).
 
     Returns:
@@ -210,52 +131,47 @@ def einsum_stabilized(
 def einsum_materialized(
     log_factors: list[Factor],
     dom: Domain,
-    semiring: Semiring = LOG_SUM_PRODUCT,
 ) -> Factor:
-    """Compute the generalized sum-product by materializing the combined factor.
+    """Compute the log-space sum-product by materializing the combined factor.
 
-    Combines all factors into a single super-factor, then reduces over
-    the non-target dimensions.  Numerically stable because no exp/log
-    round-trip is needed, but may require O(product of all domain sizes)
-    memory for the intermediate super-factor.
-
-    Works with any semiring.
+    Combines all log-factors into a single super-factor (via addition in
+    log-space), then reduces over the non-target dimensions with logsumexp.
+    Numerically stable because no exp/log round-trip is needed, but may
+    require O(product of all domain sizes) memory for the intermediate
+    super-factor.
 
     Args:
-        log_factors: Factors (in whatever space the semiring expects).
+        log_factors: Factors in log space.
         dom: Target domain for the output.
-        semiring: The semiring whose combine/reduce ops are used.
 
     Returns:
-        A Factor over *dom*.
+        A Factor over *dom* in log space.
     """
-    combined = functools.reduce(semiring.combine, log_factors)
+    combined = functools.reduce(lambda a, b: a + b, log_factors)
     elim_attrs = combined.domain.marginalize(dom).attributes
-    return semiring.reduce(combined, elim_attrs).transpose(dom.attributes)
+    return combined.logsumexp(elim_attrs).transpose(dom.attributes)
 
 
-def einsum_semiring(
-    factors: list[Factor],
+def einsum_fused(
+    log_factors: list[Factor],
     dom: Domain,
-    semiring: Semiring = LOG_SUM_PRODUCT,
 ) -> Factor:
-    """Compute the generalized sum-product using ``custom_dot_general``.
+    """Compute the log-space sum-product using ``custom_dot_general``.
 
-    Delegates to ``custom_einsum`` with the semiring's combine and reduce
-    functions, allowing the XLA compiler to fuse the combine and reduce
-    steps.  This avoids both the exp/log round-trip of ``einsum_stabilized``
+    Delegates to ``custom_einsum`` with add/logsumexp operations,
+    allowing the XLA compiler to fuse the combine and reduce steps.
+    This avoids both the exp/log round-trip of ``einsum_semistable``
     and the super-factor materialization of ``einsum_materialized``.
 
-    Works with any semiring.  On GPU, XLA often fuses the operations
-    resulting in both good stability and good performance.
+    On GPU, XLA often fuses the operations resulting in both good
+    stability and good performance.
 
     Args:
-        factors: Factors (in whatever space the semiring expects).
+        log_factors: Factors in log space.
         dom: Target domain for the output.
-        semiring: The semiring whose combine/reduce ops are used.
 
     Returns:
-        A Factor over *dom*.
+        A Factor over *dom* in log space.
     """
 
     def _custom_einsum(formula, *arrays, **kwargs):
@@ -264,298 +180,167 @@ def einsum_semiring(
         return custom_einsum(
             formula,
             *arrays,
-            combine_fn=semiring.combine_fn,
-            reduce_fn=semiring.reduce_fn,
+            combine_fn=jnp.add,
+            reduce_fn=jax.scipy.special.logsumexp,
         )
 
-    return sum_product(factors, dom, einsum_fn=_custom_einsum)
+    return sum_product(log_factors, dom, einsum_fn=_custom_einsum)
 
 
-# Backward-compatible aliases for contraction functions.
-logspace_sum_product_fast = functools.partial(
-    einsum_stabilized, semiring=LOG_SUM_PRODUCT
-)
-logspace_sum_product_stable_v1 = functools.partial(
-    einsum_materialized, semiring=LOG_SUM_PRODUCT
-)
+def message_passing_hugin(
+    potentials: CliqueVector,
+    total: float = 1.0,
+    jtree: nx.Graph | None = None,
+) -> CliqueVector:
+    """HUGIN message passing with belief subtraction.
 
-
-class MessageSchedule(enum.Enum):
-    """Message-passing schedule for junction tree inference.
-
-    Attributes:
-        HUGIN: Expand potentials to super-cliques, use belief subtraction
-            for message computation (the classic HUGIN algorithm).
-            Unstable when potentials contain ``-inf``.
-        SHAFER_SHENOY: Expand potentials to super-cliques, collect messages
-            from all neighbors except the target (no belief subtraction).
-            More stable than HUGIN for ``-inf`` potentials.
-        IMPLICIT: Keep potentials in their original factored form and compute
-            messages via a configurable contraction function (einsum-based).
-            Most memory-efficient — never materializes super-clique tables.
+    Expands potentials to super-cliques and uses belief subtraction for
+    message computation.  Unstable when potentials contain ``-inf``.
     """
+    if len(potentials.cliques) == 0:
+        return CliqueVector(potentials.domain, [], {})
 
-    HUGIN = "hugin"
-    SHAFER_SHENOY = "shafer_shenoy"
-    IMPLICIT = "implicit"
+    domain, cliques = potentials.domain, potentials.cliques
+
+    if jtree is None:
+        jtree = junction_tree.make_junction_tree(domain, cliques)[0]
+    message_order = junction_tree.message_passing_order(jtree)
+    maximal_cliques = junction_tree.maximal_cliques(jtree)
+
+    clique_mapping(maximal_cliques, cliques, domain=domain)
+    beliefs = potentials.expand(maximal_cliques)
+
+    messages = {}
+    for i, j in message_order:
+        sep = beliefs[i].domain.invert(tuple(set(i) & set(j)))
+        if (j, i) in messages:
+            tau = beliefs[i] - messages[(j, i)]
+        else:
+            tau = beliefs[i]
+        messages[(i, j)] = tau.logsumexp(sep)
+        beliefs[j] = beliefs[j] + messages[(i, j)]
+
+    return beliefs.normalize(total, log=True).exp().contract(cliques)
 
 
-# Type alias for contraction functions used by the IMPLICIT schedule.
-ContractionFn = Callable[[list[Factor], Domain, Semiring], Factor]
+def message_passing_shafer_shenoy(
+    potentials: CliqueVector,
+    total: float = 1.0,
+    jtree: nx.Graph | None = None,
+) -> CliqueVector:
+    """Shafer-Shenoy message passing with neighbor collection.
 
-
-@dataclasses.dataclass(frozen=True)
-class MessagePassingOracle:
-    """Configurable marginal oracle based on junction tree message passing.
-
-    Composes three independent design choices:
-
-    - **schedule**: How messages are routed on the junction tree
-      (HUGIN, SHAFER_SHENOY, or IMPLICIT).
-    - **contraction**: How the inner sum-product is computed.  Only used
-      when ``schedule=IMPLICIT``.  For HUGIN and SHAFER_SHENOY, the
-      semiring's reduce operation is applied directly to expanded
-      super-clique beliefs.
-    - **semiring**: The algebraic operations (log-sum-product, max-sum,
-      or sum-product in probability space).
-
-    Instances of this class satisfy the ``MarginalOracle`` protocol and
-    can be passed anywhere a marginal oracle is expected.
-
-    Examples:
-        >>> oracle = MessagePassingOracle()  # defaults: IMPLICIT + einsum_stabilized + LOG_SUM_PRODUCT
-        >>> hugin = MessagePassingOracle(schedule=MessageSchedule.HUGIN)
-        >>> stable = MessagePassingOracle(contraction=einsum_semiring)
-        >>> map_oracle = MessagePassingOracle(semiring=MAX_SUM)
+    Expands potentials to super-cliques and collects messages from all
+    neighbors except the target.  More stable than HUGIN for ``-inf``
+    potentials.
     """
+    if len(potentials.cliques) == 0:
+        return CliqueVector(potentials.domain, [], {})
 
-    schedule: MessageSchedule = MessageSchedule.IMPLICIT
-    contraction: ContractionFn = einsum_stabilized
-    semiring: Semiring = LOG_SUM_PRODUCT
+    domain, cliques = potentials.domain, potentials.cliques
 
-    @jax.jit(static_argnames=["self", "jtree"])
-    def __call__(
-        self,
-        potentials: CliqueVector,
-        total: float = 1.0,
-        jtree: nx.Graph | None = None,
-    ) -> CliqueVector:
-        """Compute marginals from potentials.
+    if jtree is None:
+        jtree = junction_tree.make_junction_tree(domain, cliques)[0]
+    message_order = junction_tree.message_passing_order(jtree)
+    maximal_cliques = junction_tree.maximal_cliques(jtree)
 
-        Args:
-            potentials: Potentials of a graphical model (log-space or
-                probability-space, depending on the semiring).
-            total: Normalization constant for the output marginals.
-            jtree: Optional pre-computed junction tree.  If ``None``,
-                one is constructed automatically from the potentials.
+    initial_beliefs = potentials.expand(maximal_cliques)
 
-        Returns:
-            Marginals as a CliqueVector over the same cliques.
-        """
-        return self.infer(potentials, total, jtree)[0]
+    messages = {}
+    neighbors = {cl: list(jtree.neighbors(cl)) for cl in maximal_cliques}
 
-    def infer(
-        self,
-        potentials: CliqueVector,
-        total: float = 1.0,
-        jtree: nx.Graph | None = None,
-    ) -> tuple[CliqueVector, dict]:
-        """Run inference and return both marginals and messages.
+    for i, j in message_order:
+        tau = initial_beliefs[i]
+        for k in neighbors[i]:
+            if k == j:
+                continue
+            tau = tau + messages[(k, i)]
 
-        This method has the same semantics as ``__call__`` but returns
-        a ``(marginals, messages)`` tuple containing the intermediate
-        messages in addition to the marginals.
+        sep = tau.domain.invert(tuple(set(i) & set(j)))
+        messages[(i, j)] = tau.logsumexp(sep)
 
-        Args:
-            potentials: Potentials of a graphical model.
-            total: Normalization constant for the output marginals.
-            jtree: Optional pre-computed junction tree.
+    beliefs = {}
+    for cl in maximal_cliques:
+        b = initial_beliefs[cl]
+        for k in neighbors[cl]:
+            b = b + messages[(k, cl)]
+        beliefs[cl] = b
 
-        Returns:
-            A tuple of (marginals, messages) where marginals is a
-            CliqueVector and messages is a dict mapping
-            ``(sender, receiver)`` clique pairs to message Factors.
-        """
-        if self.schedule == MessageSchedule.IMPLICIT:
-            return self._implicit(potentials, total, jtree)
-        if self.schedule == MessageSchedule.HUGIN:
-            return self._hugin(potentials, total, jtree)
-        if self.schedule == MessageSchedule.SHAFER_SHENOY:
-            return self._shafer_shenoy(potentials, total, jtree)
-        raise ValueError(f"Unknown schedule: {self.schedule}")
-
-    def _normalize_beliefs(
-        self, beliefs: CliqueVector, total: float
-    ) -> CliqueVector:
-        """Convert beliefs to normalized marginals using the semiring."""
-        if self.semiring.log_space:
-            return beliefs.normalize(total, log=True).exp()
-        return beliefs.normalize(total, log=False)
-
-    def _hugin(self, potentials, total, jtree):
-        """HUGIN message passing with belief subtraction."""
-        if len(potentials.cliques) == 0:
-            return CliqueVector(potentials.domain, [], {}), {}
-
-        domain, cliques = potentials.domain, potentials.cliques
-
-        if jtree is None:
-            jtree = junction_tree.make_junction_tree(domain, cliques)[0]
-        message_order = junction_tree.message_passing_order(jtree)
-        maximal_cliques = junction_tree.maximal_cliques(jtree)
-
-        clique_mapping(maximal_cliques, cliques, domain=domain)
-        beliefs = potentials.expand(maximal_cliques)
-
-        messages = {}
-        for i, j in message_order:
-            sep = beliefs[i].domain.invert(tuple(set(i) & set(j)))
-            if (j, i) in messages:
-                tau = (
-                    beliefs[i] - messages[(j, i)]
-                    if self.semiring.log_space
-                    else beliefs[i] / messages[(j, i)]
-                )
-            else:
-                tau = beliefs[i]
-            messages[(i, j)] = self.semiring.reduce(tau, sep)
-            beliefs[j] = self.semiring.combine(beliefs[j], messages[(i, j)])
-
-        marginals = self._normalize_beliefs(beliefs, total).contract(cliques)
-        return marginals, messages
-
-    def _shafer_shenoy(self, potentials, total, jtree):
-        """Shafer-Shenoy message passing with neighbor collection."""
-        if len(potentials.cliques) == 0:
-            return CliqueVector(potentials.domain, [], {}), {}
-
-        domain, cliques = potentials.domain, potentials.cliques
-
-        if jtree is None:
-            jtree = junction_tree.make_junction_tree(domain, cliques)[0]
-        message_order = junction_tree.message_passing_order(jtree)
-        maximal_cliques = junction_tree.maximal_cliques(jtree)
-
-        initial_beliefs = potentials.expand(maximal_cliques)
-
-        messages = {}
-        neighbors = {cl: list(jtree.neighbors(cl)) for cl in maximal_cliques}
-
-        for i, j in message_order:
-            tau = initial_beliefs[i]
-            for k in neighbors[i]:
-                if k == j:
-                    continue
-                tau = self.semiring.combine(tau, messages[(k, i)])
-
-            sep = tau.domain.invert(tuple(set(i) & set(j)))
-            messages[(i, j)] = self.semiring.reduce(tau, sep)
-
-        beliefs = {}
-        for cl in maximal_cliques:
-            b = initial_beliefs[cl]
-            for k in neighbors[cl]:
-                b = self.semiring.combine(b, messages[(k, cl)])
-            beliefs[cl] = b
-
-        beliefs = CliqueVector(potentials.domain, maximal_cliques, beliefs)
-        marginals = self._normalize_beliefs(beliefs, total).contract(cliques)
-        return marginals, messages
-
-    def _implicit(self, potentials, total, jtree):
-        """Implicit-factor message passing using a contraction function."""
-        if len(potentials.cliques) == 0:
-            return CliqueVector(potentials.domain, [], {}), {}
-
-        domain, cliques = potentials.active_domain, potentials.cliques
-
-        if jtree is None:
-            jtree = junction_tree.make_junction_tree(domain, cliques)[0]
-        message_order = junction_tree.message_passing_order(jtree)
-        maximal_cliques = junction_tree.maximal_cliques(jtree)
-
-        mapping = clique_mapping(maximal_cliques, cliques, domain=domain)
-        inverse_mapping = collections.defaultdict(list)
-        incoming_messages = collections.defaultdict(list)
-        potential_mapping = collections.defaultdict(list)
-
-        for cl in cliques:
-            potential_mapping[mapping[cl]].append(potentials[cl])
-            inverse_mapping[mapping[cl]].append(cl)
-
-        for i, msg in enumerate(message_order):
-            for j in range(i):
-                msg2 = message_order[j]
-                if msg[0] == msg2[1] and msg[1] != msg2[0]:
-                    incoming_messages[msg].append(msg2)
-
-        messages = {}
-        for i, j in message_order:
-            shared = domain.project(tuple(set(i) & set(j)))
-            input_potentials = potential_mapping[i]
-            input_messages = [
-                messages[key] for key in incoming_messages[(i, j)]
-            ]
-            inputs = input_potentials + input_messages
-
-            for attr in shared.attributes:
-                if not any(attr in input.domain.attributes for input in inputs):
-                    inputs.append(Factor.zeros(domain.project([attr])))
-
-            messages[(i, j)] = self.contraction(
-                inputs,
-                shared,
-                self.semiring,
-            )
-
-        beliefs = {}
-        for cl in maximal_cliques:
-            input_potentials = potential_mapping[cl]
-            input_messages = [
-                val for key, val in messages.items() if key[1] == cl
-            ]
-            inputs = input_potentials + input_messages
-            for cl2 in inverse_mapping[cl]:
-                belief = self.contraction(
-                    inputs,
-                    domain.project(cl2),
-                    self.semiring,
-                )
-                if self.semiring.log_space:
-                    beliefs[cl2] = belief.normalize(total, log=True).exp()
-                else:
-                    beliefs[cl2] = belief.normalize(total, log=False)
-
-        return CliqueVector(potentials.domain, cliques, beliefs), messages
-
-    def __repr__(self) -> str:
-        parts = [f"schedule={self.schedule.value}"]
-        if self.schedule == MessageSchedule.IMPLICIT:
-            name = getattr(self.contraction, "__name__", repr(self.contraction))
-            parts.append(f"contraction={name}")
-        parts.append(f"semiring={self.semiring.name}")
-        return f"MessagePassingOracle({', '.join(parts)})"
+    beliefs = CliqueVector(potentials.domain, maximal_cliques, beliefs)
+    return beliefs.normalize(total, log=True).exp().contract(cliques)
 
 
-# ---- Backward-compatible oracle aliases ----
-# These module-level instances replace the old functions.
-# They satisfy the MarginalOracle protocol and can be used as drop-in replacements.
+def message_passing_implicit(
+    potentials: CliqueVector,
+    total: float = 1.0,
+    jtree: nx.Graph | None = None,
+    *,
+    contraction: Callable = einsum_fused,
+) -> CliqueVector:
+    """Implicit-factor message passing using a contraction function.
 
-message_passing_fast = MessagePassingOracle(
-    schedule=MessageSchedule.IMPLICIT,
-    contraction=einsum_stabilized,
-    semiring=LOG_SUM_PRODUCT,
+    Keeps potentials in their original factored form and computes messages
+    via the given contraction function.  Most memory-efficient — never
+    materializes super-clique tables.
+
+    The default contraction (``einsum_fused``) is numerically stable.
+    For faster but less stable computation, use ``einsum_semistable``.
+    """
+    if len(potentials.cliques) == 0:
+        return CliqueVector(potentials.domain, [], {})
+
+    domain, cliques = potentials.active_domain, potentials.cliques
+
+    if jtree is None:
+        jtree = junction_tree.make_junction_tree(domain, cliques)[0]
+    message_order = junction_tree.message_passing_order(jtree)
+    maximal_cliques = junction_tree.maximal_cliques(jtree)
+
+    mapping = clique_mapping(maximal_cliques, cliques, domain=domain)
+    inverse_mapping = collections.defaultdict(list)
+    incoming_messages = collections.defaultdict(list)
+    potential_mapping = collections.defaultdict(list)
+
+    for cl in cliques:
+        potential_mapping[mapping[cl]].append(potentials[cl])
+        inverse_mapping[mapping[cl]].append(cl)
+
+    for i, msg in enumerate(message_order):
+        for j in range(i):
+            msg2 = message_order[j]
+            if msg[0] == msg2[1] and msg[1] != msg2[0]:
+                incoming_messages[msg].append(msg2)
+
+    messages = {}
+    for i, j in message_order:
+        shared = domain.project(tuple(set(i) & set(j)))
+        input_potentials = potential_mapping[i]
+        input_messages = [messages[key] for key in incoming_messages[(i, j)]]
+        inputs = input_potentials + input_messages
+
+        for attr in shared.attributes:
+            if not any(attr in input.domain.attributes for input in inputs):
+                inputs.append(Factor.zeros(domain.project([attr])))
+
+        messages[(i, j)] = contraction(inputs, shared)
+
+    beliefs = {}
+    for cl in maximal_cliques:
+        input_potentials = potential_mapping[cl]
+        input_messages = [val for key, val in messages.items() if key[1] == cl]
+        inputs = input_potentials + input_messages
+        for cl2 in inverse_mapping[cl]:
+            belief = contraction(inputs, domain.project(cl2))
+            beliefs[cl2] = belief.normalize(total, log=True).exp()
+
+    return CliqueVector(potentials.domain, cliques, beliefs)
+
+
+# Backward-compatible aliases.
+message_passing_fast = functools.partial(
+    message_passing_implicit, contraction=einsum_semistable
 )
-
-message_passing_stable = MessagePassingOracle(
-    schedule=MessageSchedule.HUGIN,
-    semiring=LOG_SUM_PRODUCT,
-)
-
-message_passing_shafer_shenoy = MessagePassingOracle(
-    schedule=MessageSchedule.SHAFER_SHENOY,
-    semiring=LOG_SUM_PRODUCT,
-)
+message_passing_stable = message_passing_hugin
 
 
 def brute_force_marginals(
@@ -590,7 +375,7 @@ def einsum_marginals(
         potentials.cliques,
         {
             cl: (
-                logspace_sum_product_fast(
+                einsum_semistable(
                     inputs, potentials[cl].domain, einsum_fn=einsum_fn
                 )
                 .normalize(total, log=True)
