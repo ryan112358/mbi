@@ -228,9 +228,7 @@ class TestMarginalOracles(unittest.TestCase):
 
     # --- Tests for the new composable API ---
 
-    @parameterized.expand(
-        itertools.product(_SCHEDULES, _CLIQUE_SETS)
-    )
+    @parameterized.expand(itertools.product(_SCHEDULES, _CLIQUE_SETS))
     def test_schedule_matches_brute_force(self, schedule, cliques, total=10):
         """Every schedule produces identical marginals to brute force."""
         oracle = MessagePassingOracle(schedule=schedule)
@@ -242,10 +240,10 @@ class TestMarginalOracles(unittest.TestCase):
                 mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
             )
 
-    @parameterized.expand(
-        itertools.product(_CONTRACTIONS, _CLIQUE_SETS)
-    )
-    def test_contraction_matches_brute_force(self, contraction, cliques, total=10):
+    @parameterized.expand(itertools.product(_CONTRACTIONS, _CLIQUE_SETS))
+    def test_contraction_matches_brute_force(
+        self, contraction, cliques, total=10
+    ):
         """Every contraction function produces identical marginals to brute force."""
         oracle = MessagePassingOracle(contraction=contraction)
         theta = CliqueVector.random(_DOMAIN, cliques)
@@ -265,7 +263,8 @@ class TestMarginalOracles(unittest.TestCase):
         # probability-space potentials: exp(theta)
         prob_potentials = theta.exp()
         oracle = MessagePassingOracle(
-            contraction=einsum_materialized, semiring=SUM_PRODUCT,
+            contraction=einsum_materialized,
+            semiring=SUM_PRODUCT,
         )
         mu = oracle(prob_potentials, total)
         for cl in cliques:
@@ -278,7 +277,8 @@ class TestMarginalOracles(unittest.TestCase):
         """MAX_SUM max-marginals peak at the global MAP configuration."""
         theta = CliqueVector.random(_DOMAIN, cliques)
         oracle = MessagePassingOracle(
-            contraction=einsum_materialized, semiring=MAX_SUM,
+            contraction=einsum_materialized,
+            semiring=MAX_SUM,
         )
         mu = oracle(theta, 1)
         if len(cliques) == 0:
@@ -288,7 +288,9 @@ class TestMarginalOracles(unittest.TestCase):
         map_idx = jnp.unravel_index(
             jnp.argmax(log_joint.values), log_joint.domain.shape
         )
-        map_config = dict(zip(log_joint.domain.attributes, [int(i) for i in map_idx]))
+        map_config = dict(
+            zip(log_joint.domain.attributes, [int(i) for i in map_idx])
+        )
         for cl in cliques:
             marginal = mu[cl]
             # The argmax of each max-marginal should agree with the MAP projection
@@ -297,6 +299,8 @@ class TestMarginalOracles(unittest.TestCase):
             )
             for attr, idx in zip(marginal.domain.attributes, marginal_map_idx):
                 self.assertEqual(
-                    int(idx), map_config[attr],
-                    f"MAX_SUM argmax for {attr} in clique {cl} disagrees with global MAP",
+                    int(idx),
+                    map_config[attr],
+                    f"MAX_SUM argmax for {attr} in clique {cl} disagrees with"
+                    " global MAP",
                 )

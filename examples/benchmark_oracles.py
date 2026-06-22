@@ -7,6 +7,7 @@ no performance regressions.
 Usage:
     .venv/bin/python benchmark_oracles.py
 """
+
 import time
 import numpy as np
 import jax
@@ -65,48 +66,83 @@ def run_scale(label, domain, cliques, num_iters=5):
 
     print(f"\n{'='*70}")
     print(f"  {label}")
-    print(f"  {len(cliques)} cliques, {len(domain)} attrs, max_clique_size={max_cl_size:,.0f}")
+    print(
+        f"  {len(cliques)} cliques, {len(domain)} attrs,"
+        f" max_clique_size={max_cl_size:,.0f}"
+    )
     print(f"  {num_iters} timed iterations")
     print(f"{'='*70}")
     print(f"  {'Oracle':<35} {'Warmup':>10} {'Median':>10}")
     print(f"  {'-'*35} {'-'*10} {'-'*10}")
 
     oracles = [
-        ("message_passing_fast", lambda p: marginal_oracles.message_passing_fast(p, total=1.0)),
-        ("message_passing_stable (HUGIN)", lambda p: marginal_oracles.message_passing_stable(p, total=1.0)),
-        ("message_passing_shafer_shenoy", lambda p: marginal_oracles.message_passing_shafer_shenoy(p, total=1.0)),
+        (
+            "message_passing_fast",
+            lambda p: marginal_oracles.message_passing_fast(p, total=1.0),
+        ),
+        (
+            "message_passing_stable (HUGIN)",
+            lambda p: marginal_oracles.message_passing_stable(p, total=1.0),
+        ),
+        (
+            "message_passing_shafer_shenoy",
+            lambda p: marginal_oracles.message_passing_shafer_shenoy(
+                p, total=1.0
+            ),
+        ),
     ]
 
     # Check if new API is available (refactor branch)
-    if hasattr(marginal_oracles, 'MessagePassingOracle'):
+    if hasattr(marginal_oracles, "MessagePassingOracle"):
         from mbi.marginal_oracles import (
-            MessagePassingOracle, MessageSchedule,
-            einsum_stabilized, einsum_materialized, einsum_semiring,
+            MessagePassingOracle,
+            MessageSchedule,
+            einsum_stabilized,
+            einsum_materialized,
+            einsum_semiring,
         )
+
         oracles.extend([
-            ("MPO(IMPLICIT, stabilized)", MessagePassingOracle(
-                schedule=MessageSchedule.IMPLICIT,
-                contraction=einsum_stabilized,
-            )),
-            ("MPO(IMPLICIT, materialized)", MessagePassingOracle(
-                schedule=MessageSchedule.IMPLICIT,
-                contraction=einsum_materialized,
-            )),
-            ("MPO(IMPLICIT, semiring)", MessagePassingOracle(
-                schedule=MessageSchedule.IMPLICIT,
-                contraction=einsum_semiring,
-            )),
-            ("MPO(HUGIN)", MessagePassingOracle(
-                schedule=MessageSchedule.HUGIN,
-            )),
-            ("MPO(SHAFER_SHENOY)", MessagePassingOracle(
-                schedule=MessageSchedule.SHAFER_SHENOY,
-            )),
+            (
+                "MPO(IMPLICIT, stabilized)",
+                MessagePassingOracle(
+                    schedule=MessageSchedule.IMPLICIT,
+                    contraction=einsum_stabilized,
+                ),
+            ),
+            (
+                "MPO(IMPLICIT, materialized)",
+                MessagePassingOracle(
+                    schedule=MessageSchedule.IMPLICIT,
+                    contraction=einsum_materialized,
+                ),
+            ),
+            (
+                "MPO(IMPLICIT, semiring)",
+                MessagePassingOracle(
+                    schedule=MessageSchedule.IMPLICIT,
+                    contraction=einsum_semiring,
+                ),
+            ),
+            (
+                "MPO(HUGIN)",
+                MessagePassingOracle(
+                    schedule=MessageSchedule.HUGIN,
+                ),
+            ),
+            (
+                "MPO(SHAFER_SHENOY)",
+                MessagePassingOracle(
+                    schedule=MessageSchedule.SHAFER_SHENOY,
+                ),
+            ),
         ])
 
     results = {}
     for name, oracle_fn in oracles:
-        warmup, median = benchmark_oracle(oracle_fn, potentials, num_iters, name)
+        warmup, median = benchmark_oracle(
+            oracle_fn, potentials, num_iters, name
+        )
         if warmup is not None:
             print(f"  {name:<35} {warmup:>8.1f}ms {median:>8.1f}ms")
             results[name] = (warmup, median)
@@ -119,39 +155,76 @@ def main():
     print(f"Devices: {jax.devices()}")
 
     # === Scale 1: max_clique_size ~ 1e5 ===
-    sizes_1e5 = [10, 15, 8, 20, 12, 6, 25, 10, 8, 15,
-                 20, 10, 6, 8, 12, 15, 10, 8, 20, 12]
+    sizes_1e5 = [
+        10,
+        15,
+        8,
+        20,
+        12,
+        6,
+        25,
+        10,
+        8,
+        15,
+        20,
+        10,
+        6,
+        8,
+        12,
+        15,
+        10,
+        8,
+        20,
+        12,
+    ]
     specs_1e5 = (
-        [(i, i+1) for i in range(19)]
-        + [(i, i+1, i+2) for i in range(0, 18, 3)]
+        [(i, i + 1) for i in range(19)]
+        + [(i, i + 1, i + 2) for i in range(0, 18, 3)]
         + [(0, 5), (5, 10), (10, 15)]
     )
     domain_1e5, cliques_1e5 = make_census_like_graph(20, sizes_1e5, specs_1e5)
-    run_scale("Census-like ~1e5 max_clique_size", domain_1e5, cliques_1e5, num_iters=10)
+    run_scale(
+        "Census-like ~1e5 max_clique_size",
+        domain_1e5,
+        cliques_1e5,
+        num_iters=10,
+    )
 
     # === Scale 2: max_clique_size ~ 1e6 ===
-    sizes_1e6 = [100, 100, 100, 50, 50, 30, 20, 20, 15, 10,
-                 10, 8, 8, 6, 6, 5]
+    sizes_1e6 = [100, 100, 100, 50, 50, 30, 20, 20, 15, 10, 10, 8, 8, 6, 6, 5]
     specs_1e6 = (
-        [(i, i+1) for i in range(15)]
-        + [(0, 1, 2)]   # 100*100*100 = 1e6
-        + [(3, 4, 5)]   # 50*50*30 = 75k
+        [(i, i + 1) for i in range(15)]
+        + [(0, 1, 2)]  # 100*100*100 = 1e6
+        + [(3, 4, 5)]  # 50*50*30 = 75k
         + [(0, 3), (2, 5)]
     )
     domain_1e6, cliques_1e6 = make_census_like_graph(16, sizes_1e6, specs_1e6)
-    run_scale("Census-like ~1e6 max_clique_size", domain_1e6, cliques_1e6, num_iters=5)
+    run_scale(
+        "Census-like ~1e6 max_clique_size", domain_1e6, cliques_1e6, num_iters=5
+    )
 
     # === Scale 3: Wide graph (many small cliques, like real census) ===
     np.random.seed(42)
     n_attrs = 50
     sizes_wide = list(np.random.choice([5, 8, 10, 15, 20], size=n_attrs))
     specs_wide = (
-        [(i, i+1) for i in range(n_attrs - 1)]   # chain
-        + [(i, i+1, i+2) for i in range(0, n_attrs-2, 5)]  # 3-way every 5
-        + [(0, n_attrs//4), (n_attrs//4, n_attrs//2), (n_attrs//2, 3*n_attrs//4)]  # skip links
+        [(i, i + 1) for i in range(n_attrs - 1)]  # chain
+        + [(i, i + 1, i + 2) for i in range(0, n_attrs - 2, 5)]  # 3-way every 5
+        + [
+            (0, n_attrs // 4),
+            (n_attrs // 4, n_attrs // 2),
+            (n_attrs // 2, 3 * n_attrs // 4),
+        ]  # skip links
     )
-    domain_wide, cliques_wide = make_census_like_graph(n_attrs, sizes_wide, specs_wide)
-    run_scale("Wide census-like (50 attrs, many cliques)", domain_wide, cliques_wide, num_iters=10)
+    domain_wide, cliques_wide = make_census_like_graph(
+        n_attrs, sizes_wide, specs_wide
+    )
+    run_scale(
+        "Wide census-like (50 attrs, many cliques)",
+        domain_wide,
+        cliques_wide,
+        num_iters=10,
+    )
 
 
 if __name__ == "__main__":
