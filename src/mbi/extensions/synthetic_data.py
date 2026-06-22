@@ -335,7 +335,7 @@ def _compute_marginal_jax(
     if not any(attr in inp.domain.attributes for inp in inputs):
       inputs.append(Factor.zeros(domain.project([attr])))
 
-  result = marginal_oracles.einsum_fused(inputs, query_domain)
+  result = marginal_oracles.einsum_materialized(inputs, query_domain)
   result = result.normalize(total, log=True).exp()
   return result.datavector(flatten=False)
 
