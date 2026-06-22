@@ -24,16 +24,16 @@ from mbi.marginal_oracles import (
 )
 
 ORACLES = [
-    ("message_passing_implicit+stabilized", message_passing_implicit),
-    (
-        "message_passing_implicit+materialized",
-        functools.partial(
-            message_passing_implicit, contraction=einsum_materialized
-        ),
-    ),
+    ("message_passing_implicit+materialized", message_passing_implicit),
     (
         "message_passing_implicit+fused",
         functools.partial(message_passing_implicit, contraction=einsum_fused),
+    ),
+    (
+        "message_passing_implicit+semistable",
+        functools.partial(
+            message_passing_implicit, contraction=einsum_semistable
+        ),
     ),
     ("message_passing_hugin", message_passing_hugin),
     ("message_passing_shafer_shenoy", message_passing_shafer_shenoy),

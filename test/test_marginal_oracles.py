@@ -249,16 +249,16 @@ class TestMarginalOracles(unittest.TestCase):
 
 class TestDefaultOracle(unittest.TestCase):
 
-    def test_cpu_returns_hugin(self):
+    def test_cpu_returns_shafer_shenoy(self):
         oracle = marginal_oracles.default_oracle(backend="cpu")
-        self.assertIs(oracle, message_passing_hugin)
+        self.assertIs(oracle, message_passing_shafer_shenoy)
 
-    def test_gpu_small_returns_hugin(self):
+    def test_gpu_small_returns_shafer_shenoy(self):
         cliques = (("a", "b"), ("b", "c"), ("c", "d"))
         oracle = marginal_oracles.default_oracle(
             cliques, _DOMAIN, backend="gpu"
         )
-        self.assertIs(oracle, message_passing_hugin)
+        self.assertIs(oracle, message_passing_shafer_shenoy)
 
     def test_gpu_large_returns_implicit(self):
         domain = Domain(["a", "b", "c"], [100, 100, 100])
@@ -266,9 +266,9 @@ class TestDefaultOracle(unittest.TestCase):
         oracle = marginal_oracles.default_oracle(cliques, domain, backend="gpu")
         self.assertIs(oracle, message_passing_implicit)
 
-    def test_gpu_no_cliques_returns_hugin(self):
+    def test_gpu_no_cliques_returns_shafer_shenoy(self):
         oracle = marginal_oracles.default_oracle(backend="gpu")
-        self.assertIs(oracle, message_passing_hugin)
+        self.assertIs(oracle, message_passing_shafer_shenoy)
 
     @parameterized.expand([(cs,) for cs in _CLIQUE_SETS])
     def test_correctness(self, cliques):
