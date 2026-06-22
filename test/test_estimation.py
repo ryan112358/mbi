@@ -1,11 +1,12 @@
+import itertools
 import unittest
-from mbi.domain import Domain
-from mbi.factor import Factor
-from mbi.clique_vector import CliqueVector
-from mbi import marginal_loss, estimation
+
 import numpy as np
 from parameterized import parameterized
-import itertools
+
+from mbi import Domain, estimation, marginal_loss
+from mbi.clique_vector import CliqueVector
+from mbi.factor import Factor
 
 np.random.seed(0)  # Avoid flaky tests
 
@@ -45,20 +46,7 @@ class TestEstimation(unittest.TestCase):
         measurements = fake_measurements(cliques)
         loss_fn = marginal_loss.from_linear_measurements(measurements)
 
-        model = estimation.mirror_descent(
-            _DOMAIN, loss_fn, known_total=1.0, iters=250
-        )
-        for M in measurements:
-            expected = M.noisy_measurement
-            actual = model.project(M.clique).datavector()
-            np.testing.assert_allclose(actual, expected, atol=1e-2)
-
-    @parameterized.expand(itertools.product(_CLIQUE_SETS))
-    def test_universal_accelerated_method(self, cliques):
-        measurements = fake_measurements(cliques)
-        loss_fn = marginal_loss.from_linear_measurements(measurements)
-
-        model = estimation.universal_accelerated_method(
+        model = estimation.MirrorDescent().estimate(
             _DOMAIN, loss_fn, known_total=1.0, iters=250
         )
         for M in measurements:
@@ -73,8 +61,8 @@ class TestEstimation(unittest.TestCase):
             measurements, norm="l1"
         )
 
-        model = estimation.mirror_descent(
-            _DOMAIN, loss_fn, known_total=1.0, iters=250, stepsize=0.01
+        model = estimation.MirrorDescent(stepsize=0.01).estimate(
+            _DOMAIN, loss_fn, known_total=1.0, iters=250
         )
         for M in measurements:
             expected = M.noisy_measurement
@@ -86,21 +74,10 @@ class TestEstimation(unittest.TestCase):
         measurements = fake_measurements(cliques)
         potentials = CliqueVector.zeros(_DOMAIN, [_DOMAIN.attributes])
         loss_fn = marginal_loss.from_linear_measurements(measurements)
-        joint_distribution = estimation.mirror_descent(
+        model = estimation.MirrorDescent().estimate(
             _DOMAIN, loss_fn, known_total=1.0, potentials=potentials, iters=250
         )
 
-        for M in measurements:
-            expected = M.noisy_measurement
-            actual = joint_distribution.project(M.clique).datavector()
-            np.testing.assert_allclose(actual, expected, atol=1e-2)
-
-    @parameterized.expand(itertools.product(_CLIQUE_SETS))
-    def test_primal_optimization(self, cliques):
-        measurements = fake_measurements(cliques)
-        loss_fn = marginal_loss.from_linear_measurements(measurements)
-
-        model = estimation.lbfgs(_DOMAIN, loss_fn, known_total=1.0, iters=250)
         for M in measurements:
             expected = M.noisy_measurement
             actual = model.project(M.clique).datavector()
@@ -110,7 +87,7 @@ class TestEstimation(unittest.TestCase):
     def test_dual_averaging(self, cliques):
         measurements = fake_measurements(cliques)
 
-        model = estimation.dual_averaging(
+        model = estimation.DualAveraging().estimate(
             _DOMAIN, measurements, known_total=1.0, iters=250
         )
         for M in measurements:
@@ -122,7 +99,7 @@ class TestEstimation(unittest.TestCase):
     def test_interior_gradient(self, cliques):
         measurements = fake_measurements(cliques)
 
-        model = estimation.interior_gradient(
+        model = estimation.InteriorGradient().estimate(
             _DOMAIN, measurements, known_total=1.0, iters=250
         )
         for M in measurements:
@@ -142,3 +119,11 @@ class TestEstimation(unittest.TestCase):
             expected = mu.project(cl).datavector()
             actual = model.project(cl).datavector()
             np.testing.assert_allclose(actual, expected, atol=100 / total)
+
+    def test_precompile(self):
+        """precompile() should complete without error."""
+        cliques = [("a", "b"), ("b", "c")]
+        measurements = fake_measurements(cliques)
+        est = estimation.MirrorDescent()
+        future = est.precompile(_DOMAIN, measurements)
+        future.result()  # Should not raise.

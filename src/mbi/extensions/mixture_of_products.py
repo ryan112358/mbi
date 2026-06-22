@@ -170,7 +170,6 @@ class MixtureOfProductsEstimator(Estimator):
         opt_state = self.optimizer.init(model)
         return MixtureOfProductsState(model, opt_state)
 
-    @jax.jit(static_argnames=["self"])
     def _step(self, state, loss_fn, known_total):
         """Run one gradient step."""
 
