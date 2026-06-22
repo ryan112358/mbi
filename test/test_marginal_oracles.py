@@ -3,6 +3,14 @@ from mbi.domain import Domain
 from mbi.factor import Factor
 from mbi.clique_vector import CliqueVector
 from mbi import marginal_oracles
+from mbi.marginal_oracles import (
+    message_passing_implicit,
+    message_passing_hugin,
+    message_passing_shafer_shenoy,
+    einsum_materialized,
+    einsum_fused,
+    einsum_semistable,
+)
 from mbi.extensions.constraints import message_passing_with_constraints
 import jax.numpy as jnp
 import numpy as np
@@ -38,9 +46,11 @@ def _bulk_variable_elimination_oracle(
     )
 
 
-message_passing_fast_v1 = functools.partial(
-    marginal_oracles.message_passing_fast,
-    logspace_sum_product_fn=marginal_oracles.logspace_sum_product_stable_v1,
+_implicit_materialized = functools.partial(
+    message_passing_implicit, contraction=einsum_materialized
+)
+_implicit_fused = functools.partial(
+    message_passing_implicit, contraction=einsum_fused
 )
 
 
@@ -50,7 +60,10 @@ _ORACLES = [
     marginal_oracles.message_passing_stable,
     marginal_oracles.message_passing_shafer_shenoy,
     marginal_oracles.message_passing_fast,
-    message_passing_fast_v1,
+    _implicit_materialized,
+    _implicit_fused,
+    message_passing_hugin,
+    message_passing_shafer_shenoy,
     message_passing_with_constraints,
     _variable_elimination_oracle,
     _calculate_many_oracle,
@@ -60,6 +73,7 @@ _ORACLES = [
 _STABLE_ORACLES = [
     marginal_oracles.brute_force_marginals,
     marginal_oracles.message_passing_shafer_shenoy,
+    message_passing_shafer_shenoy,
     message_passing_with_constraints,
 ]
 
@@ -81,6 +95,20 @@ _ALL_CLIQUES = list(
         itertools.combinations(_DOMAIN.attrs, r) for r in range(5)
     )
 )
+
+# Contraction functions for the IMPLICIT schedule.
+_CONTRACTIONS = [
+    einsum_semistable,
+    einsum_materialized,
+    einsum_fused,
+]
+
+# All three schedules for exhaustive schedule testing.
+_SCHEDULES = [
+    message_passing_implicit,
+    message_passing_hugin,
+    message_passing_shafer_shenoy,
+]
 
 
 class TestMarginalOracles(unittest.TestCase):
@@ -190,4 +218,30 @@ class TestMarginalOracles(unittest.TestCase):
             self.assertTrue(
                 jnp.allclose(factor.sum().values, 1.0),
                 f"Marginal for {cl} does not sum to 1",
+            )
+
+    # --- Tests for the composable API ---
+
+    @parameterized.expand(itertools.product(_SCHEDULES, _CLIQUE_SETS))
+    def test_schedule_matches_brute_force(self, oracle, cliques, total=10):
+        """Every schedule produces identical marginals to brute force."""
+        theta = CliqueVector.random(_DOMAIN, cliques)
+        mu1 = oracle(theta, total)
+        mu2 = marginal_oracles.brute_force_marginals(theta, total)
+        for cl in cliques:
+            np.testing.assert_allclose(
+                mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
+            )
+
+    @parameterized.expand(itertools.product(_CONTRACTIONS, _CLIQUE_SETS))
+    def test_contraction_matches_brute_force(
+        self, contraction, cliques, total=10
+    ):
+        """Every contraction function produces identical marginals to brute force."""
+        theta = CliqueVector.random(_DOMAIN, cliques)
+        mu1 = message_passing_implicit(theta, total, contraction=contraction)
+        mu2 = marginal_oracles.brute_force_marginals(theta, total)
+        for cl in cliques:
+            np.testing.assert_allclose(
+                mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
             )

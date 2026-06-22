@@ -290,9 +290,7 @@ class MirrorDescent(Estimator):
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
             potentials = potentials.expand(loss_fn.cliques)
-        marginal_oracle = functools.partial(
-            self.marginal_oracle, mesh=self.mesh
-        )
+        marginal_oracle = self.marginal_oracle
         # Theory suggests the initial learning rate should be inversely
         # proportional to L. We also divide by scaling factor to account for
         # the fact that gradients are scaled up by a factor of known_total.
@@ -312,9 +310,7 @@ class MirrorDescent(Estimator):
         known_total: jax.Array | float,
     ) -> MirrorDescentState:
         """Perform a single mirror descent step."""
-        marginal_oracle = functools.partial(
-            self.marginal_oracle, mesh=self.mesh
-        )
+        marginal_oracle = self.marginal_oracle
         mu = marginal_oracle(state.potentials, known_total)
         loss, dL = jax.value_and_grad(loss_fn)(mu)
         theta2 = state.potentials - state.alpha * dL
@@ -344,9 +340,7 @@ class MirrorDescent(Estimator):
         state: MirrorDescentState,
         known_total: float,
     ) -> MarkovRandomField:
-        marginal_oracle = functools.partial(
-            self.marginal_oracle, mesh=self.mesh
-        )
+        marginal_oracle = self.marginal_oracle
         marginals = marginal_oracle(state.potentials, known_total)
         return MarkovRandomField(
             potentials=state.potentials,
@@ -386,9 +380,7 @@ class DualAveraging(Estimator):
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
             potentials = potentials.expand(loss_fn.cliques)
-        marginal_oracle = functools.partial(
-            self.marginal_oracle, mesh=self.mesh
-        )
+        marginal_oracle = self.marginal_oracle
 
         D = np.sqrt(
             domain.size() * np.log(domain.size())
@@ -409,9 +401,7 @@ class DualAveraging(Estimator):
         known_total: jax.Array | float,
     ) -> DualAveragingState:
         """Perform a single dual averaging step."""
-        marginal_oracle = functools.partial(
-            self.marginal_oracle, mesh=self.mesh
-        )
+        marginal_oracle = self.marginal_oracle
         t = state.t
         c = 2.0 / (t + 1)
         beta = state.gamma * (t + 1) ** 1.5 / 2
@@ -468,9 +458,7 @@ class InteriorGradient(Estimator):
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
             potentials = potentials.expand(loss_fn.cliques)
-        marginal_oracle = functools.partial(
-            self.marginal_oracle, mesh=self.mesh
-        )
+        marginal_oracle = self.marginal_oracle
 
         inv_lipschitz = 1.0 / (loss_fn.lipschitz or 1.0)
         x = y = z = marginal_oracle(potentials, known_total)
@@ -486,9 +474,7 @@ class InteriorGradient(Estimator):
         known_total: jax.Array | float,
     ) -> InteriorGradientState:
         """Perform a single interior gradient step."""
-        marginal_oracle = functools.partial(
-            self.marginal_oracle, mesh=self.mesh
-        )
+        marginal_oracle = self.marginal_oracle
         l = state.inv_lipschitz
         a = (((state.c * l) ** 2 + 4 * state.c * l) ** 0.5 - l * state.c) / 2
         y = (1 - a) * state.x + a * state.z
@@ -524,7 +510,6 @@ def mirror_descent(
     iters: int = 1000,
     stepsize: float | None = None,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
-    mesh: jax.sharding.Mesh | None = None,
 ) -> MarkovRandomField:
     """Deprecated: use ``MirrorDescent(...).estimate(...)`` instead."""
     warnings.warn(
@@ -535,7 +520,6 @@ def mirror_descent(
     return MirrorDescent(
         stepsize=stepsize,
         marginal_oracle=marginal_oracle,
-        mesh=mesh,
     ).estimate(
         domain,
         loss_fn,
@@ -555,7 +539,6 @@ def dual_averaging(
     marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
-    mesh: jax.sharding.Mesh | None = None,
 ) -> MarkovRandomField:
     """Deprecated: use ``DualAveraging(...).estimate(...)`` instead."""
     warnings.warn(
@@ -565,7 +548,6 @@ def dual_averaging(
     )
     return DualAveraging(
         marginal_oracle=marginal_oracle,
-        mesh=mesh,
     ).estimate(
         domain,
         loss_fn,
@@ -585,7 +567,6 @@ def interior_gradient(
     marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
-    mesh: jax.sharding.Mesh | None = None,
 ) -> MarkovRandomField:
     """Deprecated: use ``InteriorGradient(...).estimate(...)`` instead."""
     warnings.warn(
@@ -595,7 +576,6 @@ def interior_gradient(
     )
     return InteriorGradient(
         marginal_oracle=marginal_oracle,
-        mesh=mesh,
     ).estimate(
         domain,
         loss_fn,
@@ -652,7 +632,6 @@ def lbfgs(
     marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
-    mesh: jax.sharding.Mesh | None = None,
 ) -> MarkovRandomField:
     """Gradient-based optimization on the potentials (theta) via L-BFGS.
 
@@ -681,13 +660,10 @@ def lbfgs(
       marginal_oracle: The function to use to compute marginals from potentials.
       iters: The maximum number of optimization iterations.
       callback_fn: ...
-      mesh: Determines how the marginal oracle and loss calculation
-                will be sharded across devices.
     """
     loss_fn, known_total, potentials = _initialize(
         domain, loss_fn, known_total, potentials
     )
-    marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
 
     def theta_loss(theta):
         return loss_fn(marginal_oracle(theta, known_total))
@@ -716,7 +692,6 @@ def mle_from_marginals(
     iters: int = 250,
     marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
     callback_fn: Callable[..., None] = lambda *_: None,
-    mesh: jax.sharding.Mesh | None = None,
 ) -> MarkovRandomField:
     """Compute the MLE Graphical Model from the marginals.
 
@@ -729,7 +704,7 @@ def mle_from_marginals(
     """
 
     def loss_and_grad_fn(theta):
-        mu = marginal_oracle(theta, known_total, mesh)
+        mu = marginal_oracle(theta, known_total)
         return -marginals.dot(mu.log()), mu - marginals
 
     potentials = CliqueVector.zeros(marginals.domain, marginals.cliques)
@@ -934,13 +909,11 @@ def universal_accelerated_method(
     marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
-    mesh: jax.sharding.Mesh | None = None,
 ) -> MarkovRandomField:
     """Optimization using the Universal Accelerated MD algorithm."""
     loss_fn, known_total, potentials = _initialize(
         domain, loss_fn, known_total, potentials
     )
-    marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
 
     carry, cond_fun, body_fun = _universal_accelerated_method_step_init(
         fun=loss_fn,

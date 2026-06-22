@@ -1,11 +1,17 @@
-"""Functions for computing marginals from log-space potentials.
+"""Marginal oracles for computing marginals from graphical model potentials.
 
-The functions in this library should all produce numerically identical
-outputs on well-behaved inputs, but may have different stability characteristics
-on poorly-behaved inputs, and different rutnime/memory performance characteristics.
+This module provides marginal oracles that compute marginals from the
+log-space potentials of a discrete graphical model.  Three junction tree
+schedules are available:
 
-We recommend using message_passing_stable with accelerated estimation algorithms like
-Interior Gradient, but using message_passing_fast with mirror descent.
+- ``message_passing_implicit``: Implicit-factor message passing using a
+  configurable contraction function (default: ``einsum_fused``).
+- ``message_passing_hugin``: Classic HUGIN algorithm with belief subtraction.
+- ``message_passing_shafer_shenoy``: Shafer-Shenoy algorithm with neighbor collection.
+
+Backward-compatible aliases (``message_passing_fast``,
+``message_passing_stable``, ``message_passing_shafer_shenoy``) are
+also provided.
 """
 
 import collections
@@ -25,51 +31,42 @@ from . import junction_tree
 from .clique_utils import clique_mapping
 from .clique_vector import CliqueVector
 from .domain import Domain
+from .einsum import custom_einsum
 from .factor import Factor
 
 _EINSUM_LETTERS = list(string.ascii_lowercase) + list(string.ascii_uppercase)
 
 
 class MarginalOracle(Protocol):
-    """Defines the callable signature for stateless marginal oracle functions.
+    """Callable signature for stateless marginal oracle functions.
 
-    A marginal oracle consumes log-space potentials (CliqueVector) of
-    a graphical model and returns its marginals (CliqueVector).  The
-    returned marginals will be defined over the same domain and set of cliques
-    as the potentials.
+    A marginal oracle consumes log-space potentials of a graphical model
+    and returns its marginals over the same set of cliques.  Different
+    oracles may have different time/space complexities and numerical
+    stabilities.
 
-    Different marginal oracles should usually produce identical results,
-    but they may have different time/space complexities and numerical
-    stabilities. Examples of conforming functions from `mbi.marginal_oracles`:
+    Available oracles:
 
-    - `message_passing_stable`: Computes marginals using message passing,
-      operating in log-space for numerical stability.
-    - `message_passing_fast`: A faster and more memory efficient message passing
-      algorithm that uses einsum, but it is not as stable as message_passing_stable.
-    - `brute_force_marginals`: Computes marginals by materializing the full
-      joint distribution.
-    - `einsum_marginals`: Computes marginals using einsum, generally not
-      recommended for large models.
+    - ``message_passing_implicit``: Implicit-factor message passing (configurable).
+    - ``message_passing_hugin``: Classic HUGIN algorithm with belief subtraction.
+    - ``message_passing_shafer_shenoy``: Shafer-Shenoy algorithm with neighbor collection.
+    - ``brute_force_marginals``: Materializes the full joint distribution.
+    - ``einsum_marginals``: Direct einsum (not recommended for large models).
     """
 
     def __call__(
         self,
         potentials: CliqueVector,
         total: float = 1.0,
-        mesh: jax.sharding.Mesh | None = None,
     ) -> CliqueVector:
-        """Computes marginals from log-space potentials.
+        """Compute marginals from potentials.
 
         Args:
-            potentials: A CliqueVector representing the log-space potentials
-                of a graphical model.
-            total: The normalization factor, typically the total number of
-                records or a probability sum. Defaults to 1.0.
-            mesh: An optional mesh which determines how the computation will be
-                sharded across multiple machines.
+            potentials: Potentials of a graphical model.
+            total: Normalization constant. Defaults to 1.0.
 
         Returns:
-            A CliqueVector of the computed marginals.
+            Marginals as a CliqueVector.
         """
 
 
@@ -106,136 +103,103 @@ def sum_product(
     return Factor(dom, values)
 
 
-def logspace_sum_product_fast(
-    log_factors: list[Factor], dom: Domain, einsum_fn: Callable = jnp.einsum
+def einsum_semistable(
+    log_factors: list[Factor],
+    dom: Domain,
+    einsum_fn: Callable = jnp.einsum,
 ) -> Factor:
-    """Numerically stable algorithm for computing sum product in log space.
+    """Compute the log-space sum-product via the exp-normalize trick.
 
-    This seems to be the most stable algorithm for doing this computation that doesn't
-    require materializing sum(log_factors). Materializing sum(log_factors) will
-    in general give better numerical stability, but it comes at the cost of
-    increased memory usage. This can be potentially mitigated by using
-    scan_einsum with an appropriately chosen `sequential` kwarg from mbi.einsum.
-
-    https://github.com/jax-ml/jax/issues/24915
-
-    https://stackoverflow.com/questions/23630277/numerically-stable-way-to-multiply-log-probability-matrices-in-numpy
+    Subtracts per-factor maxima for numerical stability, exponentiates,
+    runs a standard multiply-sum einsum, then maps back to log space.
+    Fast and memory-efficient (no super-factor materialization), but
+    can produce NaN when factor magnitudes span a very wide range.
 
     Args:
-        log_factors: a list of log-space factors.
-        dom: The desired domain of the output factor.
+        log_factors: Factors in log space.
+        dom: Target domain for the output.
+        einsum_fn: Einsum implementation to use (default: ``jnp.einsum``).
 
     Returns:
-        log sum_{S - D} prod_i exp(F_i),
-        where
-            * F_i = log_factors[i],
-            * D is the input domain,
-            * S is the union of the domains of F_i
+        A Factor over *dom* containing the result in log space.
     """
     maxes = [f.max(f.domain.marginalize(dom).attributes) for f in log_factors]
     stable_factors = [(f - m).exp() for f, m in zip(log_factors, maxes)]
     return sum_product(stable_factors, dom, einsum_fn).log() + sum(maxes)
 
 
-def logspace_sum_product_stable_v1(
-    log_factors: list[Factor], dom: Domain, einsum_fn: Callable = jnp.einsum
+def einsum_materialized(
+    log_factors: list[Factor],
+    dom: Domain,
 ) -> Factor:
-    """More stable implementation of logspace_sum_product.
+    """Compute the log-space sum-product by materializing the combined factor.
 
-    This ipmlementation may (or may not) materialize a Factor over the domain
-    of all elements of log_factors.  Without JIT, it will materialize this "super-factor".
-    Under JIT, there may be some instances where the compiler can figure out
-    that it does not need to materialize this intermediate to compute the final output.
-    """
-    del einsum_fn  # unused
-    summed = sum(log_factors)  # Might help to put a sharding constraint here
-    return summed.logsumexp(
-        summed.domain.marginalize(dom).attributes
-    ).transpose(dom.attributes)
-
-
-def brute_force_marginals(
-    potentials: CliqueVector,
-    total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
-) -> CliqueVector:
-    """Compute marginals from (log-space) potentials by materializing the full joint distribution."""
-    if len(potentials.cliques) == 0:
-        return CliqueVector(potentials.domain, [], {})
-
-    P = (
-        sum(potentials.arrays.values())
-        .normalize(total, log=True)
-        .exp()
-        .apply_sharding(mesh)
-    )
-    marginals = {cl: P.project(cl) for cl in potentials.cliques}
-    return CliqueVector(
-        potentials.domain, potentials.cliques, marginals
-    ).apply_sharding(mesh)
-
-
-def einsum_marginals(
-    potentials: CliqueVector,
-    total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
-    einsum_fn: Callable = jnp.einsum,
-) -> CliqueVector:
-    """Compute marginals from (log-space) potentials by using einsum.
-
-    This is a "brute-force" approach and is not recommended in practice.
-    """
-    # not strictly necessary, but consistent
-    if len(potentials.cliques) == 0:
-        return CliqueVector(potentials.domain, [], {})
-
-    inputs = list(potentials.arrays.values())
-    return CliqueVector(
-        potentials.domain,
-        potentials.cliques,
-        {
-            cl: (
-                logspace_sum_product_fast(
-                    inputs, potentials[cl].domain, einsum_fn
-                )
-                .normalize(total, log=True)
-                .exp()
-                .apply_sharding(mesh)
-            )
-            for cl in potentials.cliques
-        },
-    )
-
-
-@functools.partial(jax.jit, static_argnums=[2, 3])
-def message_passing_stable(
-    potentials: CliqueVector,
-    total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
-    jtree: nx.Graph | None = None,
-) -> CliqueVector:
-    """Compute marginals from (log-space) potentials using the message passing algorithm.
-
-    This implementation operates completely in logspace, until the last step where it
-    exponentiates the log-beliefs to get marginals.  It is very stable numerically,
-    but in general could materialize factors defined over "super-cliques", which
-    are the nodes in the junction tree implied by the cliques in potentials.
-    Thus, it may require more memory than "message_passing_fast" below.
+    Combines all log-factors into a single super-factor (via addition in
+    log-space), then reduces over the non-target dimensions with logsumexp.
+    Numerically stable because no exp/log round-trip is needed, but may
+    require O(product of all domain sizes) memory for the intermediate
+    super-factor.
 
     Args:
-        potentials: The (log-space) potentials of a graphical model.
-        total: The normalization factor.
-        mesh: The mesh over which the computation should be sharded.
-        jtree: An optional junction tree that defines the message passing order.
+        log_factors: Factors in log space.
+        dom: Target domain for the output.
 
     Returns:
-        The marginals of the graphical model, defined over the same set of cliques
-        as the input potentials.  Each marginal is non-negative and sums to "total".
+        A Factor over *dom* in log space.
+    """
+    combined = functools.reduce(lambda a, b: a + b, log_factors)
+    elim_attrs = combined.domain.marginalize(dom).attributes
+    return combined.logsumexp(elim_attrs).transpose(dom.attributes)
+
+
+def einsum_fused(
+    log_factors: list[Factor],
+    dom: Domain,
+) -> Factor:
+    """Compute the log-space sum-product using ``custom_dot_general``.
+
+    Delegates to ``custom_einsum`` with add/logsumexp operations,
+    allowing the XLA compiler to fuse the combine and reduce steps.
+    This avoids both the exp/log round-trip of ``einsum_semistable``
+    and the super-factor materialization of ``einsum_materialized``.
+
+    On GPU, XLA often fuses the operations resulting in both good
+    stability and good performance.
+
+    Args:
+        log_factors: Factors in log space.
+        dom: Target domain for the output.
+
+    Returns:
+        A Factor over *dom* in log space.
+    """
+
+    def _custom_einsum(formula, *arrays, **kwargs):
+        kwargs.pop("optimize", None)
+        kwargs.pop("precision", None)
+        return custom_einsum(
+            formula,
+            *arrays,
+            combine_fn=jnp.add,
+            reduce_fn=jax.scipy.special.logsumexp,
+        )
+
+    return sum_product(log_factors, dom, einsum_fn=_custom_einsum)
+
+
+def message_passing_hugin(
+    potentials: CliqueVector,
+    total: float = 1.0,
+    jtree: nx.Graph | None = None,
+) -> CliqueVector:
+    """HUGIN message passing with belief subtraction.
+
+    Expands potentials to super-cliques and uses belief subtraction for
+    message computation.  Unstable when potentials contain ``-inf``.
     """
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
-    potentials = potentials.apply_sharding(mesh)
     domain, cliques = potentials.domain, potentials.cliques
 
     if jtree is None:
@@ -243,57 +207,36 @@ def message_passing_stable(
     message_order = junction_tree.message_passing_order(jtree)
     maximal_cliques = junction_tree.maximal_cliques(jtree)
 
-    mapping = clique_mapping(maximal_cliques, cliques, domain=domain)
-    beliefs = potentials.expand(maximal_cliques).apply_sharding(mesh)
+    clique_mapping(maximal_cliques, cliques, domain=domain)
+    beliefs = potentials.expand(maximal_cliques)
 
     messages = {}
     for i, j in message_order:
         sep = beliefs[i].domain.invert(tuple(set(i) & set(j)))
         if (j, i) in messages:
-            # Note: The subtraction below is unstable if beliefs[i] and messages[(j, i)]
-            # are both -inf. Use message_passing_shafer_shenoy for -inf potentials.
             tau = beliefs[i] - messages[(j, i)]
         else:
             tau = beliefs[i]
         messages[(i, j)] = tau.logsumexp(sep)
         beliefs[j] = beliefs[j] + messages[(i, j)]
 
-    return (
-        beliefs.normalize(total, log=True)
-        .exp()
-        .contract(cliques)
-        .apply_sharding(mesh)
-    )
+    return beliefs.normalize(total, log=True).exp().contract(cliques)
 
 
-@functools.partial(jax.jit, static_argnums=[2, 3])
 def message_passing_shafer_shenoy(
     potentials: CliqueVector,
-    total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
+    total: float = 1.0,
     jtree: nx.Graph | None = None,
 ) -> CliqueVector:
-    """Compute marginals from (log-space) potentials using the Shafer-Shenoy algorithm.
+    """Shafer-Shenoy message passing with neighbor collection.
 
-    This implementation operates completely in logspace, and is more stable than
-    message_passing_stable when potentials contain -inf values.  It avoids
-    subtraction of log-probabilities (division in probability space) which can
-    lead to NaNs when dealing with zero probabilities.
-
-    Args:
-        potentials: The (log-space) potentials of a graphical model.
-        total: The normalization factor.
-        mesh: The mesh over which the computation should be sharded.
-        jtree: An optional junction tree that defines the message passing order.
-
-    Returns:
-        The marginals of the graphical model, defined over the same set of cliques
-        as the input potentials.  Each marginal is non-negative and sums to "total".
+    Expands potentials to super-cliques and collects messages from all
+    neighbors except the target.  More stable than HUGIN for ``-inf``
+    potentials.
     """
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
-    potentials = potentials.apply_sharding(mesh)
     domain, cliques = potentials.domain, potentials.cliques
 
     if jtree is None:
@@ -301,7 +244,7 @@ def message_passing_shafer_shenoy(
     message_order = junction_tree.message_passing_order(jtree)
     maximal_cliques = junction_tree.maximal_cliques(jtree)
 
-    initial_beliefs = potentials.expand(maximal_cliques).apply_sharding(mesh)
+    initial_beliefs = potentials.expand(maximal_cliques)
 
     messages = {}
     neighbors = {cl: list(jtree.neighbors(cl)) for cl in maximal_cliques}
@@ -324,52 +267,32 @@ def message_passing_shafer_shenoy(
         beliefs[cl] = b
 
     beliefs = CliqueVector(potentials.domain, maximal_cliques, beliefs)
-    return (
-        beliefs.normalize(total, log=True)
-        .exp()
-        .contract(cliques)
-        .apply_sharding(mesh)
-    )
+    return beliefs.normalize(total, log=True).exp().contract(cliques)
 
 
-@functools.partial(jax.jit, static_argnums=[2, 3, 4, 5])
-def message_passing_fast(
+def message_passing_implicit(
     potentials: CliqueVector,
-    total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
-    einsum_fn: Callable = jnp.einsum,
+    total: float = 1.0,
     jtree: nx.Graph | None = None,
-    logspace_sum_product_fn=logspace_sum_product_fast,
+    *,
+    contraction: Callable = einsum_fused,
 ) -> CliqueVector:
-    """Compute marginals from (log-space) potentials using the message passing algorithm.
+    """Implicit-factor message passing using a contraction function.
 
-    This implementation leverages the "einsum" primitive to compute clique marginals
-    without materializing marginals over the super cliques first (nodes in the
-    junction tree).  It can be much faster and more memory efficient than
-    message_passing_stable, but there are some cases where this
-    implementation is not as stable.
+    Keeps potentials in their original factored form and computes messages
+    via the given contraction function.  Most memory-efficient — never
+    materializes super-clique tables.
 
-    See the stackoverflow thread for the key difficulty here.
-    https://stackoverflow.com/questions/23630277/numerically-stable-way-to-multiply-log-probability-matrices-in-numpy
-
-    Args:
-        potentials: The (log-space) potentials of a graphical model.
-        total: The normalization factor.
-        mesh: The mesh over which the computation should be sharded.
-        einsum_fn: A function with the same API and semantics as jnp.einsum.
-        jtree: An optional junction tree that defines the message passing order.
-
-    Returns:
-        The marginals of the graphical model, defined over the same set of cliques
-        as the input potentials.  Each marginal is non-negative and sums to "total".
+    The default contraction (``einsum_fused``) is numerically stable.
+    For faster but less stable computation, use ``einsum_semistable``.
     """
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
-    potentials = potentials.apply_sharding(mesh)
     domain, cliques = potentials.active_domain, potentials.cliques
 
-    jtree = junction_tree.make_junction_tree(domain, cliques)[0]
+    if jtree is None:
+        jtree = junction_tree.make_junction_tree(domain, cliques)[0]
     message_order = junction_tree.message_passing_order(jtree)
     maximal_cliques = junction_tree.maximal_cliques(jtree)
 
@@ -399,9 +322,7 @@ def message_passing_fast(
             if not any(attr in input.domain.attributes for input in inputs):
                 inputs.append(Factor.zeros(domain.project([attr])))
 
-        messages[(i, j)] = logspace_sum_product_fn(
-            inputs, shared, einsum_fn=einsum_fn
-        ).apply_sharding(mesh)
+        messages[(i, j)] = contraction(inputs, shared)
 
     beliefs = {}
     for cl in maximal_cliques:
@@ -409,16 +330,60 @@ def message_passing_fast(
         input_messages = [val for key, val in messages.items() if key[1] == cl]
         inputs = input_potentials + input_messages
         for cl2 in inverse_mapping[cl]:
-            beliefs[cl2] = (
-                logspace_sum_product_fn(
-                    inputs, domain.project(cl2), einsum_fn=einsum_fn
+            belief = contraction(inputs, domain.project(cl2))
+            beliefs[cl2] = belief.normalize(total, log=True).exp()
+
+    return CliqueVector(potentials.domain, cliques, beliefs)
+
+
+# Backward-compatible aliases.
+message_passing_fast = functools.partial(
+    message_passing_implicit, contraction=einsum_semistable
+)
+message_passing_stable = message_passing_hugin
+
+
+def brute_force_marginals(
+    potentials: CliqueVector,
+    total: float = 1,
+) -> CliqueVector:
+    """Compute marginals from (log-space) potentials by materializing the full joint distribution."""
+    if len(potentials.cliques) == 0:
+        return CliqueVector(potentials.domain, [], {})
+
+    P = sum(potentials.arrays.values()).normalize(total, log=True).exp()
+    marginals = {cl: P.project(cl) for cl in potentials.cliques}
+    return CliqueVector(potentials.domain, potentials.cliques, marginals)
+
+
+def einsum_marginals(
+    potentials: CliqueVector,
+    total: float = 1,
+    einsum_fn: Callable = jnp.einsum,
+) -> CliqueVector:
+    """Compute marginals from (log-space) potentials by using einsum.
+
+    This is a "brute-force" approach and is not recommended in practice.
+    """
+    # not strictly necessary, but consistent
+    if len(potentials.cliques) == 0:
+        return CliqueVector(potentials.domain, [], {})
+
+    inputs = list(potentials.arrays.values())
+    return CliqueVector(
+        potentials.domain,
+        potentials.cliques,
+        {
+            cl: (
+                einsum_semistable(
+                    inputs, potentials[cl].domain, einsum_fn=einsum_fn
                 )
                 .normalize(total, log=True)
                 .exp()
-                .apply_sharding(mesh)
             )
-
-    return CliqueVector(potentials.domain, cliques, beliefs)
+            for cl in potentials.cliques
+        },
+    )
 
 
 Clique = tuple[str, ...]
@@ -428,7 +393,6 @@ def variable_elimination(
     potentials: CliqueVector,
     clique: Clique,
     total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
     evidence: dict[str, int] | None = None,
 ) -> Factor:
     """Compute an out-of-model/unsupported marginal from the potentials.
@@ -437,7 +401,6 @@ def variable_elimination(
         potentials: The (log-space) potentials of a Graphical Model.
         clique: The subset of attributes whose marginal you want.
         total: The normalization factor.
-        mesh: The mesh over which the computation should be sharded.
         evidence: A dictionary mapping attribute names to observed values.
 
     Returns:
@@ -480,7 +443,7 @@ def variable_elimination(
 
     for z in elim_order:
         psi2 = [psi.pop(i) for i in list(psi.keys()) if z in psi[i].domain]
-        psi[k] = sum(psi2).logsumexp([z]).apply_sharding(mesh)
+        psi[k] = sum(psi2).logsumexp([z])
         k += 1
     # this expand covers the case when clique is not in the active domain
     if has_vector_evidence:
@@ -494,9 +457,7 @@ def variable_elimination(
         newdom = potentials.domain.project(clique)
 
     zero = Factor(Domain([], []), jnp.asarray(0.0))
-    unnormalized = (
-        sum(psi.values(), start=zero).expand(newdom).apply_sharding(mesh)
-    )
+    unnormalized = sum(psi.values(), start=zero).expand(newdom)
 
     if has_vector_evidence:
         sum_attrs = [
@@ -504,21 +465,15 @@ def variable_elimination(
         ]
         log_z = unnormalized.logsumexp(sum_attrs)
         normalized = unnormalized + jnp.log(total) - log_z
-        return normalized.exp().project(clique).apply_sharding(mesh)
+        return normalized.exp().project(clique)
 
-    return (
-        unnormalized.normalize(total, log=True)
-        .exp()
-        .project(clique)
-        .apply_sharding(mesh)
-    )
+    return unnormalized.normalize(total, log=True).exp().project(clique)
 
 
 def bulk_variable_elimination(
     potentials: CliqueVector,
     marginal_queries: list[tuple[str, ...]],
     total: float = 1.0,
-    mesh: jax.sharding.Mesh | None = None,
 ) -> CliqueVector:
     """Compute the marginals of the graphical model with the given potentials.
 
@@ -534,16 +489,15 @@ def bulk_variable_elimination(
       potentials: The (log-space) potentials of a Graphical Model.
       marginal_queries: A list of cliques to obtain marginals for.
       total: The normalization factor.
-      mesh: The mesh over which the computation should be sharded.
 
     Returns:
       A CliqueVector with the marginals computed over the specified cliques.
     """
-    jitted = jax.jit(variable_elimination, static_argnums=(1, 3))
+    jitted = jax.jit(variable_elimination, static_argnums=(1,))
 
     # Async + parallel precompilation.
     def _precompile(query):
-        return query, jitted.lower(potentials, query, total, mesh).compile()
+        return query, jitted.lower(potentials, query, total).compile()
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = [executor.submit(_precompile, cl) for cl in marginal_queries]
@@ -561,7 +515,6 @@ def calculate_many_marginals(
     marginal_queries: list[Clique],
     total: float = 1.0,
     belief_propagation_oracle: MarginalOracle = message_passing_stable,
-    mesh: jax.sharding.Mesh | None = None,
 ) -> CliqueVector:
     """Calculate marginals for all projections using belief propagation.
 
@@ -589,7 +542,7 @@ def calculate_many_marginals(
     potentials = potentials.expand(max_cliques)
 
     # TODO: allow these to take in an optional junction tree
-    marginals = belief_propagation_oracle(potentials, total, mesh)
+    marginals = belief_propagation_oracle(potentials, total)
 
     # first calculate P(Cj | Ci) for all neighbors Ci, Cj
     conditional = {}
@@ -643,7 +596,7 @@ def calculate_many_marginals(
                 break
         if cl not in answers:
             # just use variable elimination
-            answers[cl] = variable_elimination(potentials, cl, total, mesh)
+            answers[cl] = variable_elimination(potentials, cl, total)
 
     return CliqueVector(domain, marginal_queries, answers)
 
@@ -652,7 +605,6 @@ def kron_query(
     potentials: CliqueVector,
     query_factors: dict[str, jax.Array],
     total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
     suffix: str = "_answer",
 ) -> Factor:
     new_factors = {}
@@ -672,4 +624,4 @@ def kron_query(
     domain = potentials.domain.merge(Domain.fromdict(extra_domain))
     cliques = potentials.cliques + tuple(extra_cliques)
     inputs = CliqueVector(domain, cliques, new_factors)
-    return variable_elimination(inputs, tuple(target_clique), total, mesh)
+    return variable_elimination(inputs, tuple(target_clique), total)
