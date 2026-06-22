@@ -115,6 +115,8 @@ class SyntheticDataGenerator:
       self._plan = plan
 
     # Phase 1: message passing (JIT'd via annotation on the function).
+    # Clique ordering in model.potentials must match the cliques passed to
+    # precompile() for the JIT cache to hit (cliques are pytree metadata).
     _, messages = marginal_oracles.message_passing_implicit(
         model.potentials, 1.0, jtree=plan.jtree, return_messages=True,
     )
