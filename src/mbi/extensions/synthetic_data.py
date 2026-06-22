@@ -15,13 +15,14 @@ Typical usage::
 
     generator = SyntheticDataGenerator(method='round')
 
-    # precompile can start before estimation — only needs domain + cliques.
-    compile_future = generator.precompile(domain, cliques, rows=10_000_000)
+    # Fire-and-forget: compilation runs in the background.
+    generator.precompile(domain, cliques, rows=10_000_000)
 
-    # ... run mirror descent ...
+    # ... run mirror descent (compilation overlaps) ...
     model = estimator.estimate(domain, measurements)
 
-    compile_future.result()               # block until compilation finishes
+    # No need to block — generate() benefits from whatever has compiled
+    # so far, and naturally pipelines with any remaining compilation.
     data = generator.generate(model, rows=10_000_000)
 """
 
@@ -120,10 +121,10 @@ class SyntheticDataGenerator:
     """Warm up the JIT cache for ``generate`` asynchronously.
 
     Only requires the domain and clique structure — both are available
-    before estimation finishes.  Returns a ``Future`` that resolves
-    when all per-column JIT compilations have completed.  Callers may
-    ignore the return value (fire-and-forget) or call
-    ``future.result()`` to block.
+    before estimation finishes.  Compilation runs in background threads
+    and pipelines naturally with ``generate()``: each JIT'd function
+    either hits the warm cache or blocks until its compilation finishes,
+    so there is no need to wait on the returned ``Future``.
 
     Args:
       domain: The Domain over which the model is defined.
@@ -131,7 +132,10 @@ class SyntheticDataGenerator:
       rows: Number of records that will be generated.
 
     Returns:
-      A ``Future`` that resolves to ``None`` when compilation is done.
+      A ``Future`` that resolves to ``None`` when all compilations are
+      done.  Callers may ignore this (fire-and-forget) or wait on it
+      if they want a hard guarantee that ``generate()`` will have zero
+      compilation overhead.
     """
     rows = max(1, int(rows))
     plan = _build_plan(domain, cliques)
@@ -151,6 +155,9 @@ class SyntheticDataGenerator:
           _precompile_column, cp, rows, self.method,
       ))
 
+    # NOTE: JAX's JIT cache doesn't coalesce in-flight compilations, so
+    # if generate() races a background thread it may compile redundantly.
+    # In practice this only affects the first 1-2 columns.
     def _await_all() -> None:
       for f in futures:
         f.result()
