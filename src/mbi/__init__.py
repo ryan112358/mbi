@@ -16,18 +16,7 @@ from .dataset import Dataset
 from .domain import Domain
 from .factor import Factor
 from .marginal_loss import LinearMeasurement, MarginalLossFn
-from .marginal_oracles import (
-    MarginalOracle,
-    MessagePassingOracle,
-    MessageSchedule,
-    Semiring,
-    LOG_SUM_PRODUCT,
-    MAX_SUM,
-    SUM_PRODUCT,
-    einsum_materialized,
-    einsum_semiring,
-    einsum_stabilized,
-)
+from .marginal_oracles import MarginalOracle
 from .markov_random_field import MarkovRandomField
 
 Clique = tuple[str, ...]
@@ -45,15 +34,6 @@ __all__ = [
     "Projectable",
     "Model",
     "MarginalOracle",
-    "MessagePassingOracle",
-    "MessageSchedule",
-    "Semiring",
-    "LOG_SUM_PRODUCT",
-    "MAX_SUM",
-    "SUM_PRODUCT",
-    "einsum_materialized",
-    "einsum_semiring",
-    "einsum_stabilized",
     "Estimator",
     "estimation",
     "extensions",

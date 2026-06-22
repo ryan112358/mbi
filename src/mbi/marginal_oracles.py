@@ -35,6 +35,7 @@ from . import junction_tree
 from .clique_utils import clique_mapping
 from .clique_vector import CliqueVector
 from .domain import Domain
+from .einsum import custom_einsum
 from .factor import Factor
 
 _EINSUM_LETTERS = list(string.ascii_lowercase) + list(string.ascii_uppercase)
@@ -207,7 +208,6 @@ def einsum_stabilized(
 
 def einsum_materialized(
     log_factors: list[Factor], dom: Domain, semiring: Semiring = LOG_SUM_PRODUCT,
-    einsum_fn: Callable = jnp.einsum,
 ) -> Factor:
     """Compute the generalized sum-product by materializing the combined factor.
 
@@ -222,12 +222,10 @@ def einsum_materialized(
         log_factors: Factors (in whatever space the semiring expects).
         dom: Target domain for the output.
         semiring: The semiring whose combine/reduce ops are used.
-        einsum_fn: Unused (accepted for API compatibility).
 
     Returns:
         A Factor over *dom*.
     """
-    del einsum_fn  # unused
     combined = functools.reduce(semiring.combine, log_factors)
     elim_attrs = combined.domain.marginalize(dom).attributes
     return semiring.reduce(combined, elim_attrs).transpose(dom.attributes)
@@ -235,7 +233,6 @@ def einsum_materialized(
 
 def einsum_semiring(
     factors: list[Factor], dom: Domain, semiring: Semiring = LOG_SUM_PRODUCT,
-    einsum_fn: Callable = jnp.einsum,
 ) -> Factor:
     """Compute the generalized sum-product using ``custom_dot_general``.
 
@@ -251,14 +248,10 @@ def einsum_semiring(
         factors: Factors (in whatever space the semiring expects).
         dom: Target domain for the output.
         semiring: The semiring whose combine/reduce ops are used.
-        einsum_fn: Unused (accepted for API compatibility).
 
     Returns:
         A Factor over *dom*.
     """
-    del einsum_fn  # unused
-    from .einsum import custom_einsum
-
     def _custom_einsum(formula, *arrays, **kwargs):
         kwargs.pop('optimize', None)
         kwargs.pop('precision', None)
@@ -296,7 +289,20 @@ class MessageSchedule(enum.Enum):
 
 
 # Type alias for contraction functions used by the IMPLICIT schedule.
-ContractionFn = Callable[[list[Factor], Domain, Semiring, Callable], Factor]
+ContractionFn = Callable[[list[Factor], Domain, Semiring], Factor]
+
+
+@dataclasses.dataclass(frozen=True)
+class InferenceResult:
+    """Result of junction tree inference, containing marginals and messages.
+
+    Attributes:
+        marginals: Normalized marginals as a CliqueVector over the input cliques.
+        messages: Dictionary mapping ``(sender, receiver)`` clique pairs to
+            the message Factor sent along that edge of the junction tree.
+    """
+    marginals: CliqueVector
+    messages: dict[tuple, Factor]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -327,11 +333,13 @@ class MessagePassingOracle:
     contraction: ContractionFn = einsum_stabilized
     semiring: Semiring = LOG_SUM_PRODUCT
 
+    @jax.jit(static_argnames=["self", "mesh", "jtree"])
     def __call__(
         self,
         potentials: CliqueVector,
         total: float = 1.0,
         mesh: jax.sharding.Mesh | None = None,
+        jtree: nx.Graph | None = None,
     ) -> CliqueVector:
         """Compute marginals from potentials.
 
@@ -340,16 +348,42 @@ class MessagePassingOracle:
                 probability-space, depending on the semiring).
             total: Normalization constant for the output marginals.
             mesh: Optional sharding mesh.
+            jtree: Optional pre-computed junction tree.  If ``None``,
+                one is constructed automatically from the potentials.
 
         Returns:
             Marginals as a CliqueVector over the same cliques.
         """
+        return self.infer(potentials, total, mesh, jtree).marginals
+
+    def infer(
+        self,
+        potentials: CliqueVector,
+        total: float = 1.0,
+        mesh: jax.sharding.Mesh | None = None,
+        jtree: nx.Graph | None = None,
+    ) -> InferenceResult:
+        """Run inference and return both marginals and messages.
+
+        This method has the same semantics as ``__call__`` but returns
+        an ``InferenceResult`` containing the intermediate messages in
+        addition to the marginals.
+
+        Args:
+            potentials: Potentials of a graphical model.
+            total: Normalization constant for the output marginals.
+            mesh: Optional sharding mesh.
+            jtree: Optional pre-computed junction tree.
+
+        Returns:
+            An ``InferenceResult`` with ``.marginals`` and ``.messages``.
+        """
         if self.schedule == MessageSchedule.IMPLICIT:
-            return self._implicit(potentials, total, mesh)
+            return self._implicit(potentials, total, mesh, jtree)
         elif self.schedule == MessageSchedule.HUGIN:
-            return self._hugin(potentials, total, mesh)
+            return self._hugin(potentials, total, mesh, jtree)
         elif self.schedule == MessageSchedule.SHAFER_SHENOY:
-            return self._shafer_shenoy(potentials, total, mesh)
+            return self._shafer_shenoy(potentials, total, mesh, jtree)
         else:
             raise ValueError(f"Unknown schedule: {self.schedule}")
 
@@ -360,15 +394,16 @@ class MessagePassingOracle:
         else:
             return beliefs.normalize(total, log=False)
 
-    def _hugin(self, potentials, total, mesh):
+    def _hugin(self, potentials, total, mesh, jtree):
         """HUGIN message passing with belief subtraction."""
         if len(potentials.cliques) == 0:
-            return CliqueVector(potentials.domain, [], {})
+            return InferenceResult(CliqueVector(potentials.domain, [], {}), {})
 
         potentials = potentials.apply_sharding(mesh)
         domain, cliques = potentials.domain, potentials.cliques
 
-        jtree = junction_tree.make_junction_tree(domain, cliques)[0]
+        if jtree is None:
+            jtree = junction_tree.make_junction_tree(domain, cliques)[0]
         message_order = junction_tree.message_passing_order(jtree)
         maximal_cliques = junction_tree.maximal_cliques(jtree)
 
@@ -385,21 +420,23 @@ class MessagePassingOracle:
             messages[(i, j)] = self.semiring.reduce(tau, sep)
             beliefs[j] = self.semiring.combine(beliefs[j], messages[(i, j)])
 
-        return (
+        marginals = (
             self._normalize_beliefs(beliefs, total)
             .contract(cliques)
             .apply_sharding(mesh)
         )
+        return InferenceResult(marginals, messages)
 
-    def _shafer_shenoy(self, potentials, total, mesh):
+    def _shafer_shenoy(self, potentials, total, mesh, jtree):
         """Shafer-Shenoy message passing with neighbor collection."""
         if len(potentials.cliques) == 0:
-            return CliqueVector(potentials.domain, [], {})
+            return InferenceResult(CliqueVector(potentials.domain, [], {}), {})
 
         potentials = potentials.apply_sharding(mesh)
         domain, cliques = potentials.domain, potentials.cliques
 
-        jtree = junction_tree.make_junction_tree(domain, cliques)[0]
+        if jtree is None:
+            jtree = junction_tree.make_junction_tree(domain, cliques)[0]
         message_order = junction_tree.message_passing_order(jtree)
         maximal_cliques = junction_tree.maximal_cliques(jtree)
 
@@ -426,21 +463,23 @@ class MessagePassingOracle:
             beliefs[cl] = b
 
         beliefs = CliqueVector(potentials.domain, maximal_cliques, beliefs)
-        return (
+        marginals = (
             self._normalize_beliefs(beliefs, total)
             .contract(cliques)
             .apply_sharding(mesh)
         )
+        return InferenceResult(marginals, messages)
 
-    def _implicit(self, potentials, total, mesh):
+    def _implicit(self, potentials, total, mesh, jtree):
         """Implicit-factor message passing using a contraction function."""
         if len(potentials.cliques) == 0:
-            return CliqueVector(potentials.domain, [], {})
+            return InferenceResult(CliqueVector(potentials.domain, [], {}), {})
 
         potentials = potentials.apply_sharding(mesh)
         domain, cliques = potentials.active_domain, potentials.cliques
 
-        jtree = junction_tree.make_junction_tree(domain, cliques)[0]
+        if jtree is None:
+            jtree = junction_tree.make_junction_tree(domain, cliques)[0]
         message_order = junction_tree.message_passing_order(jtree)
         maximal_cliques = junction_tree.maximal_cliques(jtree)
 
@@ -488,7 +527,7 @@ class MessagePassingOracle:
                 else:
                     beliefs[cl2] = belief.normalize(total, log=False).apply_sharding(mesh)
 
-        return CliqueVector(potentials.domain, cliques, beliefs)
+        return InferenceResult(CliqueVector(potentials.domain, cliques, beliefs), messages)
 
     def __repr__(self) -> str:
         parts = [f"schedule={self.schedule.value}"]
