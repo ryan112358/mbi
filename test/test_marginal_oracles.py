@@ -11,7 +11,10 @@ from mbi.marginal_oracles import (
     einsum_fused,
     einsum_semistable,
 )
-from mbi.extensions.constraints import message_passing_with_constraints
+from mbi.extensions.constraints import (
+    constrained_shafer_shenoy,
+    constrained_implicit,
+)
 import jax.numpy as jnp
 import numpy as np
 from parameterized import parameterized
@@ -52,6 +55,14 @@ _implicit_materialized = functools.partial(
 _implicit_fused = functools.partial(
     message_passing_implicit, contraction=einsum_fused
 )
+_implicit_constraints_materialized = functools.partial(
+    constrained_implicit,
+    contraction=einsum_materialized,
+)
+_implicit_constraints_fused = functools.partial(
+    constrained_implicit,
+    contraction=einsum_fused,
+)
 
 
 _ORACLES = [
@@ -64,7 +75,9 @@ _ORACLES = [
     _implicit_fused,
     message_passing_hugin,
     message_passing_shafer_shenoy,
-    message_passing_with_constraints,
+    constrained_shafer_shenoy,
+    _implicit_constraints_materialized,
+    _implicit_constraints_fused,
     _variable_elimination_oracle,
     _calculate_many_oracle,
     _bulk_variable_elimination_oracle,
@@ -74,7 +87,7 @@ _STABLE_ORACLES = [
     marginal_oracles.brute_force_marginals,
     marginal_oracles.message_passing_shafer_shenoy,
     message_passing_shafer_shenoy,
-    message_passing_with_constraints,
+    constrained_shafer_shenoy,
 ]
 
 _DOMAIN = Domain(["a", "b", "c", "d"], [2, 3, 4, 5])

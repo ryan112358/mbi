@@ -11,7 +11,7 @@ from mbi.clique_vector import CliqueVector
 from mbi.domain import Domain
 from mbi.extensions.constraints import coarsen
 from mbi.extensions.constraints import DeterministicConstraint
-from mbi.extensions.constraints import message_passing_with_constraints
+from mbi.extensions.constraints import constrained_shafer_shenoy
 from mbi.extensions.constraints import project_to_coarse
 from mbi.extensions.constraints import refine
 from mbi.factor import Factor
@@ -58,7 +58,7 @@ def _assert_matches_baseline(
     if seed is not None:
         np.random.seed(seed)
     potentials = CliqueVector.random(domain, cliques)
-    result = message_passing_with_constraints(
+    result = constrained_shafer_shenoy(
         potentials,
         total,
         constraints=tuple(
@@ -206,7 +206,7 @@ class TestMessagePassingWithConstraints(unittest.TestCase):
     ])
     def test_uniform_sums_to_total(self, cliques, total):
         potentials = CliqueVector.zeros(_SIMPLE_DOMAIN, cliques)
-        result = message_passing_with_constraints(
+        result = constrained_shafer_shenoy(
             potentials, total, constraints=(_SIMPLE_CONSTRAINT,)
         )
         for cl in cliques:
@@ -223,7 +223,7 @@ class TestMessagePassingWithConstraints(unittest.TestCase):
     @parameterized.expand([(c,) for c in _CLIQUE_CONFIGS])
     def test_no_nans(self, cliques):
         potentials = CliqueVector.random(_SIMPLE_DOMAIN, cliques)
-        result = message_passing_with_constraints(
+        result = constrained_shafer_shenoy(
             potentials, 10.0, constraints=(_SIMPLE_CONSTRAINT,)
         )
         for cl in cliques:
@@ -232,7 +232,7 @@ class TestMessagePassingWithConstraints(unittest.TestCase):
     @parameterized.expand([(c,) for c in _CLIQUE_CONFIGS])
     def test_non_negative(self, cliques):
         potentials = CliqueVector.random(_SIMPLE_DOMAIN, cliques)
-        result = message_passing_with_constraints(
+        result = constrained_shafer_shenoy(
             potentials, 10.0, constraints=(_SIMPLE_CONSTRAINT,)
         )
         for cl in cliques:
@@ -288,7 +288,7 @@ class TestMultipleConstraints(unittest.TestCase):
         total = 10.0
 
         potentials = CliqueVector.random(domain, cliques)
-        result = message_passing_with_constraints(
+        result = constrained_shafer_shenoy(
             potentials, total, constraints=(c1, c2)
         )
         baseline = _baseline_marginals(
