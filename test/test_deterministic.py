@@ -10,8 +10,9 @@ import jax.numpy as jnp
 from mbi.clique_vector import CliqueVector
 from mbi.domain import Domain
 from mbi.extensions.constraints import coarsen
+from mbi.extensions.constraints import constrained_implicit
+from mbi.extensions.constraints import constrained_shafer_shenoy
 from mbi.extensions.constraints import DeterministicConstraint
-from mbi.extensions.constraints import message_passing_with_constraints
 from mbi.extensions.constraints import project_to_coarse
 from mbi.extensions.constraints import refine
 from mbi.factor import Factor
@@ -51,33 +52,31 @@ def _baseline_marginals(domain, cliques, potentials, constraints, total=10.0):
     )
 
 
+_ORACLES = [constrained_shafer_shenoy, constrained_implicit]
+
+
 def _assert_matches_baseline(
-    test, domain, cliques, constraints, total=10.0, seed=None
+    test, domain, cliques, constraints, total=10.0, seed=None, oracle=None
 ):
     """Assert constraint-aware message passing matches the -inf baseline."""
     if seed is not None:
         np.random.seed(seed)
     potentials = CliqueVector.random(domain, cliques)
-    result = message_passing_with_constraints(
-        potentials,
-        total,
-        constraints=tuple(
-            constraints
-            if isinstance(constraints, (list, tuple))
-            else [constraints]
-        ),
+    cons = tuple(
+        constraints if isinstance(constraints, (list, tuple)) else [constraints]
     )
     baseline = _baseline_marginals(
         domain, cliques, potentials, constraints, total
     )
-    for cl in cliques:
-        np.testing.assert_allclose(
-            result[cl].datavector(),
-            baseline[cl].datavector(),
-            atol=1e-4,
-            err_msg=f'Mismatch at {cl}',
-        )
-    return result
+    for fn in ([oracle] if oracle else _ORACLES):
+        result = fn(potentials, total, constraints=cons)
+        for cl in cliques:
+            np.testing.assert_allclose(
+                result[cl].datavector(),
+                baseline[cl].datavector(),
+                atol=1e-4,
+                err_msg=f'Mismatch at {cl} with {fn.__name__}',
+            )
 
 
 def _random_surjection(n_domain, n_range, rng):
@@ -200,15 +199,14 @@ class TestMessagePassingWithConstraints(unittest.TestCase):
     """Constraint-aware message passing matches the -inf baseline."""
 
     @parameterized.expand([
-        (cliques, total)
+        (fn, cliques, total)
+        for fn in _ORACLES
         for cliques in _CLIQUE_CONFIGS
         for total in [1.0, 10.0, 100.0]
     ])
-    def test_uniform_sums_to_total(self, cliques, total):
+    def test_uniform_sums_to_total(self, fn, cliques, total):
         potentials = CliqueVector.zeros(_SIMPLE_DOMAIN, cliques)
-        result = message_passing_with_constraints(
-            potentials, total, constraints=(_SIMPLE_CONSTRAINT,)
-        )
+        result = fn(potentials, total, constraints=(_SIMPLE_CONSTRAINT,))
         for cl in cliques:
             np.testing.assert_allclose(
                 result[cl].values.sum(), total, atol=1e-4
@@ -220,21 +218,21 @@ class TestMessagePassingWithConstraints(unittest.TestCase):
             self, _SIMPLE_DOMAIN, cliques, _SIMPLE_CONSTRAINT, total=10.0
         )
 
-    @parameterized.expand([(c,) for c in _CLIQUE_CONFIGS])
-    def test_no_nans(self, cliques):
+    @parameterized.expand(
+        [(fn, cliques) for fn in _ORACLES for cliques in _CLIQUE_CONFIGS]
+    )
+    def test_no_nans(self, fn, cliques):
         potentials = CliqueVector.random(_SIMPLE_DOMAIN, cliques)
-        result = message_passing_with_constraints(
-            potentials, 10.0, constraints=(_SIMPLE_CONSTRAINT,)
-        )
+        result = fn(potentials, 10.0, constraints=(_SIMPLE_CONSTRAINT,))
         for cl in cliques:
             self.assertFalse(jnp.isnan(result[cl].values).any())
 
-    @parameterized.expand([(c,) for c in _CLIQUE_CONFIGS])
-    def test_non_negative(self, cliques):
+    @parameterized.expand(
+        [(fn, cliques) for fn in _ORACLES for cliques in _CLIQUE_CONFIGS]
+    )
+    def test_non_negative(self, fn, cliques):
         potentials = CliqueVector.random(_SIMPLE_DOMAIN, cliques)
-        result = message_passing_with_constraints(
-            potentials, 10.0, constraints=(_SIMPLE_CONSTRAINT,)
-        )
+        result = fn(potentials, 10.0, constraints=(_SIMPLE_CONSTRAINT,))
         for cl in cliques:
             self.assertTrue((result[cl].values >= -1e-10).all())
 
@@ -268,8 +266,8 @@ class TestMultipleConstraints(unittest.TestCase):
             self, domain, [('A', 'Bp'), ('B', 'Ap')], constraints
         )
 
-    @parameterized.expand(range(10))
-    def test_two_constraints_randomized(self, seed):
+    @parameterized.expand([(fn, seed) for fn in _ORACLES for seed in range(10)])
+    def test_two_constraints_randomized(self, fn, seed):
         rng = np.random.default_rng(seed)
         n_a, n_ap = rng.integers(4, 12), rng.integers(2, 4)
         n_b, n_bp = rng.integers(4, 12), rng.integers(2, 4)
@@ -288,19 +286,16 @@ class TestMultipleConstraints(unittest.TestCase):
         total = 10.0
 
         potentials = CliqueVector.random(domain, cliques)
-        result = message_passing_with_constraints(
-            potentials, total, constraints=(c1, c2)
-        )
         baseline = _baseline_marginals(
             domain, cliques, potentials, [c1, c2], total
         )
-
+        result = fn(potentials, total, constraints=(c1, c2))
         for cl in cliques:
             np.testing.assert_allclose(
                 result[cl].datavector(),
                 baseline[cl].datavector(),
                 atol=1e-4,
-                err_msg=f'Seed {seed}, clique {cl}',
+                err_msg=f'Seed {seed}, clique {cl}, {fn.__name__}',
             )
 
 
