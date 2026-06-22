@@ -9,7 +9,9 @@ operations.
 
 from __future__ import annotations
 
-import functools
+import collections
+import collections.abc
+
 
 import attr
 import jax
@@ -17,7 +19,8 @@ import jax.numpy as jnp
 import networkx as nx
 import numpy as np
 
-from .. import junction_tree
+from .. import junction_tree, marginal_oracles
+from ..clique_utils import clique_mapping
 from ..clique_vector import CliqueVector
 from ..domain import Domain
 from ..factor import Factor
@@ -339,11 +342,10 @@ def _try_expand_belief(clique, result_cv, constraints):
     return None
 
 
-@functools.partial(jax.jit, static_argnums=[2, 3, 4])
-def message_passing_with_constraints(
+@jax.jit(static_argnames=['jtree', 'constraints'])
+def constrained_shafer_shenoy(
     potentials: CliqueVector,
     total: float = 1,
-    mesh: jax.sharding.Mesh | None = None,
     jtree: nx.Graph | None = None,
     constraints: tuple[DeterministicConstraint, ...] = (),
 ) -> CliqueVector:
@@ -355,7 +357,7 @@ def message_passing_with_constraints(
     Args:
         potentials: The (log-space) potentials of a graphical model.
         total: The normalization factor.
-        mesh: The mesh over which the computation should be sharded.
+
         jtree: An optional junction tree that defines the message passing
             order.
         constraints: Deterministic constraints to handle efficiently.
@@ -366,7 +368,6 @@ def message_passing_with_constraints(
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
-    potentials = potentials.apply_sharding(mesh)
     domain, cliques = potentials.domain, potentials.cliques
 
     # Build the junction tree, including constraint edges.
@@ -404,7 +405,7 @@ def message_passing_with_constraints(
             non_constraint_cliques,
             {cl: potentials[cl] for cl in non_constraint_cliques},
         )
-        beliefs0 = nc.expand(non_pure).apply_sharding(mesh)
+        beliefs0 = nc.expand(non_pure)
     else:
         beliefs0 = CliqueVector(
             domain,
@@ -497,4 +498,284 @@ def message_passing_with_constraints(
                     domain,
                 )
 
-    return CliqueVector(domain, cliques, result).apply_sharding(mesh)
+    return CliqueVector(domain, cliques, result)
+
+
+# ---------------------------------------------------------------------------
+# Hybrid implicit + constraint-aware message passing
+# ---------------------------------------------------------------------------
+
+
+@jax.jit(static_argnames=['jtree', 'constraints', 'contraction'])
+def constrained_implicit(
+    potentials: CliqueVector,
+    total: float = 1,
+    jtree: nx.Graph | None = None,
+    *,
+    constraints: tuple[DeterministicConstraint, ...] = (),
+    contraction: collections.abc.Callable = (
+        marginal_oracles.einsum_materialized
+    ),
+) -> CliqueVector:
+    """Hybrid message passing: implicit for standard cliques, SS for constraints.
+
+    Uses the memory-efficient implicit contraction for cliques that do not
+    involve constraints, and falls back to Shafer-Shenoy style constraint
+    routing for pure and embedded constraint cliques.  This avoids *both*
+    super-clique expansion (for standard cliques) and the cost of
+    refining coarse factors to fine-variable space (for constraint cliques).
+
+    Args:
+        potentials: The (log-space) potentials of a graphical model.
+        total: The normalization factor.
+        jtree: An optional junction tree.
+        constraints: Deterministic constraints to handle efficiently.
+        contraction: Contraction function for log-space sum-product.
+
+    Returns:
+        The marginals of the graphical model.
+    """
+
+    if len(potentials.cliques) == 0:
+        return CliqueVector(potentials.domain, [], {})
+
+    domain = potentials.active_domain
+    cliques = potentials.cliques
+
+    # Build junction tree with constraint edges.
+    extra = [
+        domain.canonical(c.clique)
+        for c in constraints
+        if domain.canonical(c.clique) not in cliques
+    ]
+    if jtree is None:
+        jtree = junction_tree.make_junction_tree(domain, list(cliques) + extra)[
+            0
+        ]
+    message_order = junction_tree.message_passing_order(jtree)
+    max_cliques = junction_tree.maximal_cliques(jtree)
+    pure_constraint, embedded = _classify_cliques(max_cliques, constraints)
+    neighbors = {cl: list(jtree.neighbors(cl)) for cl in max_cliques}
+
+    # Map user cliques → maximal cliques.
+    mapping = clique_mapping(max_cliques, cliques, domain=domain)
+    inverse_mapping = collections.defaultdict(list)
+    potential_mapping = collections.defaultdict(list)
+
+    for cl in cliques:
+        mc = mapping[cl]
+        potential_mapping[mc].append(potentials[cl])
+        inverse_mapping[mc].append(cl)
+
+    # Separate potentials absorbed by pure constraint cliques.
+    constraint_init = {}
+    for mc in pure_constraint:
+        constraint_init[mc] = potential_mapping.pop(mc, [])
+
+    non_pure = [mc for mc in max_cliques if mc not in pure_constraint]
+
+    # Pre-build incoming message graph for implicit contraction.
+    incoming_messages = collections.defaultdict(list)
+    for i, msg in enumerate(message_order):
+        for j in range(i):
+            msg2 = message_order[j]
+            if msg[0] == msg2[1] and msg[1] != msg2[0]:
+                incoming_messages[msg].append(msg2)
+
+    # ---- Forward-backward message passing ----
+    messages = {}
+    for i, j in message_order:
+        sep_vars = set(i) & set(j)
+
+        if i in pure_constraint:
+            # Constraint routing — O(|fine|).
+            c = pure_constraint[i]
+            inputs = [
+                messages[(k, i)]
+                for k in neighbors[i]
+                if k != j and (k, i) in messages
+            ]
+            inputs.extend(constraint_init.get(i, []))
+            msg = _constraint_message(c, inputs, c.fine in sep_vars)
+            if msg is None:
+                sizes = {c.fine: c.n_fine, c.coarse: c.n_coarse}
+                sep = tuple(sep_vars)
+                msg = Factor.zeros(Domain(list(sep), [sizes[s] for s in sep]))
+            messages[(i, j)] = msg
+
+        elif i in embedded:
+            # Normalize-to-fine + contraction (no super-clique expansion).
+            shared = domain.project(tuple(sep_vars))
+            input_potentials = potential_mapping.get(i, [])
+            input_messages = [
+                messages[key] for key in incoming_messages[(i, j)]
+            ]
+            inputs = input_potentials + input_messages
+
+            for c in embedded[i]:
+                inputs = _normalize_to_fine(inputs, c)
+
+            target = shared
+            post_ops = []
+            for c in embedded[i]:
+                target, post_op = _target_for_constraint(target, c)
+                post_ops.append((c, post_op))
+
+            for attr in target.attributes:
+                if not any(attr in inp.domain.attributes for inp in inputs):
+                    inputs.append(Factor.zeros(domain.project([attr])))
+
+            msg = contraction(inputs, target)
+            for c, post_op in post_ops:
+                msg = _postprocess_log(msg, c, post_op, shared)
+            messages[(i, j)] = msg
+
+        else:
+            # Implicit contraction — no super-clique expansion.
+            shared = domain.project(tuple(sep_vars))
+            input_potentials = potential_mapping.get(i, [])
+            input_messages = [
+                messages[key] for key in incoming_messages[(i, j)]
+            ]
+            inputs = input_potentials + input_messages
+            for attr in shared.attributes:
+                if not any(attr in inp.domain.attributes for inp in inputs):
+                    inputs.append(Factor.zeros(domain.project([attr])))
+            messages[(i, j)] = contraction(inputs, shared)
+
+    # ---- Compute beliefs ----
+    result = {}
+    for mc in non_pure:
+        if mc in pure_constraint:
+            continue
+
+        input_potentials = potential_mapping.get(mc, [])
+        input_messages = [val for key, val in messages.items() if key[1] == mc]
+        inputs = input_potentials + input_messages
+
+        if mc in embedded:
+            # Normalize to fine, contract, then post-process.
+            for c in embedded[mc]:
+                inputs = _normalize_to_fine(inputs, c)
+
+        for cl in inverse_mapping.get(mc, []):
+            target = domain.project(cl)
+
+            if mc in embedded:
+                adj_target = target
+                post_ops = []
+                for c in embedded[mc]:
+                    adj_target, post_op = _target_for_constraint(adj_target, c)
+                    post_ops.append((c, post_op))
+
+                adj_inputs = list(inputs)
+                for attr in adj_target.attributes:
+                    if not any(
+                        attr in inp.domain.attributes for inp in adj_inputs
+                    ):
+                        adj_inputs.append(Factor.zeros(domain.project([attr])))
+
+                belief = contraction(adj_inputs, adj_target)
+                # Normalize/exp to probability space, then post-process.
+                belief = belief.normalize(total, log=True).exp()
+                for c, post_op in post_ops:
+                    belief = _postprocess_prob(belief, c, post_op, target)
+                result[cl] = belief
+            else:
+                adj_inputs = list(inputs)
+                for attr in target.attributes:
+                    if not any(
+                        attr in inp.domain.attributes for inp in adj_inputs
+                    ):
+                        adj_inputs.append(Factor.zeros(domain.project([attr])))
+                belief = contraction(adj_inputs, target)
+                result[cl] = belief.normalize(total, log=True).exp()
+
+    # Pure constraint cliques: derive marginals.
+    for cl in cliques:
+        if cl in result:
+            continue
+        con_mc = next(
+            (mc for mc in pure_constraint if set(cl) <= set(mc)), None
+        )
+        if con_mc is not None:
+            result[cl] = _derive_pure_marginal(
+                cl,
+                pure_constraint,
+                constraint_init,
+                neighbors,
+                messages,
+                total,
+                domain,
+            )
+
+    return CliqueVector(potentials.domain, cliques, result)
+
+
+# ---------------------------------------------------------------------------
+# Helpers for embedded constraint handling via implicit contraction
+# ---------------------------------------------------------------------------
+
+
+def _normalize_to_fine(inputs, constraint):
+    """Normalize all inputs to fine-variable space."""
+    cleaned = []
+    for f in inputs:
+        has_fine = constraint.fine in f.domain
+        has_coarse = constraint.coarse in f.domain
+        if has_fine and has_coarse:
+            cleaned.append(_constraint_slice(f, constraint))
+        elif has_coarse and not has_fine:
+            cleaned.append(refine(f, constraint))
+        else:
+            cleaned.append(f)
+    return cleaned
+
+
+def _target_for_constraint(target_domain, constraint):
+    """Adjust target domain and return (domain, post_op) for post-processing."""
+    has_fine = constraint.fine in target_domain
+    has_coarse = constraint.coarse in target_domain
+
+    if not has_fine and not has_coarse:
+        return target_domain, 'none'
+    if has_fine and not has_coarse:
+        return target_domain, 'fine_only'
+    if has_coarse and not has_fine:
+        attrs = list(target_domain.attributes)
+        shape = list(target_domain.shape)
+        idx = attrs.index(constraint.coarse)
+        attrs[idx] = constraint.fine
+        shape[idx] = constraint.n_fine
+        return Domain(attrs, shape), 'coarsen'
+    # Both — drop coarse from target, will expand later.
+    attrs = [a for a in target_domain.attributes if a != constraint.coarse]
+    shape = [
+        s
+        for a, s in zip(target_domain.attributes, target_domain.shape)
+        if a != constraint.coarse
+    ]
+    return Domain(attrs, shape), 'expand'
+
+
+def _postprocess_prob(result, constraint, post_op, original_target):
+    """Post-process a probability-space result."""
+    if post_op in {'none', 'fine_only'}:
+        return result
+    if post_op == 'coarsen':
+        return project_to_coarse(result, constraint)
+    if post_op == 'expand':
+        expanded = _constraint_expand(result, constraint)
+        return expanded.project(tuple(original_target.attributes))
+    raise ValueError(f'Unknown post_op: {post_op}')
+
+
+def _postprocess_log(result, constraint, post_op, original_target):
+    """Post-process a log-space result (for messages)."""
+    if post_op in {'none', 'fine_only'}:
+        return result
+    if post_op == 'coarsen':
+        return coarsen(result, constraint)
+    if post_op == 'expand':
+        return result
+    raise ValueError(f'Unknown post_op: {post_op}')
