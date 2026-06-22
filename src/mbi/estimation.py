@@ -61,6 +61,8 @@ class Estimator(ABC):
         * ``extensions.ReweightedDatasetEstimator``
     """
 
+    marginal_oracle: marginal_oracles.MarginalOracle | None
+
     # ------------------------------------------------------------------
     # Abstract interface — subclasses must implement
     # ------------------------------------------------------------------
@@ -98,6 +100,12 @@ class Estimator(ABC):
         Default: ``state[0]`` (first element of the state tuple).
         """
         return state[0]
+
+    def _oracle(self, cliques, domain):
+        """Return the marginal oracle, falling back to ``default_oracle``."""
+        return self.marginal_oracle or marginal_oracles.default_oracle(
+            cliques, domain
+        )
 
     # ------------------------------------------------------------------
     # Default implementations
@@ -275,13 +283,12 @@ class MirrorDescent(Estimator):
         stepsize: Fixed step size, or ``None`` (default) to use Armijo line
             search.
         marginal_oracle: The function to compute marginals from potentials.
+            If ``None`` (default), uses ``default_oracle()`` to auto-select.
         mesh: JAX sharding mesh.
     """
 
     stepsize: float | None = None
-    marginal_oracle: marginal_oracles.MarginalOracle = (
-        marginal_oracles.message_passing_fast
-    )
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None
     mesh: jax.sharding.Mesh | None = None
 
     def _init(
@@ -297,7 +304,7 @@ class MirrorDescent(Estimator):
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
             potentials = potentials.expand(loss_fn.cliques)
-        marginal_oracle = self.marginal_oracle
+        marginal_oracle = self._oracle(loss_fn.cliques, domain)
         # Theory suggests the initial learning rate should be inversely
         # proportional to L. We also divide by scaling factor to account for
         # the fact that gradients are scaled up by a factor of known_total.
@@ -317,7 +324,7 @@ class MirrorDescent(Estimator):
         known_total: jax.Array | float,
     ) -> MirrorDescentState:
         """Perform a single mirror descent step."""
-        marginal_oracle = self.marginal_oracle
+        marginal_oracle = self._oracle(loss_fn.cliques, state.potentials.domain)
         mu = marginal_oracle(state.potentials, known_total)
         loss, dL = jax.value_and_grad(loss_fn)(mu)
         theta2 = state.potentials - state.alpha * dL
@@ -347,7 +354,9 @@ class MirrorDescent(Estimator):
         state: MirrorDescentState,
         known_total: float,
     ) -> MarkovRandomField:
-        marginal_oracle = self.marginal_oracle
+        marginal_oracle = self._oracle(
+            state.potentials.cliques, state.potentials.domain
+        )
         marginals = marginal_oracle(state.potentials, known_total)
         return MarkovRandomField(
             potentials=state.potentials,
@@ -366,12 +375,11 @@ class DualAveraging(Estimator):
 
     Attributes:
         marginal_oracle: The function to compute marginals from potentials.
+            If ``None`` (default), uses ``default_oracle()`` to auto-select.
         mesh: JAX sharding mesh.
     """
 
-    marginal_oracle: marginal_oracles.MarginalOracle = (
-        marginal_oracles.message_passing_stable
-    )
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None
     mesh: jax.sharding.Mesh | None = None
 
     def _init(
@@ -387,7 +395,7 @@ class DualAveraging(Estimator):
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
             potentials = potentials.expand(loss_fn.cliques)
-        marginal_oracle = self.marginal_oracle
+        marginal_oracle = self._oracle(loss_fn.cliques, domain)
 
         D = np.sqrt(
             domain.size() * np.log(domain.size())
@@ -408,7 +416,7 @@ class DualAveraging(Estimator):
         known_total: jax.Array | float,
     ) -> DualAveragingState:
         """Perform a single dual averaging step."""
-        marginal_oracle = self.marginal_oracle
+        marginal_oracle = self._oracle(loss_fn.cliques, state.w.domain)
         t = state.t
         c = 2.0 / (t + 1)
         beta = state.gamma * (t + 1) ** 1.5 / 2
@@ -444,12 +452,11 @@ class InteriorGradient(Estimator):
 
     Attributes:
         marginal_oracle: The function to compute marginals from potentials.
+            If ``None`` (default), uses ``default_oracle()`` to auto-select.
         mesh: JAX sharding mesh.
     """
 
-    marginal_oracle: marginal_oracles.MarginalOracle = (
-        marginal_oracles.message_passing_stable
-    )
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None
     mesh: jax.sharding.Mesh | None = None
 
     def _init(
@@ -465,7 +472,7 @@ class InteriorGradient(Estimator):
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
             potentials = potentials.expand(loss_fn.cliques)
-        marginal_oracle = self.marginal_oracle
+        marginal_oracle = self._oracle(loss_fn.cliques, domain)
 
         inv_lipschitz = 1.0 / (loss_fn.lipschitz or 1.0)
         x = y = z = marginal_oracle(potentials, known_total)
@@ -481,7 +488,7 @@ class InteriorGradient(Estimator):
         known_total: jax.Array | float,
     ) -> InteriorGradientState:
         """Perform a single interior gradient step."""
-        marginal_oracle = self.marginal_oracle
+        marginal_oracle = self._oracle(loss_fn.cliques, state.potentials.domain)
         l = state.inv_lipschitz
         a = (((state.c * l) ** 2 + 4 * state.c * l) ** 0.5 - l * state.c) / 2
         y = (1 - a) * state.x + a * state.z
@@ -516,11 +523,10 @@ class LBFGS(Estimator):
 
     Attributes:
         marginal_oracle: The function to compute marginals from potentials.
+            If ``None`` (default), uses ``default_oracle()`` to auto-select.
     """
 
-    marginal_oracle: marginal_oracles.MarginalOracle = (
-        marginal_oracles.message_passing_stable
-    )
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None
 
     def _init(self, domain, loss_fn, known_total, *, potentials=None):
         if potentials is None:
@@ -535,7 +541,7 @@ class LBFGS(Estimator):
         return LBFGSState(potentials, opt_state)
 
     def _step(self, state, loss_fn, known_total):
-        marginal_oracle = self.marginal_oracle
+        marginal_oracle = self._oracle(loss_fn.cliques, state.potentials.domain)
         optimizer = optax.lbfgs(
             memory_size=1,
             linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
@@ -557,10 +563,16 @@ class LBFGS(Estimator):
         return LBFGSState(potentials, opt_state)
 
     def _callback_value(self, state, known_total):
-        return self.marginal_oracle(state.potentials, known_total)
+        marginal_oracle = self._oracle(
+            state.potentials.cliques, state.potentials.domain
+        )
+        return marginal_oracle(state.potentials, known_total)
 
     def _finalize(self, state, known_total):
-        marginals = self.marginal_oracle(state.potentials, known_total)
+        marginal_oracle = self._oracle(
+            state.potentials.cliques, state.potentials.domain
+        )
+        marginals = marginal_oracle(state.potentials, known_total)
         return MarkovRandomField(
             potentials=state.potentials,
             marginals=marginals,
@@ -581,15 +593,14 @@ class UniversalAcceleratedMethod(Estimator):
 
     Attributes:
         marginal_oracle: The function to compute marginals from potentials.
+            If ``None`` (default), uses ``default_oracle()`` to auto-select.
         max_iter_search: Max inner line-search iterations per step.
         target_acc: Target accuracy (set > 0 for non-smooth objectives).
         norm: Norm measuring smoothness (1 or 2).
         linesearch: Whether to use adaptive line-search.
     """
 
-    marginal_oracle: marginal_oracles.MarginalOracle = (
-        marginal_oracles.message_passing_stable
-    )
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None
     max_iter_search: int = 30
     target_acc: float = 0.0
     norm: int = 2
@@ -600,7 +611,7 @@ class UniversalAcceleratedMethod(Estimator):
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
             potentials = potentials.expand(loss_fn.cliques)
-        marginal_oracle = self.marginal_oracle
+        marginal_oracle = self._oracle(loss_fn.cliques, domain)
         x = z = marginal_oracle(potentials, known_total)
         stepsize = 1.0 / known_total
         return _AcceleratedStepSearchState(
@@ -615,7 +626,7 @@ class UniversalAcceleratedMethod(Estimator):
         )
 
     def _step(self, state, loss_fn, known_total):
-        marginal_oracle = self.marginal_oracle
+        marginal_oracle = self._oracle(loss_fn.cliques, state.x.domain)
         dual_proj = lambda u: marginal_oracle(u, known_total)
         max_iter_search = self.max_iter_search
         target_acc = self.target_acc
@@ -704,7 +715,7 @@ def mirror_descent(
     *,
     known_total: float | None = None,
     potentials: CliqueVector | None = None,
-    marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_fast,
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     iters: int = 1000,
     stepsize: float | None = None,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
@@ -715,6 +726,8 @@ def mirror_descent(
         DeprecationWarning,
         stacklevel=2,
     )
+    if marginal_oracle is None:
+        marginal_oracle = marginal_oracles.default_oracle()
     return MirrorDescent(
         stepsize=stepsize,
         marginal_oracle=marginal_oracle,
@@ -734,7 +747,7 @@ def dual_averaging(
     *,
     known_total: float | None = None,
     potentials: CliqueVector | None = None,
-    marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
 ) -> MarkovRandomField:
@@ -744,6 +757,8 @@ def dual_averaging(
         DeprecationWarning,
         stacklevel=2,
     )
+    if marginal_oracle is None:
+        marginal_oracle = marginal_oracles.default_oracle()
     return DualAveraging(
         marginal_oracle=marginal_oracle,
     ).estimate(
@@ -762,7 +777,7 @@ def interior_gradient(
     *,
     known_total: float | None = None,
     potentials: CliqueVector | None = None,
-    marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
 ) -> MarkovRandomField:
@@ -772,6 +787,8 @@ def interior_gradient(
         DeprecationWarning,
         stacklevel=2,
     )
+    if marginal_oracle is None:
+        marginal_oracle = marginal_oracles.default_oracle()
     return InteriorGradient(
         marginal_oracle=marginal_oracle,
     ).estimate(
@@ -827,7 +844,7 @@ def lbfgs(
     *,
     known_total: float | None = None,
     potentials: CliqueVector | None = None,
-    marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
 ) -> MarkovRandomField:
@@ -837,6 +854,8 @@ def lbfgs(
         DeprecationWarning,
         stacklevel=2,
     )
+    if marginal_oracle is None:
+        marginal_oracle = marginal_oracles.default_oracle()
     return LBFGS(
         marginal_oracle=marginal_oracle,
     ).estimate(
@@ -853,7 +872,7 @@ def mle_from_marginals(
     marginals: CliqueVector,
     known_total: float,
     iters: int = 250,
-    marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     callback_fn: Callable[..., None] = lambda *_: None,
 ) -> MarkovRandomField:
     """Compute the MLE Graphical Model from the marginals.
@@ -865,6 +884,9 @@ def mle_from_marginals(
     Returns:
         A MarkovRandomField object with the final potentials and marginals.
     """
+
+    if marginal_oracle is None:
+        marginal_oracle = marginal_oracles.default_oracle()
 
     def loss_and_grad_fn(theta):
         mu = marginal_oracle(theta, known_total)
@@ -1069,7 +1091,7 @@ def universal_accelerated_method(
     *,
     known_total: float | None = None,
     potentials: CliqueVector | None = None,
-    marginal_oracle: marginal_oracles.MarginalOracle = marginal_oracles.message_passing_stable,
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     iters: int = 1000,
     callback_fn: Callable[[CliqueVector], None] = lambda _: None,
 ) -> MarkovRandomField:
@@ -1080,6 +1102,8 @@ def universal_accelerated_method(
         DeprecationWarning,
         stacklevel=2,
     )
+    if marginal_oracle is None:
+        marginal_oracle = marginal_oracles.default_oracle()
     return UniversalAcceleratedMethod(
         marginal_oracle=marginal_oracle,
     ).estimate(

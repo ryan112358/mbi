@@ -9,9 +9,11 @@ schedules are available:
 - ``message_passing_hugin``: Classic HUGIN algorithm with belief subtraction.
 - ``message_passing_shafer_shenoy``: Shafer-Shenoy algorithm with neighbor collection.
 
-Backward-compatible aliases (``message_passing_fast``,
-``message_passing_stable``, ``message_passing_shafer_shenoy``) are
-also provided.
+Use ``default_oracle()`` to automatically select the best oracle for your
+hardware and clique structure::
+
+    oracle = marginal_oracles.default_oracle(cliques=cliques, domain=domain)
+    marginals = oracle(potentials)
 """
 
 import collections
@@ -299,7 +301,7 @@ def message_passing_implicit(
     total: float = 1.0,
     jtree: nx.Graph | None = None,
     *,
-    contraction: Callable = einsum_fused,
+    contraction: Callable = einsum_materialized,
     return_messages: bool = False,
 ) -> CliqueVector | tuple[CliqueVector, dict]:
     """Implicit-factor message passing using a contraction function.
@@ -308,8 +310,8 @@ def message_passing_implicit(
     via the given contraction function.  Most memory-efficient — never
     materializes super-clique tables.
 
-    The default contraction (``einsum_fused``) is numerically stable.
-    For faster but less stable computation, use ``einsum_semistable``.
+    The default contraction (``einsum_materialized``) is the fastest on GPU.
+    For better ``-inf`` tolerance, use ``einsum_fused``.
 
     Args:
         potentials: Potentials of a graphical model.
@@ -377,6 +379,57 @@ message_passing_fast = functools.partial(
     message_passing_implicit, contraction=einsum_semistable
 )
 message_passing_stable = message_passing_hugin
+
+
+def default_oracle(
+    cliques: tuple[tuple[str, ...], ...] | None = None,
+    domain: Domain | None = None,
+    backend: str | None = None,
+) -> MarginalOracle:
+    """Select the best oracle for the given setting.
+
+    Chooses based on hardware backend and clique structure:
+
+    - **CPU**: ``message_passing_shafer_shenoy`` (fastest on CPU and handles
+      ``-inf`` potentials correctly, unlike HUGIN which can NaN on dense
+      graphs with ``-inf`` entries).
+    - **GPU, max clique size < 1M**: ``message_passing_shafer_shenoy``
+      (fast and numerically robust).
+    - **GPU, max clique size >= 1M**: ``message_passing_implicit`` with
+      ``einsum_materialized`` (avoids materializing super-cliques;
+      HUGIN/SS OOM at ~1e8 and slow at ~1e7).
+
+    Args:
+        cliques: Cliques of the graphical model. Used to estimate max clique
+            size when ``domain`` is also provided.
+        domain: Domain of the graphical model. Used with ``cliques`` to
+            estimate max clique size.
+        backend: JAX backend string ('cpu', 'gpu', 'tpu'). If None, uses
+            ``jax.default_backend()``.
+
+    Returns:
+        A callable satisfying the ``MarginalOracle`` protocol.
+
+    Example::
+
+        oracle = default_oracle(cliques=model.cliques, domain=model.domain)
+        marginals = oracle(potentials)
+    """
+    if backend is None:
+        backend = jax.default_backend()
+
+    if backend == "cpu":
+        return message_passing_shafer_shenoy
+
+    # GPU/TPU path: check if cliques are large enough to benefit from implicit.
+    if cliques is not None and domain is not None:
+        jtree = junction_tree.make_junction_tree(domain, cliques)[0]
+        max_cliques = junction_tree.maximal_cliques(jtree)
+        max_size = max(domain.project(cl).size() for cl in max_cliques)
+        if max_size >= 1_000_000:
+            return message_passing_implicit
+
+    return message_passing_shafer_shenoy
 
 
 def brute_force_marginals(
