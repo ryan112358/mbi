@@ -78,7 +78,7 @@ class SyntheticDataGenerator:
     # NOTE: JAX's JIT cache doesn't coalesce in-flight compilations, so
     # if generate() races the background thread it may compile redundantly.
     def _compile_all():
-      _precompile_message_passing(domain, plan)
+      _precompile_message_passing(domain, cliques, plan)
       for cp in plan.columns.values():
         _precompile_column(cp, rows)
 
@@ -115,9 +115,8 @@ class SyntheticDataGenerator:
       self._plan = plan
 
     # Phase 1: message passing (JIT'd via annotation on the function).
-    expanded_potentials = model.potentials.expand(list(plan.jtree.nodes))
     _, messages = marginal_oracles.message_passing_implicit(
-        expanded_potentials, 1.0, jtree=plan.jtree, return_messages=True,
+        model.potentials, 1.0, jtree=plan.jtree, return_messages=True,
     )
 
     # Build per-maximal-clique lookups.
@@ -208,15 +207,13 @@ def _build_plan(domain: Domain, cliques: list[Clique]) -> _GenerationPlan:
   )
 
 
-def _precompile_message_passing(domain, plan):
+def _precompile_message_passing(domain, cliques, plan):
   """Trace and compile the message passing program without executing it."""
   dummy_arrays = {}
-  for cl in plan.jtree.nodes:
+  for cl in cliques:
     shape = tuple(domain[attr] for attr in cl)
     dummy_arrays[cl] = jnp.zeros(shape, dtype=jnp.float32)
-  dummy_potentials = CliqueVector(
-      domain, list(plan.jtree.nodes), dummy_arrays,
-  )
+  dummy_potentials = CliqueVector(domain, list(cliques), dummy_arrays)
   marginal_oracles.message_passing_implicit.lower(
       dummy_potentials, 1.0, jtree=plan.jtree, return_messages=True,
   ).compile()
