@@ -16,6 +16,7 @@ support the cliques of the marginal-based loss function can be used here.
 from __future__ import annotations
 
 import concurrent.futures
+import functools
 import math
 import warnings
 from abc import ABC, abstractmethod
