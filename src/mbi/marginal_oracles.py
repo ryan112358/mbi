@@ -189,7 +189,7 @@ def einsum_fused(
     return sum_product(log_factors, dom, einsum_fn=_custom_einsum)
 
 
-@jax.jit(static_argnames=['jtree', 'return_messages'])
+@jax.jit(static_argnames=["jtree", "return_messages"])
 def message_passing_hugin(
     potentials: CliqueVector,
     total: float = 1.0,
@@ -238,7 +238,7 @@ def message_passing_hugin(
     return (marginals, messages) if return_messages else marginals
 
 
-@jax.jit(static_argnames=['jtree', 'return_messages'])
+@jax.jit(static_argnames=["jtree", "return_messages"])
 def message_passing_shafer_shenoy(
     potentials: CliqueVector,
     total: float = 1.0,
@@ -298,7 +298,7 @@ def message_passing_shafer_shenoy(
     return (marginals, messages) if return_messages else marginals
 
 
-@jax.jit(static_argnames=['jtree', 'contraction', 'return_messages'])
+@jax.jit(static_argnames=["jtree", "contraction", "return_messages"])
 def message_passing_implicit(
     potentials: CliqueVector,
     total: float = 1.0,
