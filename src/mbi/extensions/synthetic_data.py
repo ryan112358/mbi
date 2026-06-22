@@ -88,12 +88,8 @@ class _GenerationPlan:
 class SyntheticDataGenerator:
   """Generates synthetic data from a MarkovRandomField using JAX.
 
-  The generator separates the concerns of *planning* (junction tree
-  analysis, JIT compilation) from *execution* (message passing,
-  per-column generation).  The planning phase only depends on the
-  ``Domain`` and clique structure, both of which are known before
-  estimation finishes.  This allows JIT compilation to run in the
-  background while mirror descent is still iterating.
+  Precompilation only requires domain and clique structure, so it can
+  overlap with estimation.
 
   Args:
     method: ``'round'`` for randomized rounding (default) or ``'sample'``
@@ -120,22 +116,14 @@ class SyntheticDataGenerator:
   ) -> concurrent.futures.Future:
     """Warm up the JIT cache for ``generate`` asynchronously.
 
-    Only requires the domain and clique structure — both are available
-    before estimation finishes.  Compilation runs in background threads
-    and pipelines naturally with ``generate()``: each JIT'd function
-    either hits the warm cache or blocks until its compilation finishes,
-    so there is no need to wait on the returned ``Future``.
+    Only requires domain and clique structure.  Compilation pipelines
+    naturally with ``generate()`` via the JIT cache, so there is no
+    need to wait on the returned ``Future``.
 
     Args:
       domain: The Domain over which the model is defined.
       cliques: The cliques of the model (known after workload selection).
       rows: Number of records that will be generated.
-
-    Returns:
-      A ``Future`` that resolves to ``None`` when all compilations are
-      done.  Callers may ignore this (fire-and-forget) or wait on it
-      if they want a hard guarantee that ``generate()`` will have zero
-      compilation overhead.
     """
     rows = max(1, int(rows))
     plan = _build_plan(domain, cliques)
@@ -262,10 +250,7 @@ class SyntheticDataGenerator:
 # ---------------------------------------------------------------------------
 
 
-def _build_plan(
-    domain: Domain,
-    cliques: list[Clique],
-) -> _GenerationPlan:
+def _build_plan(domain: Domain, cliques: list[Clique]) -> _GenerationPlan:
   """Analyse the junction tree and build the per-column generation plan."""
   clique_sets = [set(cl) for cl in cliques]
   jtree, elimination_order = junction_tree.make_junction_tree(
@@ -310,12 +295,7 @@ def _build_plan(
 
 
 def _make_message_passing_fn(jtree):
-  """Create a JIT'd message passing function for a specific junction tree.
-
-  The junction tree is captured in the closure, so all graph-structural
-  operations (message ordering, clique mapping, neighbor lookups) are
-  evaluated at trace time and compiled into a single XLA program.
-  """
+  """JIT-compile message passing with the junction tree baked into the closure."""
 
   @jax.jit
   def fn(potentials, total):
@@ -337,12 +317,9 @@ def _precompile_message_passing(msg_fn, domain, plan):
   )
   msg_fn(dummy_potentials, 1.0)
 
-def _precompile_column(
-    cp: _ColumnPlan,
-    rows: int,
-    method: str,
-) -> None:
-  """Trace and compile the JIT'd generation function for one column."""
+
+def _precompile_column(cp: _ColumnPlan, rows: int, method: str) -> None:
+  """Warm the JIT cache for one column's generation function."""
   dummy_rng = jax.random.PRNGKey(0)
   if not cp.has_parents:
     dummy_marg = jnp.ones(cp.domain_size, dtype=jnp.float32)
@@ -365,7 +342,6 @@ def _precompile_column(
 
 
 def _dispatch_no_parents(rng_key, marg_counts, total, method):
-  """Route to the appropriate JIT'd no-parents function."""
   if method == 'sample':
     return _sample_no_parents(rng_key, marg_counts, total)
   return _round_no_parents(rng_key, marg_counts, total)
@@ -374,7 +350,6 @@ def _dispatch_no_parents(rng_key, marg_counts, total, method):
 def _dispatch_with_parents(
     rng_key, marg_counts, parent_data, parent_sizes, total, method,
 ):
-  """Route to the appropriate JIT'd with-parents function."""
   if method == 'sample':
     return _sample_with_parents(rng_key, marg_counts, parent_data, parent_sizes)
   return _round_with_parents(
@@ -384,7 +359,6 @@ def _dispatch_with_parents(
 
 @functools.partial(jax.jit, static_argnums=(2,))
 def _sample_no_parents(rng_key, marg_counts, total):
-  """Sample method for no-parents case."""
   probs = marg_counts / marg_counts.sum()
   return jax.random.choice(
       rng_key, marg_counts.shape[0], shape=(total,), p=probs,
@@ -393,7 +367,7 @@ def _sample_no_parents(rng_key, marg_counts, total):
 
 @functools.partial(jax.jit, static_argnums=(2,))
 def _round_no_parents(rng_key, marg_counts, total):
-  """Gumbel rounding for no-parents case."""
+  """Gumbel rounding for the no-parents case."""
   domain_size = marg_counts.shape[0]
   counts = marg_counts * (total / marg_counts.sum())
   integ = jnp.floor(counts).astype(jnp.int32)
@@ -419,7 +393,6 @@ def _round_no_parents(rng_key, marg_counts, total):
 
 @jax.jit
 def _sample_with_parents(rng_key, marg_counts, parent_data, parent_sizes):
-  """Per-record categorical sampling conditioned on parents."""
   marg_parents = marg_counts.sum(axis=-1, keepdims=True)
   cond_probs = jnp.where(marg_parents != 0, marg_counts / marg_parents, 0.0)
   domain_size = marg_counts.shape[-1]
@@ -437,7 +410,7 @@ def _sample_with_parents(rng_key, marg_counts, parent_data, parent_sizes):
 def _round_with_parents(
     rng_key, marg_counts, parent_data, parent_sizes, total,
 ):
-  """Gumbel rounding conditioned on parents, vectorized on GPU."""
+  """Gumbel rounding conditioned on parents."""
   rng1, rng2 = jax.random.split(rng_key)
 
   domain_size = marg_counts.shape[-1]
@@ -501,7 +474,7 @@ def _round_with_parents(
 def _compute_marginal_jax(
     maximal_clique, query, domain, potential_mapping, message_lookup, total,
 ):
-  """Compute marginal as a JAX array, staying on device."""
+  """Compute a query marginal on device from cached messages and potentials."""
   inputs = list(potential_mapping[maximal_clique]) + list(
       message_lookup[maximal_clique]
   )
@@ -517,7 +490,6 @@ def _compute_marginal_jax(
 
 
 def _ravel_multi_index_jax(arrays, sizes):
-  """JAX version of np.ravel_multi_index."""
   result = arrays[0].astype(jnp.int32)
   for arr, size in zip(arrays[1:], sizes[1:]):
     result = result * size + arr.astype(jnp.int32)
@@ -525,7 +497,6 @@ def _ravel_multi_index_jax(arrays, sizes):
 
 
 def _find_maxclique(query_vars, maximal_cliques):
-  """Find a maximal clique containing all query variables."""
   for mc in maximal_cliques:
     if query_vars.issubset(set(mc)):
       return mc
