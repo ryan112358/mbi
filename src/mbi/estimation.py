@@ -159,7 +159,9 @@ class Estimator(ABC):
             )
 
         loss_fn = marginal_loss.from_linear_measurements(all_measurements)
-        abstract_state = jax.eval_shape(self._init, domain, loss_fn, 1.0)
+        abstract_state = jax.eval_shape(
+            functools.partial(self._init, domain), loss_fn, 1.0
+        )
         lowered = self._multi_step.lower(self, abstract_state, loss_fn, 1.0)
         return _COMPILE_POOL.submit(lowered.compile)
 
@@ -303,7 +305,6 @@ class MirrorDescent(Estimator):
         initial_loss = loss_fn(mu)
         return MirrorDescentState(mu, potentials, alpha, initial_loss)
 
-    @jax.jit(static_argnames=["self"])
     def _step(
         self,
         state: MirrorDescentState,
@@ -401,7 +402,6 @@ class DualAveraging(Estimator):
         initial_loss = loss_fn(w)
         return DualAveragingState(w, v, gbar, initial_loss, L, gamma, 1)
 
-    @jax.jit(static_argnames=["self"])
     def _step(
         self,
         state: DualAveragingState,
@@ -479,7 +479,6 @@ class InteriorGradient(Estimator):
             x, potentials, 1.0, y, z, initial_loss, inv_lipschitz
         )
 
-    @jax.jit(static_argnames=["self"])
     def _step(
         self,
         state: InteriorGradientState,

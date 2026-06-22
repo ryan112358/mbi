@@ -65,7 +65,6 @@ class ReweightedDatasetEstimator(Estimator):
         opt_state = self.optimizer.init(log_weights)
         return ReweightedDatasetState(log_weights, opt_state)
 
-    @jax.jit(static_argnames=["self"])
     def _step(self, state, loss_fn, known_total):
         """Run one gradient step."""
         domain = self.seed_data.domain
