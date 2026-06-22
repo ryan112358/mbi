@@ -2,3 +2,4 @@
 
 from .mixture_of_products import MixtureOfProducts, MixtureOfProductsEstimator
 from .reweighted_dataset import ReweightedDatasetEstimator
+from .synthetic_data import SyntheticDataGenerator
