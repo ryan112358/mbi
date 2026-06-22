@@ -245,3 +245,41 @@ class TestMarginalOracles(unittest.TestCase):
             np.testing.assert_allclose(
                 mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
             )
+
+
+class TestDefaultOracle(unittest.TestCase):
+
+    def test_cpu_returns_hugin(self):
+        oracle = marginal_oracles.default_oracle(backend="cpu")
+        self.assertIs(oracle, message_passing_hugin)
+
+    def test_gpu_small_returns_hugin(self):
+        cliques = (("a", "b"), ("b", "c"), ("c", "d"))
+        oracle = marginal_oracles.default_oracle(
+            cliques, _DOMAIN, backend="gpu"
+        )
+        self.assertIs(oracle, message_passing_hugin)
+
+    def test_gpu_large_returns_implicit(self):
+        domain = Domain(["a", "b", "c"], [100, 100, 100])
+        cliques = (("a", "b", "c"),)
+        oracle = marginal_oracles.default_oracle(cliques, domain, backend="gpu")
+        self.assertIs(oracle, message_passing_implicit)
+
+    def test_gpu_no_cliques_returns_hugin(self):
+        oracle = marginal_oracles.default_oracle(backend="gpu")
+        self.assertIs(oracle, message_passing_hugin)
+
+    @parameterized.expand([(cs,) for cs in _CLIQUE_SETS])
+    def test_correctness(self, cliques):
+        """default_oracle produces correct marginals."""
+        if not cliques:
+            return
+        oracle = marginal_oracles.default_oracle(cliques, _DOMAIN)
+        theta = CliqueVector.random(_DOMAIN, cliques)
+        mu1 = oracle(theta, 1.0)
+        mu2 = marginal_oracles.brute_force_marginals(theta, 1.0)
+        for cl in cliques:
+            np.testing.assert_allclose(
+                mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
+            )
