@@ -116,7 +116,9 @@ class Estimator(ABC):
         if isinstance(loss_fn, list):
             if known_total is None:
                 known_total = minimum_variance_unbiased_total(loss_fn)
-            loss_fn = marginal_loss.from_linear_measurements(loss_fn)
+            loss_fn = marginal_loss.from_linear_measurements(
+                loss_fn, domain=domain
+            )
         if known_total is None:
             known_total = 1.0
 
@@ -384,7 +386,12 @@ class DualAveraging(Estimator):
         )  # upper bound on entropy
         Q = 0  # upper bound on variance of stochastic gradients
         gamma = Q / D
-        L = (loss_fn.lipschitz or 1.0) / known_total
+        if loss_fn.lipschitz is None:
+            raise ValueError(
+                "DualAveraging requires a loss function with Lipschitz"
+                " gradients.  Pass domain= to from_linear_measurements()."
+            )
+        L = loss_fn.lipschitz / known_total
 
         w = v = marginal_oracle(potentials, known_total)
         gbar = CliqueVector.zeros(domain, loss_fn.cliques)
@@ -462,7 +469,12 @@ class InteriorGradient(Estimator):
             self.marginal_oracle, mesh=self.mesh
         )
 
-        inv_lipschitz = 1.0 / (loss_fn.lipschitz or 1.0)
+        if loss_fn.lipschitz is None:
+            raise ValueError(
+                "InteriorGradient requires a loss function with Lipschitz"
+                " gradients.  Pass domain= to from_linear_measurements()."
+            )
+        inv_lipschitz = 1.0 / loss_fn.lipschitz
         x = y = z = marginal_oracle(potentials, known_total)
         initial_loss = loss_fn(x)
         return InteriorGradientState(
