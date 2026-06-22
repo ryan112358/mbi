@@ -31,21 +31,19 @@ def precompile(
 ) -> concurrent.futures.Future:
   """Warm the JIT cache for ``synthetic_data`` asynchronously.
 
-  Only requires domain and clique structure — both are available before
-  estimation finishes.  Fire and forget; ``synthetic_data`` benefits from
-  whatever has compiled so far.
+  Only requires domain and clique structure — both available after
+  measurement selection.  Fire and forget; ``synthetic_data`` benefits
+  from whatever has compiled so far.
 
   Args:
     domain: The Domain over which the model is defined.
-    cliques: The cliques of the model (known after workload selection).
+    cliques: The cliques of the model (known after measurement selection).
     rows: Number of records that will be generated.
   """
   rows = max(1, int(rows))
   plan = _build_plan(domain, cliques)
 
   def _compile_all():
-    # Run dummy message passing to get Factor inputs with correct
-    # pytree structure for per-column compilation.
     dummy_potentials = _make_dummy_potentials(domain, cliques)
     _, dummy_messages = marginal_oracles.message_passing_implicit(
         dummy_potentials, 1.0, jtree=plan.jtree, return_messages=True,
@@ -120,13 +118,9 @@ def synthetic_data(
   )
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers.
-# ---------------------------------------------------------------------------
-
-
 @dataclasses.dataclass(frozen=True)
 class _ColumnPlan:
+  """Per-column metadata for generation."""
   col: str
   query: tuple[str, ...]
   parents: tuple[str, ...]
@@ -136,13 +130,15 @@ class _ColumnPlan:
 
 @dataclasses.dataclass(frozen=True)
 class _GenerationPlan:
+  """Junction-tree analysis needed by both precompile and generate."""
   order: tuple[str, ...]
   columns: dict[str, _ColumnPlan]
   jtree: Any  # nx.Graph
   maximal_cliques: list[tuple[str, ...]]
 
 
-def _build_plan(domain: Domain, cliques) -> _GenerationPlan:
+def _build_plan(domain, cliques):
+  """Analyse the junction tree and build per-column generation metadata."""
   clique_sets = [set(cl) for cl in cliques]
   jtree, elimination_order = junction_tree.make_junction_tree(
       domain, clique_sets,
@@ -175,6 +171,7 @@ def _build_plan(domain: Domain, cliques) -> _GenerationPlan:
 
 
 def _make_dummy_potentials(domain, cliques):
+  """Build zero-valued potentials with the right pytree structure."""
   arrays = {}
   for cl in cliques:
     shape = tuple(domain[attr] for attr in cl)
@@ -183,6 +180,7 @@ def _make_dummy_potentials(domain, cliques):
 
 
 def _build_lookups(plan, potentials, messages, domain):
+  """Group potentials and messages by maximal clique."""
   mapping = clique_mapping(
       plan.maximal_cliques, potentials.cliques, domain=domain,
   )
@@ -198,6 +196,7 @@ def _build_lookups(plan, potentials, messages, domain):
 
 
 def _gather_inputs(cp, domain, pot_map, msg_map):
+  """Collect Factor inputs for a column's marginal computation."""
   inputs = list(pot_map[cp.maximal_clique]) + list(
       msg_map[cp.maximal_clique]
   )
@@ -209,10 +208,8 @@ def _gather_inputs(cp, domain, pot_map, msg_map):
 
 
 @jax.jit(static_argnames=['query', 'parent_sizes', 'total'])
-def _generate_column(rng_key, inputs, parent_arrays, *, query, parent_sizes,
-                     total):
+def _generate_column(prng, inputs, parent_arrays, *, query, parent_sizes, total):
   """Fused per-column program: marginal computation + Gumbel rounding."""
-  # Marginal computation (einsum_materialized, inlined).
   combined = functools.reduce(lambda a, b: a + b, inputs)
   query_domain = combined.domain.project(query)
   elim_attrs = combined.domain.marginalize(query_domain).attributes
@@ -220,21 +217,19 @@ def _generate_column(rng_key, inputs, parent_arrays, *, query, parent_sizes,
   result = result.normalize(total, log=True).exp()
   marg = result.datavector(flatten=False)
 
-  # Parent indexing.
   if parent_arrays:
     marg_2d = marg.reshape(-1, marg.shape[-1])
-    parent_idx = _ravel_multi_index_jax(parent_arrays, parent_sizes)
+    parent_idx = _ravel_multi_index(parent_arrays, parent_sizes)
   else:
     marg_2d = marg[jnp.newaxis, :]
     parent_idx = jnp.zeros(total, dtype=jnp.int32)
 
-  # Gumbel rounding.
-  return _gumbel_round(rng_key, marg_2d, parent_idx, total)
+  return _gumbel_round(prng, marg_2d, parent_idx, total)
 
 
-def _gumbel_round(rng_key, marg_2d, flat_parent_idx, total):
-  """Gumbel rounding (called inside JIT, not separately decorated)."""
-  rng1, rng2 = jax.random.split(rng_key)
+def _gumbel_round(prng, marg_2d, flat_parent_idx, total):
+  """Assign each record a value matching expected marginals."""
+  rng1, rng2 = jax.random.split(prng)
 
   domain_size = marg_2d.shape[-1]
   parent_product = marg_2d.shape[0]
@@ -282,12 +277,11 @@ def _gumbel_round(rng_key, marg_2d, flat_parent_idx, total):
   all_values = all_values[shuffle_perm]
 
   sort_order = jnp.argsort(flat_parent_idx)
-  result = jnp.empty(total, dtype=jnp.int32)
-  result = result.at[sort_order].set(all_values)
-  return result
+  return jnp.empty(total, dtype=jnp.int32).at[sort_order].set(all_values)
 
 
-def _ravel_multi_index_jax(arrays, sizes):
+def _ravel_multi_index(arrays, sizes):
+  """Compute flat indices from a tuple of per-dimension index arrays."""
   result = arrays[0].astype(jnp.int32)
   for arr, size in zip(arrays[1:], sizes[1:]):
     result = result * size + arr.astype(jnp.int32)
@@ -295,6 +289,7 @@ def _ravel_multi_index_jax(arrays, sizes):
 
 
 def _find_maxclique(query_vars, maximal_cliques):
+  """Return the first maximal clique that contains all query variables."""
   for mc in maximal_cliques:
     if query_vars.issubset(set(mc)):
       return mc
