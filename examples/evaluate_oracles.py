@@ -33,12 +33,12 @@ from mbi.marginal_oracles import (
 )
 
 ORACLES = {
-    "implicit+fused": message_passing_implicit,
+    "implicit+materialized": message_passing_implicit,
+    "implicit+fused": functools.partial(
+        message_passing_implicit, contraction=einsum_fused
+    ),
     "implicit+semistable": functools.partial(
         message_passing_implicit, contraction=einsum_semistable
-    ),
-    "implicit+materialized": functools.partial(
-        message_passing_implicit, contraction=einsum_materialized
     ),
     "hugin": message_passing_hugin,
     "shafer_shenoy": message_passing_shafer_shenoy,

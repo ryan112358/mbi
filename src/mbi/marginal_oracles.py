@@ -277,7 +277,7 @@ def message_passing_implicit(
     total: float = 1.0,
     jtree: nx.Graph | None = None,
     *,
-    contraction: Callable = einsum_fused,
+    contraction: Callable = einsum_materialized,
 ) -> CliqueVector:
     """Implicit-factor message passing using a contraction function.
 
@@ -285,8 +285,8 @@ def message_passing_implicit(
     via the given contraction function.  Most memory-efficient — never
     materializes super-clique tables.
 
-    The default contraction (``einsum_fused``) is numerically stable.
-    For faster but less stable computation, use ``einsum_semistable``.
+    The default contraction (``einsum_materialized``) is the fastest on GPU.
+    For better ``-inf`` tolerance, use ``einsum_fused``.
     """
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
@@ -354,12 +354,14 @@ def default_oracle(
 
     Chooses based on hardware backend and clique structure:
 
-    - **CPU**: ``message_passing_hugin`` (2-7× faster than implicit schedules
-      due to ``custom_dot_general`` overhead on CPU).
-    - **GPU, max clique size < 1M**: ``message_passing_hugin`` (fast and stable).
+    - **CPU**: ``message_passing_shafer_shenoy`` (fastest on CPU and handles
+      ``-inf`` potentials correctly, unlike HUGIN which can NaN on dense
+      graphs with ``-inf`` entries).
+    - **GPU, max clique size < 1M**: ``message_passing_shafer_shenoy``
+      (fast and numerically robust).
     - **GPU, max clique size >= 1M**: ``message_passing_implicit`` with
-      ``einsum_fused`` (avoids materializing super-cliques; HUGIN/SS OOM at
-      ~1e8 and slow at ~1e7).
+      ``einsum_materialized`` (avoids materializing super-cliques;
+      HUGIN/SS OOM at ~1e8 and slow at ~1e7).
 
     Args:
         cliques: Cliques of the graphical model. Used to estimate max clique
@@ -381,7 +383,7 @@ def default_oracle(
         backend = jax.default_backend()
 
     if backend == "cpu":
-        return message_passing_hugin
+        return message_passing_shafer_shenoy
 
     # GPU/TPU path: check if cliques are large enough to benefit from implicit.
     if cliques is not None and domain is not None:
@@ -391,7 +393,7 @@ def default_oracle(
         if max_size >= 1_000_000:
             return message_passing_implicit
 
-    return message_passing_hugin
+    return message_passing_shafer_shenoy
 
 
 def brute_force_marginals(
