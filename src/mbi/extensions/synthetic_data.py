@@ -1,37 +1,10 @@
-"""Fused JAX synthetic data generation with async precompilation.
-
-This module provides ``SyntheticDataGenerator``, a class that generates
-synthetic data from a ``MarkovRandomField`` using JAX-accelerated column
-generation.  All per-column operations (marginal computation, Gumbel
-rounding / categorical sampling) stay on the GPU, eliminating the
-GPU↔CPU synchronization barriers of the baseline NumPy path.
-
-The class mirrors the ``Estimator.precompile()`` pattern: callers can
-fire off ``precompile()`` as soon as the clique structure is known
-(before estimation finishes) and overlap JIT compilation with mirror
-descent iterations.
-
-Typical usage::
-
-    generator = SyntheticDataGenerator(method='round')
-
-    # Fire-and-forget: compilation runs in the background.
-    generator.precompile(domain, cliques, rows=10_000_000)
-
-    # ... run mirror descent (compilation overlaps) ...
-    model = estimator.estimate(domain, measurements)
-
-    # No need to block — generate() benefits from whatever has compiled
-    # so far, and naturally pipelines with any remaining compilation.
-    data = generator.generate(model, rows=10_000_000)
-"""
+"""JAX-accelerated synthetic data generation with async precompilation."""
 
 from __future__ import annotations
 
 import collections
 import concurrent.futures
 import dataclasses
-import functools
 import logging
 from typing import Any
 
@@ -47,19 +20,11 @@ from ..domain import Domain
 from ..factor import Factor
 from ..markov_random_field import MarkovRandomField
 
-# Shared thread pool for background JIT compilation.
 _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-
-
-# ---------------------------------------------------------------------------
-# Generation plan: a static description of *how* to generate each column.
-# ---------------------------------------------------------------------------
 
 
 @dataclasses.dataclass(frozen=True)
 class _ColumnPlan:
-  """Describes how to generate a single column."""
-
   col: str
   has_parents: bool
   query: tuple[str, ...]
@@ -71,18 +36,11 @@ class _ColumnPlan:
 
 @dataclasses.dataclass(frozen=True)
 class _GenerationPlan:
-  """Full generation plan for all columns."""
-
   order: tuple[str, ...]
   columns: dict[str, _ColumnPlan]
-  jtree: Any  # nx.Graph — kept for message passing
+  jtree: Any  # nx.Graph
   maximal_cliques: list[tuple[str, ...]]
   elimination_order: tuple[str, ...]
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 
 class SyntheticDataGenerator:
@@ -102,11 +60,6 @@ class SyntheticDataGenerator:
     )
     self.method = method
     self._plan: _GenerationPlan | None = None
-    self._msg_fn = None
-
-  # ------------------------------------------------------------------
-  # Precompilation
-  # ------------------------------------------------------------------
 
   def precompile(
       self,
@@ -128,16 +81,15 @@ class SyntheticDataGenerator:
     rows = max(1, int(rows))
     plan = _build_plan(domain, cliques)
     self._plan = plan
-    self._msg_fn = _make_message_passing_fn(plan.jtree)
 
     futures: list[concurrent.futures.Future] = []
 
-    # 1. Precompile message passing (1 XLA program).
+    # Precompile message passing (1 XLA program).
     futures.append(_COMPILE_POOL.submit(
-        _precompile_message_passing, self._msg_fn, domain, plan,
+        _precompile_message_passing, domain, plan,
     ))
 
-    # 2. Precompile per-column generation functions (N XLA programs).
+    # Precompile per-column generation functions (N XLA programs).
     for cp in plan.columns.values():
       futures.append(_COMPILE_POOL.submit(
           _precompile_column, cp, rows, self.method,
@@ -145,16 +97,11 @@ class SyntheticDataGenerator:
 
     # NOTE: JAX's JIT cache doesn't coalesce in-flight compilations, so
     # if generate() races a background thread it may compile redundantly.
-    # In practice this only affects the first 1-2 columns.
     def _await_all() -> None:
       for f in futures:
         f.result()
 
     return _COMPILE_POOL.submit(_await_all)
-
-  # ------------------------------------------------------------------
-  # Generation
-  # ------------------------------------------------------------------
 
   def generate(
       self,
@@ -180,20 +127,19 @@ class SyntheticDataGenerator:
     domain = model.domain
     cliques = [set(cl) for cl in model.cliques]
 
-    # Use cached plan or build a new one.
     if self._plan is not None:
       plan = self._plan
     else:
       plan = _build_plan(domain, cliques)
       self._plan = plan
 
-    # Phase 1: Compute junction tree messages (single JIT'd program).
-    if self._msg_fn is None:
-      self._msg_fn = _make_message_passing_fn(plan.jtree)
+    # Phase 1: message passing (JIT'd via annotation on the function).
     expanded_potentials = model.potentials.expand(list(plan.jtree.nodes))
-    _, messages = self._msg_fn(expanded_potentials, 1.0)
+    _, messages = marginal_oracles.message_passing_implicit(
+        expanded_potentials, 1.0, jtree=plan.jtree, return_messages=True,
+    )
 
-    # Build per-maximal-clique potential lookup.
+    # Build per-maximal-clique lookups.
     mapping = clique_mapping(
         plan.maximal_cliques, model.cliques, domain=domain,
     )
@@ -203,14 +149,13 @@ class SyntheticDataGenerator:
     for cl in model.cliques:
       potential_mapping[mapping[cl]].append(model.potentials[cl])
 
-    # Build per-maximal-clique message lookup.
     message_lookup: dict[tuple, list[Factor]] = (
         collections.defaultdict(list)
     )
     for (i, j), msg in messages.items():
       message_lookup[j].append(msg)
 
-    # Phase 2: Generate columns (all on GPU).
+    # Phase 2: generate columns (all on device).
     rng = jax.random.PRNGKey(seed)
     data_jax: dict[str, jax.Array] = {}
 
@@ -218,7 +163,6 @@ class SyntheticDataGenerator:
       rng, col_rng = jax.random.split(rng)
       cp = plan.columns[col]
 
-      # Compute marginal on GPU.
       marg_jax = _compute_marginal_jax(
           cp.maximal_clique, cp.query, domain,
           potential_mapping, message_lookup, rows,
@@ -240,14 +184,8 @@ class SyntheticDataGenerator:
             'Col %d/%d: %s done', step + 1, len(plan.order), col,
         )
 
-    # Bulk transfer to CPU.
     data = {col: np.asarray(arr) for col, arr in data_jax.items()}
     return Dataset(data, domain)
-
-
-# ---------------------------------------------------------------------------
-# Plan construction (pure graph analysis, no JAX)
-# ---------------------------------------------------------------------------
 
 
 def _build_plan(domain: Domain, cliques: list[Clique]) -> _GenerationPlan:
@@ -289,25 +227,8 @@ def _build_plan(domain: Domain, cliques: list[Clique]) -> _GenerationPlan:
   )
 
 
-# ---------------------------------------------------------------------------
-# Precompilation helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_message_passing_fn(jtree):
-  """JIT-compile message passing with the junction tree baked into the closure."""
-
-  @jax.jit
-  def fn(potentials, total):
-    return marginal_oracles.message_passing_implicit(
-        potentials, total, jtree=jtree, return_messages=True,
-    )
-
-  return fn
-
-
-def _precompile_message_passing(msg_fn, domain, plan):
-  """Warm the JIT cache for the message passing program."""
+def _precompile_message_passing(domain, plan):
+  """Trace and compile the message passing program without executing it."""
   dummy_arrays = {}
   for cl in plan.jtree.nodes:
     shape = tuple(domain[attr] for attr in cl)
@@ -315,36 +236,38 @@ def _precompile_message_passing(msg_fn, domain, plan):
   dummy_potentials = CliqueVector(
       domain, list(plan.jtree.nodes), dummy_arrays,
   )
-  msg_fn(dummy_potentials, 1.0)
+  marginal_oracles.message_passing_implicit.lower(
+      dummy_potentials, 1.0, jtree=plan.jtree, return_messages=True,
+  ).compile()
 
 
 def _precompile_column(cp: _ColumnPlan, rows: int, method: str) -> None:
-  """Warm the JIT cache for one column's generation function."""
+  """Trace and compile one column's generation function without executing it."""
   dummy_rng = jax.random.PRNGKey(0)
   if not cp.has_parents:
     dummy_marg = jnp.ones(cp.domain_size, dtype=jnp.float32)
-    _dispatch_no_parents(dummy_rng, dummy_marg, rows, method)
+    fn = _sample_no_parents if method == 'sample' else _round_no_parents
+    fn.lower(dummy_rng, dummy_marg, total=rows).compile()
   else:
     shape = cp.parent_sizes + (cp.domain_size,)
     dummy_marg = jnp.ones(shape, dtype=jnp.float32)
     dummy_parents = tuple(
         jnp.zeros(rows, dtype=jnp.int32) for _ in cp.parent_sizes
     )
-    _dispatch_with_parents(
-        dummy_rng, dummy_marg, dummy_parents, cp.parent_sizes,
-        rows, method,
-    )
-
-
-# ---------------------------------------------------------------------------
-# JIT-compiled generation functions
-# ---------------------------------------------------------------------------
+    if method == 'sample':
+      _sample_with_parents.lower(
+          dummy_rng, dummy_marg, dummy_parents, cp.parent_sizes,
+      ).compile()
+    else:
+      _round_with_parents.lower(
+          dummy_rng, dummy_marg, dummy_parents, cp.parent_sizes, total=rows,
+      ).compile()
 
 
 def _dispatch_no_parents(rng_key, marg_counts, total, method):
   if method == 'sample':
-    return _sample_no_parents(rng_key, marg_counts, total)
-  return _round_no_parents(rng_key, marg_counts, total)
+    return _sample_no_parents(rng_key, marg_counts, total=total)
+  return _round_no_parents(rng_key, marg_counts, total=total)
 
 
 def _dispatch_with_parents(
@@ -353,20 +276,20 @@ def _dispatch_with_parents(
   if method == 'sample':
     return _sample_with_parents(rng_key, marg_counts, parent_data, parent_sizes)
   return _round_with_parents(
-      rng_key, marg_counts, parent_data, parent_sizes, total,
+      rng_key, marg_counts, parent_data, parent_sizes, total=total,
   )
 
 
-@functools.partial(jax.jit, static_argnums=(2,))
-def _sample_no_parents(rng_key, marg_counts, total):
+@jax.jit(static_argnames=['total'])
+def _sample_no_parents(rng_key, marg_counts, *, total):
   probs = marg_counts / marg_counts.sum()
   return jax.random.choice(
       rng_key, marg_counts.shape[0], shape=(total,), p=probs,
   ).astype(jnp.int32)
 
 
-@functools.partial(jax.jit, static_argnums=(2,))
-def _round_no_parents(rng_key, marg_counts, total):
+@jax.jit(static_argnames=['total'])
+def _round_no_parents(rng_key, marg_counts, *, total):
   """Gumbel rounding for the no-parents case."""
   domain_size = marg_counts.shape[0]
   counts = marg_counts * (total / marg_counts.sum())
@@ -406,9 +329,9 @@ def _sample_with_parents(rng_key, marg_counts, parent_data, parent_sizes):
   ).astype(jnp.int32)
 
 
-@functools.partial(jax.jit, static_argnums=(4,))
+@jax.jit(static_argnames=['total'])
 def _round_with_parents(
-    rng_key, marg_counts, parent_data, parent_sizes, total,
+    rng_key, marg_counts, parent_data, parent_sizes, *, total,
 ):
   """Gumbel rounding conditioned on parents."""
   rng1, rng2 = jax.random.split(rng_key)
@@ -464,11 +387,6 @@ def _round_with_parents(
   result = jnp.empty(total, dtype=jnp.int32)
   result = result.at[sort_order].set(all_values)
   return result
-
-
-# ---------------------------------------------------------------------------
-# Marginal computation and utility functions
-# ---------------------------------------------------------------------------
 
 
 def _compute_marginal_jax(
