@@ -191,14 +191,25 @@ def message_passing_hugin(
     potentials: CliqueVector,
     total: float = 1.0,
     jtree: nx.Graph | None = None,
-) -> CliqueVector:
+    *,
+    return_messages: bool = False,
+) -> CliqueVector | tuple[CliqueVector, dict]:
     """HUGIN message passing with belief subtraction.
 
     Expands potentials to super-cliques and uses belief subtraction for
     message computation.  Unstable when potentials contain ``-inf``.
+
+    Args:
+        potentials: Potentials of a graphical model.
+        total: Normalization constant.
+        jtree: Pre-computed junction tree (optional).
+        return_messages: If True, return ``(marginals, messages)`` where
+            *messages* is a dict mapping ``(clique_i, clique_j)`` to the
+            log-space message Factor sent from *i* to *j*.
     """
     if len(potentials.cliques) == 0:
-        return CliqueVector(potentials.domain, [], {})
+        result = CliqueVector(potentials.domain, [], {})
+        return (result, {}) if return_messages else result
 
     domain, cliques = potentials.domain, potentials.cliques
 
@@ -220,22 +231,34 @@ def message_passing_hugin(
         messages[(i, j)] = tau.logsumexp(sep)
         beliefs[j] = beliefs[j] + messages[(i, j)]
 
-    return beliefs.normalize(total, log=True).exp().contract(cliques)
+    marginals = beliefs.normalize(total, log=True).exp().contract(cliques)
+    return (marginals, messages) if return_messages else marginals
 
 
 def message_passing_shafer_shenoy(
     potentials: CliqueVector,
     total: float = 1.0,
     jtree: nx.Graph | None = None,
-) -> CliqueVector:
+    *,
+    return_messages: bool = False,
+) -> CliqueVector | tuple[CliqueVector, dict]:
     """Shafer-Shenoy message passing with neighbor collection.
 
     Expands potentials to super-cliques and collects messages from all
     neighbors except the target.  More stable than HUGIN for ``-inf``
     potentials.
+
+    Args:
+        potentials: Potentials of a graphical model.
+        total: Normalization constant.
+        jtree: Pre-computed junction tree (optional).
+        return_messages: If True, return ``(marginals, messages)`` where
+            *messages* is a dict mapping ``(clique_i, clique_j)`` to the
+            log-space message Factor sent from *i* to *j*.
     """
     if len(potentials.cliques) == 0:
-        return CliqueVector(potentials.domain, [], {})
+        result = CliqueVector(potentials.domain, [], {})
+        return (result, {}) if return_messages else result
 
     domain, cliques = potentials.domain, potentials.cliques
 
@@ -267,7 +290,8 @@ def message_passing_shafer_shenoy(
         beliefs[cl] = b
 
     beliefs = CliqueVector(potentials.domain, maximal_cliques, beliefs)
-    return beliefs.normalize(total, log=True).exp().contract(cliques)
+    marginals = beliefs.normalize(total, log=True).exp().contract(cliques)
+    return (marginals, messages) if return_messages else marginals
 
 
 def message_passing_implicit(
@@ -276,7 +300,8 @@ def message_passing_implicit(
     jtree: nx.Graph | None = None,
     *,
     contraction: Callable = einsum_fused,
-) -> CliqueVector:
+    return_messages: bool = False,
+) -> CliqueVector | tuple[CliqueVector, dict]:
     """Implicit-factor message passing using a contraction function.
 
     Keeps potentials in their original factored form and computes messages
@@ -285,9 +310,19 @@ def message_passing_implicit(
 
     The default contraction (``einsum_fused``) is numerically stable.
     For faster but less stable computation, use ``einsum_semistable``.
+
+    Args:
+        potentials: Potentials of a graphical model.
+        total: Normalization constant.
+        jtree: Pre-computed junction tree (optional).
+        contraction: Contraction function for log-space sum-product.
+        return_messages: If True, return ``(marginals, messages)`` where
+            *messages* is a dict mapping ``(clique_i, clique_j)`` to the
+            log-space message Factor sent from *i* to *j*.
     """
     if len(potentials.cliques) == 0:
-        return CliqueVector(potentials.domain, [], {})
+        result = CliqueVector(potentials.domain, [], {})
+        return (result, {}) if return_messages else result
 
     domain, cliques = potentials.active_domain, potentials.cliques
 
@@ -333,7 +368,8 @@ def message_passing_implicit(
             belief = contraction(inputs, domain.project(cl2))
             beliefs[cl2] = belief.normalize(total, log=True).exp()
 
-    return CliqueVector(potentials.domain, cliques, beliefs)
+    marginals = CliqueVector(potentials.domain, cliques, beliefs)
+    return (marginals, messages) if return_messages else marginals
 
 
 # Backward-compatible aliases.
