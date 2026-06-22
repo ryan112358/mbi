@@ -10,8 +10,9 @@ from parameterized import parameterized
 from mbi import Domain, Model, Projectable, marginal_loss
 from mbi.clique_vector import CliqueVector
 from mbi.dataset import Dataset, JaxDataset
-from mbi.extensions.reweighted_dataset import estimate
+from mbi.extensions.reweighted_dataset import ReweightedDatasetEstimator
 from mbi.factor import Factor
+
 
 np.random.seed(42)  # Avoid flaky tests
 
@@ -130,12 +131,13 @@ class TestEstimation(unittest.TestCase):
         """With noise-free measurements, the model should fit them closely."""
         measurements, P = _fake_measurements(_DOMAIN, cliques)
         seed_data = _make_seed_data(_DOMAIN, n=5000)
-        model = estimate(
+        model = ReweightedDatasetEstimator(
+            seed_data=seed_data,
+            learning_rate=0.1,
+        ).estimate(
             _DOMAIN,
             measurements,
-            seed_data=seed_data,
             iters=500,
-            learning_rate=0.1,
         )
 
         for M in measurements:
@@ -152,13 +154,14 @@ class TestEstimation(unittest.TestCase):
         )
         seed_data = _make_seed_data(_DOMAIN)
 
-        model = estimate(
+        model = ReweightedDatasetEstimator(
+            seed_data=seed_data,
+            learning_rate=0.01,
+        ).estimate(
             _DOMAIN,
             loss_fn,
-            seed_data=seed_data,
             known_total=1.0,
             iters=500,
-            learning_rate=0.01,
         )
 
         for M in measurements:
@@ -175,10 +178,11 @@ class TestEstimation(unittest.TestCase):
         )
         seed_data = _make_seed_data(_DOMAIN)
 
-        model = estimate(
+        model = ReweightedDatasetEstimator(
+            seed_data=seed_data,
+        ).estimate(
             _DOMAIN,
             loss_fn,
-            seed_data=seed_data,
             known_total=1.0,
             iters=500,
         )
@@ -193,10 +197,11 @@ class TestEstimation(unittest.TestCase):
         cliques = [("a", "b"), ("c", "d")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
         seed_data = _make_seed_data(_DOMAIN)
-        model = estimate(
+        model = ReweightedDatasetEstimator(
+            seed_data=seed_data,
+        ).estimate(
             _DOMAIN,
             measurements,
-            seed_data=seed_data,
             iters=50,
         )
 
@@ -209,10 +214,11 @@ class TestEstimation(unittest.TestCase):
         cliques = [("a", "b"), ("c", "d")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
         seed_data = _make_seed_data(_DOMAIN)
-        model = estimate(
+        model = ReweightedDatasetEstimator(
+            seed_data=seed_data,
+        ).estimate(
             _DOMAIN,
             measurements,
-            seed_data=seed_data,
             iters=50,
         )
 
@@ -227,10 +233,11 @@ class TestEstimation(unittest.TestCase):
         cliques = [("a", "b"), ("b", "c")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
         seed_data = _make_seed_data(_DOMAIN)
-        model = estimate(
+        model = ReweightedDatasetEstimator(
+            seed_data=seed_data,
+        ).estimate(
             _DOMAIN,
             measurements,
-            seed_data=seed_data,
             iters=100,
         )
 
@@ -249,10 +256,11 @@ class TestEstimation(unittest.TestCase):
         def callback(model):
             callback_count[0] += 1
 
-        estimate(
+        ReweightedDatasetEstimator(
+            seed_data=seed_data,
+        ).estimate(
             _DOMAIN,
             measurements,
-            seed_data=seed_data,
             iters=100,
             callback_fn=callback,
             callback_every=25,
@@ -266,12 +274,13 @@ class TestEstimation(unittest.TestCase):
         cliques = [("a", "b"), ("b", "c")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
         seed_data = _make_seed_data(_DOMAIN)
-        model = estimate(
+        model = ReweightedDatasetEstimator(
+            seed_data=seed_data,
+            optimizer=optax.sgd(0.01),
+        ).estimate(
             _DOMAIN,
             measurements,
-            seed_data=seed_data,
             iters=100,
-            optimizer=optax.sgd(0.01),
         )
         self.assertIsInstance(model, JaxDataset)
 
@@ -284,10 +293,11 @@ class TestNonNegativity(unittest.TestCase):
         cliques = [("a", "b"), ("b", "c"), ("c", "d")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
         seed_data = _make_seed_data(_DOMAIN)
-        model = estimate(
+        model = ReweightedDatasetEstimator(
+            seed_data=seed_data,
+        ).estimate(
             _DOMAIN,
             measurements,
-            seed_data=seed_data,
             iters=100,
         )
 
@@ -303,10 +313,11 @@ class TestNonNegativity(unittest.TestCase):
         cliques = [("a", "b"), ("b", "c")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
         seed_data = _make_seed_data(_DOMAIN)
-        model = estimate(
+        model = ReweightedDatasetEstimator(
+            seed_data=seed_data,
+        ).estimate(
             _DOMAIN,
             measurements,
-            seed_data=seed_data,
             iters=100,
         )
 

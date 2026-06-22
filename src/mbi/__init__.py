@@ -6,8 +6,9 @@ like data representation (Domain, Dataset), factor manipulation (Factor),
 and various estimation and oracle modules.
 """
 
-from . import callbacks, estimation, junction_tree, marginal_oracles
-from ._api import Estimator, Model, PGMEstimator, Projectable
+from . import callbacks, estimation, extensions, junction_tree, marginal_oracles
+from ._api import Model, Projectable
+from .estimation import Estimator
 from .extensions import constraints
 from .extensions.constraints import DeterministicConstraint
 from .clique_vector import CliqueVector
@@ -34,8 +35,8 @@ __all__ = [
     "Model",
     "MarginalOracle",
     "Estimator",
-    "PGMEstimator",
     "estimation",
+    "extensions",
     "callbacks",
     "junction_tree",
     "marginal_oracles",

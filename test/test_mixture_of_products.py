@@ -8,7 +8,10 @@ from parameterized import parameterized
 
 from mbi import Domain, marginal_loss
 from mbi.clique_vector import CliqueVector
-from mbi.extensions.mixture_of_products import MixtureOfProducts, estimate
+from mbi.extensions.mixture_of_products import (
+    MixtureOfProducts,
+    MixtureOfProductsEstimator,
+)
 from mbi.factor import Factor
 
 np.random.seed(42)  # Avoid flaky tests
@@ -102,12 +105,13 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
     def test_noiseless_recovery(self, cliques):
         """With noise-free measurements, the model should fit them closely."""
         measurements, P = _fake_measurements(_DOMAIN, cliques)
-        model = estimate(
+        model = MixtureOfProductsEstimator(
+            num_components=50,
+            learning_rate=0.1,
+        ).estimate(
             _DOMAIN,
             measurements,
-            num_components=50,
             iters=500,
-            learning_rate=0.1,
         )
 
         for M in measurements:
@@ -123,13 +127,14 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
             measurements, norm="l1"
         )
 
-        model = estimate(
+        model = MixtureOfProductsEstimator(
+            num_components=50,
+            learning_rate=0.01,
+        ).estimate(
             _DOMAIN,
             loss_fn,
             known_total=1.0,
-            num_components=50,
             iters=500,
-            learning_rate=0.01,
         )
 
         for M in measurements:
@@ -145,11 +150,12 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
             measurements, norm="l2"
         )
 
-        model = estimate(
+        model = MixtureOfProductsEstimator(
+            num_components=50,
+        ).estimate(
             _DOMAIN,
             loss_fn,
             known_total=1.0,
-            num_components=50,
             iters=500,
         )
 
@@ -162,10 +168,11 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
         """MixtureOfProducts should satisfy the Projectable protocol."""
         cliques = [("a", "b"), ("c", "d")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
-        model = estimate(
+        model = MixtureOfProductsEstimator(
+            num_components=10,
+        ).estimate(
             _DOMAIN,
             measurements,
-            num_components=10,
             iters=50,
         )
 
@@ -179,10 +186,11 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
         """Synthetic data should be generatable from an estimated model."""
         cliques = [("a", "b"), ("b", "c")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
-        model = estimate(
+        model = MixtureOfProductsEstimator(
+            num_components=20,
+        ).estimate(
             _DOMAIN,
             measurements,
-            num_components=20,
             iters=100,
         )
 
@@ -200,10 +208,11 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
             for cl in cliques
         ]
 
-        model = estimate(
+        model = MixtureOfProductsEstimator(
+            num_components=10,
+        ).estimate(
             _DOMAIN,
             measurements,
-            num_components=10,
             iters=50,
         )
         # Total should be automatically estimated close to the true value
@@ -219,10 +228,11 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
         def callback(model):
             callback_count[0] += 1
 
-        estimate(
+        MixtureOfProductsEstimator(
+            num_components=5,
+        ).estimate(
             _DOMAIN,
             measurements,
-            num_components=5,
             iters=100,
             callback_fn=callback,
             callback_every=25,
@@ -235,12 +245,13 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
 
         cliques = [("a", "b"), ("b", "c")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
-        model = estimate(
+        model = MixtureOfProductsEstimator(
+            num_components=20,
+            optimizer=optax.sgd(0.01),
+        ).estimate(
             _DOMAIN,
             measurements,
-            num_components=20,
             iters=100,
-            optimizer=optax.sgd(0.01),
         )
         # Just check it runs without error
         self.assertIsInstance(model, MixtureOfProducts)
@@ -249,10 +260,11 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
         """A single-component mixture is just a product distribution."""
         cliques = [("a",), ("b",)]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
-        model = estimate(
+        model = MixtureOfProductsEstimator(
+            num_components=1,
+        ).estimate(
             _DOMAIN,
             measurements,
-            num_components=1,
             iters=500,
         )
         self.assertEqual(model.num_components, 1)
@@ -270,10 +282,11 @@ class TestMixtureOfProductsNonNegativity(unittest.TestCase):
         """All marginals should be non-negative."""
         cliques = [("a", "b"), ("b", "c"), ("c", "d")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
-        model = estimate(
+        model = MixtureOfProductsEstimator(
+            num_components=20,
+        ).estimate(
             _DOMAIN,
             measurements,
-            num_components=20,
             iters=100,
         )
 
@@ -288,10 +301,11 @@ class TestMixtureOfProductsNonNegativity(unittest.TestCase):
         """Each marginal should sum to total."""
         cliques = [("a", "b"), ("b", "c")]
         measurements, _ = _fake_measurements(_DOMAIN, cliques)
-        model = estimate(
+        model = MixtureOfProductsEstimator(
+            num_components=20,
+        ).estimate(
             _DOMAIN,
             measurements,
-            num_components=20,
             iters=100,
         )
 
