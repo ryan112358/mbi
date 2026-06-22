@@ -149,13 +149,16 @@ class SyntheticDataGenerator:
           potential_mapping, message_lookup, rows,
       )
 
-      if not cp.has_parents:
-        data_jax[col] = _round_no_parents(col_rng, marg_jax, total=rows)
-      else:
+      if cp.has_parents:
         parent_data = tuple(data_jax[p] for p in cp.parents)
-        data_jax[col] = _round_with_parents(
-            col_rng, marg_jax, parent_data, cp.parent_sizes, total=rows,
-        )
+        parent_idx = _ravel_multi_index_jax(parent_data, cp.parent_sizes)
+      else:
+        parent_idx = jnp.zeros(rows, dtype=jnp.int32)
+        marg_jax = marg_jax[None, :]
+
+      data_jax[col] = _gumbel_round(
+          col_rng, marg_jax, parent_idx, total=rows,
+      )
 
       if (step + 1) % 10 == 0 or step + 1 == len(plan.order):
         logging.info(
@@ -222,64 +225,28 @@ def _precompile_message_passing(domain, plan):
 def _precompile_column(cp: _ColumnPlan, rows: int) -> None:
   """Trace and compile one column's generation function without executing it."""
   dummy_rng = jax.random.PRNGKey(0)
-  if not cp.has_parents:
-    dummy_marg = jnp.ones(cp.domain_size, dtype=jnp.float32)
-    _round_no_parents.lower(dummy_rng, dummy_marg, total=rows).compile()
-  else:
-    shape = cp.parent_sizes + (cp.domain_size,)
-    dummy_marg = jnp.ones(shape, dtype=jnp.float32)
-    dummy_parents = tuple(
-        jnp.zeros(rows, dtype=jnp.int32) for _ in cp.parent_sizes
-    )
-    _round_with_parents.lower(
-        dummy_rng, dummy_marg, dummy_parents, cp.parent_sizes, total=rows,
-    ).compile()
-
-
-@jax.jit(static_argnames=['total'])
-def _round_no_parents(rng_key, marg_counts, *, total):
-  """Gumbel rounding for the no-parents case."""
-  domain_size = marg_counts.shape[0]
-  counts = marg_counts * (total / marg_counts.sum())
-  integ = jnp.floor(counts).astype(jnp.int32)
-  frac = counts - jnp.floor(counts)
-  extra = total - integ.sum()
-
-  rng1, rng2 = jax.random.split(rng_key)
-  u = jax.random.uniform(rng1, (domain_size,))
-  scores = jnp.log(frac + 1e-30) - jnp.log(-jnp.log(u + 1e-30))
-  scores = jnp.where(frac == 0, -jnp.inf, scores)
-
-  ranked = jnp.argsort(-scores)
-  roundup = jnp.where(jnp.arange(domain_size) < extra, 1, 0)
-  integ = integ.at[ranked].add(roundup)
-
-  vals = jnp.repeat(
-      jnp.arange(domain_size, dtype=jnp.int32), integ,
-      total_repeat_length=total,
+  parent_product = 1 if not cp.has_parents else (
+      int(np.prod(cp.parent_sizes))
   )
-  perm = jax.random.permutation(rng2, total)
-  return vals[perm]
+  dummy_marg = jnp.ones((parent_product, cp.domain_size), dtype=jnp.float32)
+  dummy_idx = jnp.zeros(rows, dtype=jnp.int32)
+  _gumbel_round.lower(dummy_rng, dummy_marg, dummy_idx, total=rows).compile()
 
 
 @jax.jit(static_argnames=['total'])
-def _round_with_parents(
-    rng_key, marg_counts, parent_data, parent_sizes, *, total,
-):
-  """Gumbel rounding conditioned on parents."""
+def _gumbel_round(rng_key, marg_counts_2d, flat_parent_idx, *, total):
+  """Gumbel rounding: assign each record a value matching expected marginals."""
   rng1, rng2 = jax.random.split(rng_key)
 
-  domain_size = marg_counts.shape[-1]
-  parent_product = marg_counts.size // domain_size
+  domain_size = marg_counts_2d.shape[-1]
+  parent_product = marg_counts_2d.shape[0]
 
-  marg_parents = marg_counts.sum(axis=-1, keepdims=True)
-  cond_probs = jnp.where(marg_parents != 0, marg_counts / marg_parents, 0.0)
-  cond_probs_2d = cond_probs.reshape(parent_product, domain_size)
+  marg_parents = marg_counts_2d.sum(axis=-1, keepdims=True)
+  cond_probs = jnp.where(marg_parents != 0, marg_counts_2d / marg_parents, 0.0)
 
-  flat_parent_idx = _ravel_multi_index_jax(parent_data, parent_sizes)
   counts_per_parent = jnp.bincount(flat_parent_idx, length=parent_product)
 
-  expected = counts_per_parent[:, None] * cond_probs_2d
+  expected = counts_per_parent[:, None] * cond_probs
   integ = jnp.floor(expected).astype(jnp.int32)
   frac = expected - jnp.floor(expected)
   extra = counts_per_parent - integ.sum(axis=1)
