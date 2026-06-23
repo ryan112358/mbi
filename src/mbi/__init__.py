@@ -6,6 +6,20 @@ like data representation (Domain, Dataset), factor manipulation (Factor),
 and various estimation and oracle modules.
 """
 
+import warnings
+
+import jax
+
+if jax.config.jax_enable_compilation_cache:
+    warnings.warn(
+        "JAX persistent compilation cache is enabled. MBI generates many"
+        " small compiled programs, which makes the cache counterproductive"
+        " — especially when running sweeps of experiments that all write"
+        " to the same cache location. Consider disabling it with:"
+        ' jax.config.update("jax_enable_compilation_cache", False)',
+        stacklevel=1,
+    )
+
 from . import callbacks, estimation, extensions, junction_tree, marginal_oracles
 from ._api import Model, Projectable
 from .estimation import Estimator

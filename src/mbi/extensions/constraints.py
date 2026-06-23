@@ -539,8 +539,7 @@ def constrained_implicit(
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
-    domain = potentials.active_domain
-    cliques = potentials.cliques
+    domain, cliques = potentials.domain, potentials.cliques
 
     # Build junction tree with constraint edges.
     extra = [
