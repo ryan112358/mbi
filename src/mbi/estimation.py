@@ -414,6 +414,7 @@ class DualAveraging(Estimator):
         beta = state.gamma * (t + 1) ** 1.5 / 2
         u = (1 - c) * state.w + c * state.v
         loss, g = jax.value_and_grad(loss_fn)(u)
+        g = g / known_total
         gbar = (1 - c) * state.gbar + c * g
         theta = -t * (t + 1) / (4 * state.lipschitz + beta) * gbar
         v = marginal_oracle(theta, known_total)
