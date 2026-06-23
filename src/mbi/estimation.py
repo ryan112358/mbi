@@ -474,7 +474,7 @@ class InteriorGradient(Estimator):
                 "InteriorGradient requires a loss function with Lipschitz"
                 " gradients.  Pass domain= to from_linear_measurements()."
             )
-        inv_lipschitz = 1.0 / loss_fn.lipschitz
+        inv_lipschitz = 1.0 / (loss_fn.lipschitz * known_total)
         x = y = z = marginal_oracle(potentials, known_total)
         initial_loss = loss_fn(x)
         return InteriorGradientState(
@@ -497,7 +497,7 @@ class InteriorGradient(Estimator):
         y = (1 - a) * state.x + a * state.z
         c = state.c * (1 - a)
         loss, g = jax.value_and_grad(loss_fn)(y)
-        potentials = state.potentials - a / c / known_total * g
+        potentials = state.potentials - a / c * g
         z = marginal_oracle(potentials, known_total)
         x = (1 - a) * state.x + a * z
         return InteriorGradientState(
