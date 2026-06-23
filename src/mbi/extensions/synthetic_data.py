@@ -118,7 +118,7 @@ def synthetic_data(
     )
 
     rng = jax.random.PRNGKey(seed)
-    data: dict[str, jax.Array] = {}
+    data: dict[str, np.ndarray] = {}
 
     for step, col in enumerate(plan.order):
         rng, col_rng = jax.random.split(rng)
@@ -135,13 +135,16 @@ def synthetic_data(
             total=rows,
         )
 
+        # Offload to host immediately — frees GPU memory for future columns.
+        # Async overlap or lazy eviction could save ~20ms/col, but that's <1%
+        # of per-column compute time, so we keep this simple.
+        column = np.asarray(data[col])
+        data[col] = column.astype(np.min_scalar_type(domain[col]))
+
         if (step + 1) % 10 == 0 or step + 1 == len(plan.order):
             logging.info('Col %d/%d: %s done', step + 1, len(plan.order), col)
 
-    return Dataset(
-        {col: np.asarray(arr) for col, arr in data.items()},
-        domain,
-    )
+    return Dataset(data, domain)
 
 
 @dataclasses.dataclass(frozen=True)
