@@ -9,6 +9,10 @@ Note that we assume in this file that the data has been appropriately preprocess
 
 import numpy as np
 import itertools
+import os as _os
+import sys as _sys
+
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from mbi import (
     Dataset,
     Domain,
@@ -58,7 +62,7 @@ def filter_candidates(candidates, model, size_limit):
     for cl in candidates:
         cond1 = (
             junction_tree.hypothetical_model_size(
-                model.domain, model.cliques + [cl]
+                model.domain, list(model.cliques) + [cl]
             )
             <= size_limit
         )
@@ -80,7 +84,9 @@ class AIM(Mechanism):
         max_iters=1000,
         structural_zeros={},
     ):
-        super(AIM, self).__init__(epsilon, delta, prng)
+        super(AIM, self).__init__(
+            epsilon, delta, bounded=False, prng=prng or np.random
+        )
         self.rounds = rounds
         self.max_iters = max_iters
         self.max_model_size = max_model_size

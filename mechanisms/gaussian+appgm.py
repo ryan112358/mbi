@@ -1,4 +1,4 @@
-from mbi import approximate_oracles, LinearMeasurement, estimation, callbacks
+from mbi import approximate_oracles, LinearMeasurement, callbacks
 import numpy as np
 import argparse
 from mbi import Dataset
@@ -108,15 +108,10 @@ if __name__ == "__main__":
 
     callback_fn = callbacks.default(measurements, data)
     stepsize = 5e-4
-    model = estimation.mirror_descent(
+
+    model = approximate_oracles.mirror_descent(
         data.domain,
         measurements,
-        # This should be a stateful marginal_oracle.  In particular, the messages
-        # should persist each time this function is called in order to get
-        # good convergence with only one step.  This is a regression introduced
-        # during the refactoring.
-        marginal_oracle=approximate_oracles.convex_generalized_belief_propagation,
-        stateful=True,
         iters=args.pgm_iters,
         callback_fn=callback_fn,
         stepsize=stepsize,
