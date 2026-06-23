@@ -944,13 +944,23 @@ def universal_accelerated_method(
     )
     marginal_oracle = functools.partial(marginal_oracle, mesh=mesh)
 
+    # Operate on the unit simplex internally to avoid softmax saturation.
+    # The loss on the unit simplex is f_scaled(p) = f(N * p), so its Hessian
+    # is N^2 times larger.  The dual projection maps potentials to the unit
+    # simplex (known_total=1) instead of the N-scaled simplex.
+    def scaled_loss(p):
+        return loss_fn(known_total * p)
+
+    L = loss_fn.lipschitz or 1.0
+    initial_stepsize = 1.0 / (known_total * L)
+
     carry, cond_fun, body_fun = _universal_accelerated_method_step_init(
-        fun=loss_fn,
+        fun=scaled_loss,
         dual_init_params=potentials,
-        dual_proj=lambda x: marginal_oracle(x, known_total),
+        dual_proj=lambda x: marginal_oracle(x, 1.0),
         max_iter_search=30,
         target_acc=0.0,
-        stepsize=1.0 / known_total,
+        stepsize=initial_stepsize,
         norm=2,
         linesearch=True,
     )
@@ -958,6 +968,7 @@ def universal_accelerated_method(
         # jax.lax.while_loop traces the body function, so no need to jit it.
         carry = jax.lax.while_loop(cond_fun, body_fun, carry)
         carry = carry._replace(accept=jnp.asarray(False))
-        callback_fn(carry.x)
-    sol = carry.x
+        callback_fn(known_total * carry.x)
+    sol = known_total * carry.x
     return mle_from_marginals(sol, known_total)
+
