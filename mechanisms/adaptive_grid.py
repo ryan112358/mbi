@@ -343,7 +343,7 @@ def adagrid(
         )
 
     iters = mbi_args.get("iters", 2500)
-    model = estimation.mirror_descent(
+    model = estimation.MirrorDescent().estimate(
         domain,
         linear_measurements,
         iters=iters,
@@ -384,7 +384,7 @@ def adagrid(
 
     print()
     print("Post-processing with Private-PGM, will take some time...")
-    model = estimation.mirror_descent(
+    model = estimation.MirrorDescent().estimate(
         domain,
         linear_measurements,
         iters=iters,
