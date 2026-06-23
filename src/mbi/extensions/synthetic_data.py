@@ -178,10 +178,18 @@ def _build_plan(domain, cliques):
     maximal_cliques = junction_tree.maximal_cliques(jtree)
     order = tuple(reversed(elimination_order))
 
+    # Use maximal cliques (junction tree super-cliques) for parent
+    # determination, not the original measurement cliques.  The junction
+    # tree merges overlapping cliques into super-cliques that capture
+    # the full dependency structure.  Using original cliques misses
+    # dependencies between attributes that share a super-clique but
+    # not an original clique.
+    jtree_clique_sets = [set(cl) for cl in maximal_cliques]
+
     columns: dict[str, _ColumnPlan] = {}
     used: set[str] = set()
     for col in order:
-        relevant = [cl for cl in clique_sets if col in cl]
+        relevant = [cl for cl in jtree_clique_sets if col in cl]
         parents = tuple(sorted(used.intersection(set().union(*relevant))))
         used.add(col)
 
