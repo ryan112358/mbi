@@ -391,7 +391,7 @@ class DualAveraging(Estimator):
                 "DualAveraging requires a loss function with Lipschitz"
                 " gradients.  Pass domain= to from_linear_measurements()."
             )
-        L = loss_fn.lipschitz / known_total
+        L = loss_fn.lipschitz
 
         w = v = marginal_oracle(potentials, known_total)
         gbar = CliqueVector.zeros(domain, loss_fn.cliques)
@@ -414,7 +414,6 @@ class DualAveraging(Estimator):
         beta = state.gamma * (t + 1) ** 1.5 / 2
         u = (1 - c) * state.w + c * state.v
         loss, g = jax.value_and_grad(loss_fn)(u)
-        g = g / known_total
         gbar = (1 - c) * state.gbar + c * g
         theta = -t * (t + 1) / (4 * state.lipschitz + beta) * gbar
         v = marginal_oracle(theta, known_total)
@@ -474,7 +473,7 @@ class InteriorGradient(Estimator):
                 "InteriorGradient requires a loss function with Lipschitz"
                 " gradients.  Pass domain= to from_linear_measurements()."
             )
-        inv_lipschitz = 1.0 / loss_fn.lipschitz
+        inv_lipschitz = 1.0 / (loss_fn.lipschitz * known_total)
         x = y = z = marginal_oracle(potentials, known_total)
         initial_loss = loss_fn(x)
         return InteriorGradientState(
@@ -497,7 +496,7 @@ class InteriorGradient(Estimator):
         y = (1 - a) * state.x + a * state.z
         c = state.c * (1 - a)
         loss, g = jax.value_and_grad(loss_fn)(y)
-        potentials = state.potentials - a / c / known_total * g
+        potentials = state.potentials - a / c * g
         z = marginal_oracle(potentials, known_total)
         x = (1 - a) * state.x + a * z
         return InteriorGradientState(
