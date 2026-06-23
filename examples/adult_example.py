@@ -42,8 +42,8 @@ for cl in cliques:
 
 estimated_total = estimation.minimum_variance_unbiased_total(measurements)
 loss_fn = marginal_loss.from_linear_measurements(measurements)
-model = estimation.mirror_descent(
-    domain, loss_fn, known_total=estimated_total, iters=2500, stepsize=4e-5
+model = estimation.MirrorDescent(stepsize=4e-5).estimate(
+    domain, loss_fn, known_total=estimated_total, iters=2500
 )
 
 # now answer new queries

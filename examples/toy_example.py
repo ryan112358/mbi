@@ -31,7 +31,7 @@ measurements = [
 loss_fn = marginal_loss.from_linear_measurements(measurements)
 
 # estimate the data distribution
-model = estimation.mirror_descent(domain, loss_fn, known_total=1000)
+model = estimation.MirrorDescent().estimate(domain, loss_fn, known_total=1000)
 
 # recover consistent estimates of measurements
 ab2 = model.project(['A', 'B']).datavector()

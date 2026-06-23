@@ -133,11 +133,10 @@ class AIM(Mechanism):
 
         zeros = self.structural_zeros
         # NOTE: Haven't incorproated structural zeros back yet after refactoring
-        model = estimation.mirror_descent(
+        model = estimation.MirrorDescent().estimate(
             data.domain,
             measurements,
             iters=self.max_iters,
-            callback_fn=lambda *_: None,
         )
 
         t = 0
@@ -172,12 +171,11 @@ class AIM(Mechanism):
             # TODO: check if it helps to call maximal_subsets here
             pcliques = list(set(M.clique for M in measurements))
             potentials = model.potentials.expand(pcliques)
-            model = estimation.mirror_descent(
+            model = estimation.MirrorDescent().estimate(
                 data.domain,
                 measurements,
                 iters=self.max_iters,
                 potentials=potentials,
-                callback_fn=lambda *_: None,
             )
             w = model.project(cl).datavector()
             # print('Selected',cl,'Size',n,'Budget Used',rho_used/self.rho)
@@ -187,7 +185,7 @@ class AIM(Mechanism):
                 epsilon *= 2
 
         print("Generating Data...")
-        model = estimation.mirror_descent(
+        model = estimation.MirrorDescent().estimate(
             data.domain,
             measurements,
             iters=self.max_iters,

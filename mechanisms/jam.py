@@ -287,12 +287,11 @@ class JAM(Mechanism):
                 flush=True,
             )
 
-            model = estimation.mirror_descent(
+            model = estimation.MirrorDescent().estimate(
                 domain,
                 measurements,
                 iters=self.optim_iters,
                 potentials=potentials,
-                callback_fn=lambda *_: None,
             )
             model_size = junction_tree.hypothetical_model_size(
                 domain, model.cliques
@@ -310,7 +309,7 @@ class JAM(Mechanism):
         # --- Final Model Estimation and Synthetic Data Generation ---
         print("Generating Data...", flush=True)
         final_potentials = model.potentials if model else None
-        final_model = estimation.mirror_descent(
+        final_model = estimation.MirrorDescent().estimate(
             domain,
             measurements,
             iters=self.optim_iters,

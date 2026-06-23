@@ -107,7 +107,9 @@ def mwem_pgm(
     workload_answers = {cl: data.project(cl).datavector() for cl in workload}
 
     measurements = []
-    est = estimation.mirror_descent(domain, measurements, known_total=total)
+    est = estimation.MirrorDescent().estimate(
+        domain, measurements, known_total=total
+    )
     # import IPython; IPython.embed()
     cliques = []
     for i in range(1, rounds + 1):
@@ -132,7 +134,7 @@ def mwem_pgm(
                 loc=0, scale=marginal_sensitivity * sigma, size=n
             )
         measurements.append(LinearMeasurement(y, ax))
-        est = estimation.mirror_descent(
+        est = estimation.MirrorDescent().estimate(
             domain,
             measurements,
             known_total=total,

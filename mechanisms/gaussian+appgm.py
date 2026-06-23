@@ -109,12 +109,11 @@ if __name__ == "__main__":
     callback_fn = callbacks.default(measurements, data)
     stepsize = 5e-4
 
-    model = approximate_oracles.mirror_descent(
+    model = approximate_oracles.ApproxMirrorDescent(stepsize=stepsize).estimate(
         data.domain,
         measurements,
         iters=args.pgm_iters,
         callback_fn=callback_fn,
-        stepsize=stepsize,
     )
 
     errors = []

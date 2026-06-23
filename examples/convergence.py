@@ -73,28 +73,28 @@ if __name__ == "__main__":
     for estimator in args.estimator:
         callback_fn = callbacks.default(measurements, data)
         if estimator == "MD":
-            model = estimation.mirror_descent(
+            model = estimation.MirrorDescent().estimate(
                 data.domain,
                 measurements,
                 iters=args.iters,
                 callback_fn=callback_fn,
             )
         if estimator == "RDA":
-            model = estimation.dual_averaging(
+            model = estimation.DualAveraging().estimate(
                 data.domain,
                 measurements,
                 iters=args.iters,
                 callback_fn=callback_fn,
             )
         if estimator == "IG":
-            model = estimation.interior_gradient(
+            model = estimation.InteriorGradient().estimate(
                 data.domain,
                 measurements,
                 iters=args.iters,
                 callback_fn=callback_fn,
             )
         if estimator == "LBFGS":
-            model = estimation.lbfgs(
+            model = estimation.LBFGS().estimate(
                 data.domain,
                 measurements,
                 iters=args.iters,

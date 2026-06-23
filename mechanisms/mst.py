@@ -32,7 +32,9 @@ def MST(data, epsilon, delta):
     data, log1, undo_compress_fn = compress_domain(data, log1)
     cliques = select(data, rho / 3.0, log1)
     log2 = measure(data, cliques, sigma)
-    est = estimation.mirror_descent(data.domain, log1 + log2, iters=10000)
+    est = estimation.MirrorDescent().estimate(
+        data.domain, log1 + log2, iters=10000
+    )
     synth = est.synthetic_data()
     return undo_compress_fn(synth)
 
@@ -82,7 +84,9 @@ def exponential_mechanism(q, eps, sensitivity, prng=np.random, monotonic=False):
 
 def select(data, rho, measurement_log, cliques=[]):
 
-    est = estimation.mirror_descent(data.domain, measurement_log, iters=2500)
+    est = estimation.MirrorDescent().estimate(
+        data.domain, measurement_log, iters=2500
+    )
 
     weights = {}
     candidates = list(itertools.combinations(data.domain.attrs, 2))
