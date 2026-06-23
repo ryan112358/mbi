@@ -4,6 +4,10 @@ from scipy import sparse
 from scipy.cluster.hierarchy import DisjointSet
 import networkx as nx
 import itertools
+import os as _os
+import sys as _sys
+
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from cdp2adp import cdp_rho
 from scipy.special import logsumexp
 import argparse
@@ -127,7 +131,8 @@ def transform_data(data, supports):
         assert idx == size
         df[col] = df[col].map(mapping)
     newdom = Domain.fromdict(newdom)
-    return Dataset(df.values.astype(int), newdom)
+    data_dict = {col: df[col].values.astype(int) for col in newdom.attrs}
+    return Dataset(data_dict, newdom)
 
 
 def reverse_data(data, supports):
@@ -145,7 +150,8 @@ def reverse_data(data, supports):
             df.loc[mask, col] = np.random.choice(extra, mask.sum())
         df.loc[~mask, col] = idx[df.loc[~mask, col]]
     newdom = Domain.fromdict(newdom)
-    return Dataset(df.values, newdom)
+    data_dict = {col: df[col].values.astype(int) for col in newdom.attrs}
+    return Dataset(data_dict, newdom)
 
 
 def default_params():
@@ -195,10 +201,7 @@ if __name__ == "__main__":
     parser.set_defaults(**default_params())
     args = parser.parse_args()
 
-    df = pd.read_csv(os.path.join("../data/", args.dataset))
-    config = json.load(open(os.path.join("../data/", args.domain), "r"))
-    domain = Domain.fromdict(config)
-    data = Dataset(df, domain)
+    data = Dataset.load(args.dataset, args.domain)
 
     workload = list(itertools.combinations(data.domain, args.degree))
     workload = [cl for cl in workload if data.domain.size(cl) <= args.max_cells]

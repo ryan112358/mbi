@@ -83,7 +83,6 @@ if __name__ == "__main__":
             model = estimation.dual_averaging(
                 data.domain,
                 measurements,
-                lipschitz=args.lipschitz,
                 iters=args.iters,
                 callback_fn=callback_fn,
             )
@@ -91,7 +90,6 @@ if __name__ == "__main__":
             model = estimation.interior_gradient(
                 data.domain,
                 measurements,
-                lipschitz=args.lipschitz,
                 iters=args.iters,
                 callback_fn=callback_fn,
             )
@@ -113,8 +111,8 @@ if __name__ == "__main__":
 
     for estimator in args.estimator:
         summary = summaries[estimator]
-        xs = summary["step"] + 1
-        ys = summary["L2 Loss"] - best
+        xs = np.asarray(summary["step"] + 1, dtype=float)
+        ys = np.asarray(summary["L2 Loss"], dtype=float) - float(best)
         coef = np.polyfit(np.log(xs), np.log(ys), deg=1)
         est = np.exp(coef[1]) * xs ** coef[0]
 

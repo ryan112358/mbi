@@ -1,13 +1,17 @@
 import numpy as np
 import pandas as pd
 import json
-from mbi import FactoredInference, Factor, Dataset, Domain
+from mbi import Factor, Dataset, Domain, LinearMeasurement, estimation
 from scipy import sparse
 from scipy.special import logsumexp
 import itertools
 import networkx as nx
 from scipy.cluster.hierarchy import DisjointSet
-from mechanisms.cdp2adp import cdp_rho
+import os as _os
+import sys as _sys
+
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from cdp2adp import cdp_rho
 import argparse
 
 
@@ -302,9 +306,6 @@ def adagrid(
             )  # get remaining aggregate measurements
             Q1 = Q1[Q1.getnnz(1) > 0]  # remove all-zero rows
             Q = sparse.vstack([Q1, Q2])
-            Q.T = sparse.csr_matrix(
-                Q.T
-            )  # a trick to improve efficiency of Private-PGM
             # Q has sensitivity 1 by construction
             print(
                 "Measuring %s, L2 sensitivity %.6f"
@@ -324,13 +325,32 @@ def adagrid(
                 domain.project(cl), est >= step1_sigma * threshold
             )
             matrices[cl] = Q
-            measurements.append((Q, y, 1.0, cl))
+            measurements.append((Q, y, step1_sigma, cl))
 
-    engine = FactoredInference(domain, log=False, **mbi_args)
-    engine.estimate(measurements)
+    def _make_query(Q_mat):
+        """Build a query callable from a sparse matrix Q."""
+
+        def query(factor):
+            return Q_mat @ factor.datavector()
+
+        return query
+
+    linear_measurements = []
+    for Q_mat, y_vec, _noise, cl in measurements:
+        query_fn = _make_query(Q_mat)
+        linear_measurements.append(
+            LinearMeasurement(y_vec, cl, stddev=step1_sigma, query=query_fn)
+        )
+
+    iters = mbi_args.get("iters", 2500)
+    model = estimation.mirror_descent(
+        domain,
+        linear_measurements,
+        iters=iters,
+    )
 
     # Step 2: select more marginals using an MST-style approach
-    step2_queries = select(data, engine.model, rho_step_2, targets)
+    step2_queries = select(data, model, rho_step_2, targets)
 
     print()
     # step 3: measure those marginals
@@ -345,9 +365,6 @@ def adagrid(
         )  # get remaining aggregate measurements
         Q1 = Q1[Q1.getnnz(1) > 0]  # remove all-zero rows
         Q = sparse.vstack([Q1, Q2])
-        Q.T = sparse.csr_matrix(
-            Q.T
-        )  # a trick to improve efficiency of Private-PGM
         # Q has sensitivity 1 by construction
         print(
             "Measuring %s, L2 sensitivity %.6f"
@@ -360,11 +377,18 @@ def adagrid(
         y = Q @ mu + np.random.normal(loc=0, scale=step3_sigma, size=Q.shape[0])
         #########################################
 
-        measurements.append((Q, y, 1.0, cl))
+        query_fn = _make_query(Q)
+        linear_measurements.append(
+            LinearMeasurement(y, cl, stddev=step3_sigma, query=query_fn)
+        )
 
     print()
     print("Post-processing with Private-PGM, will take some time...")
-    model = engine.estimate(measurements)
+    model = estimation.mirror_descent(
+        domain,
+        linear_measurements,
+        iters=iters,
+    )
     return model.synthetic_data()
 
 
@@ -381,8 +405,6 @@ def default_params():
     params["delta"] = 1e-10
     params["targets"] = []
     params["pgm_iters"] = 2500
-    params["warm_start"] = True
-    params["metric"] = "L2"
     params["threshold"] = 5.0
     params["split_strategy"] = [0.1, 0.1, 0.8]
     params["save"] = "out.csv"
@@ -408,10 +430,6 @@ if __name__ == "__main__":
         "--targets", type=str, nargs="+", help="target columns to preserve"
     )
     parser.add_argument("--pgm_iters", type=int, help="number of iterations")
-    parser.add_argument("--warm_start", type=bool, help="warm start PGM")
-    parser.add_argument(
-        "--metric", choices=["L1", "L2"], help="loss function metric to use"
-    )
     parser.add_argument(
         "--threshold", type=float, help="adagrid treshold parameter"
     )
@@ -426,17 +444,9 @@ if __name__ == "__main__":
     parser.set_defaults(**default_params())
     args = parser.parse_args()
 
-    df = pd.read_csv(args.dataset)
-    domain = Domain.fromdict(json.load(open(args.domain, "r")))
-
-    # Ensure columns are in correct order for numpy array
-    df = df[list(domain.attrs)]
-
-    data = Dataset(df.values, domain)
+    data = Dataset.load(args.dataset, args.domain)
     mbi_args = {
         "iters": args.pgm_iters,
-        "warm_start": args.warm_start,
-        "metric": args.metric,
     }
     synth = adagrid(
         data,

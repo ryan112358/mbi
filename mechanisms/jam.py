@@ -15,6 +15,9 @@ in Proceedings of Machine Learning Research 238:2404-2412 Available from https:/
 import argparse
 import itertools
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np
 
@@ -133,7 +136,7 @@ class JAM(Mechanism):
         rounds=30,
     ):
         # pylint: disable=too-many-arguments,too-many-locals,too-many-positional-arguments
-        super().__init__(epsilon, delta, prng)
+        super().__init__(epsilon, delta, bounded=False, prng=prng or np.random)
         self.alpha = alpha
         self.degree = degree
         self.optim_iters = optim_iters

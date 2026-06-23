@@ -1,6 +1,10 @@
 import numpy as np
 # from autodp import privacy_calibrator
 from functools import partial
+import os as _os
+import sys as _sys
+
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from cdp2adp import cdp_rho
 from scipy.special import softmax
 
@@ -27,7 +31,7 @@ def generalized_em_scores(q, ds, t):
 
 class Mechanism:
 
-    def __init__(self, epsilon, delta, bounded, prng=np.random):
+    def __init__(self, epsilon, delta, bounded=False, prng=np.random):
         """
         Base class for a mechanism.
         :param epsilon: privacy parameter
