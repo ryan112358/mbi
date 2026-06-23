@@ -113,6 +113,18 @@ class Estimator(ABC):
         **kwargs: Any,
     ) -> Model:
         """Estimate a Model from noisy marginal measurements."""
+        if not jax.config.jax_enable_x64:
+            warnings.warn(
+                "MBI is running in float32 mode. For large datasets"
+                " (N > 100K), this can cause estimation algorithms to stall"
+                " or diverge due to insufficient floating-point precision."
+                " To enable float64, call:\n"
+                "\n"
+                "  jax.config.update('jax_enable_x64', True)\n",
+                UserWarning,
+                stacklevel=2,
+            )
+
         if isinstance(loss_fn, list):
             if known_total is None:
                 known_total = minimum_variance_unbiased_total(loss_fn)
@@ -940,6 +952,18 @@ def universal_accelerated_method(
     mesh: jax.sharding.Mesh | None = None,
 ) -> MarkovRandomField:
     """Optimization using the Universal Accelerated MD algorithm."""
+    if not jax.config.jax_enable_x64:
+        warnings.warn(
+            "MBI is running in float32 mode. For large datasets"
+            " (N > 100K), this can cause estimation algorithms to stall"
+            " or diverge due to insufficient floating-point precision."
+            " To enable float64, call:\n"
+            "\n"
+            "  jax.config.update('jax_enable_x64', True)\n",
+            UserWarning,
+            stacklevel=2,
+        )
+
     loss_fn, known_total, potentials = _initialize(
         domain, loss_fn, known_total, potentials
     )
