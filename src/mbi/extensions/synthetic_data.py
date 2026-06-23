@@ -40,6 +40,10 @@ def precompile(
     measurement selection.  Fire and forget; ``synthetic_data`` benefits
     from whatever has compiled so far.
 
+    No concrete arrays are allocated (except a PRNG key); all inputs use
+    abstract ``ShapeDtypeStruct`` values via ``Factor.abstract`` so the
+    compiler sees shapes and dtypes without materializing memory.
+
     Args:
       domain: The Domain over which the model is defined.
       cliques: The cliques of the model (known after measurement selection).
@@ -49,28 +53,51 @@ def precompile(
     plan = _build_plan(domain, cliques)
 
     def _compile_all():
-        dummy_potentials = _make_dummy_potentials(domain, cliques)
-        _, dummy_messages = marginal_oracles.message_passing_implicit(
-            dummy_potentials,
+        # --- Compile message_passing_implicit (abstract, no execution) ---
+        abstract_potentials = CliqueVector.abstract(domain, cliques)
+        marginal_oracles.message_passing_implicit.lower(
+            abstract_potentials,
             1.0,
             jtree=plan.jtree,
             return_messages=True,
+        ).compile()
+
+        # --- Build abstract inputs for each column from structure alone ---
+        # Potentials grouped by maximal clique.
+        mapping = clique_mapping(
+            plan.maximal_cliques,
+            cliques,
+            domain=domain,
         )
-        pot_map, msg_map = _build_lookups(
-            plan,
-            dummy_potentials,
-            dummy_messages,
-            domain,
-        )
+        pot_map: dict[tuple, list[Factor]] = collections.defaultdict(list)
+        for cl in cliques:
+            pot_map[mapping[cl]].append(Factor.abstract(domain.project(cl)))
+
+        # Messages grouped by destination clique (shapes from separators).
+        message_order = junction_tree.message_passing_order(plan.jtree)
+        msg_map: dict[tuple, list[Factor]] = collections.defaultdict(list)
+        for i, j in message_order:
+            sep = domain.project(tuple(sorted(set(i) & set(j))))
+            msg_map[j].append(Factor.abstract(sep))
+
+        # --- Compile each column's _generate_column ---
         for cp in plan.columns.values():
-            inputs = _gather_inputs(cp, domain, pot_map, msg_map)
-            dummy_parents = tuple(
-                jnp.zeros(rows, dtype=jnp.int32) for _ in cp.parents
+            # Same logic as _gather_inputs but using abstract Factors.
+            inputs = list(pot_map[cp.maximal_clique]) + list(
+                msg_map[cp.maximal_clique]
+            )
+            query_domain = domain.project(cp.query)
+            for attr in query_domain.attributes:
+                if not any(attr in inp.domain.attributes for inp in inputs):
+                    inputs.append(Factor.abstract(domain.project([attr])))
+
+            abstract_parents = tuple(
+                jax.ShapeDtypeStruct((rows,), jnp.int32) for _ in cp.parents
             )
             _generate_column.lower(
                 jax.random.PRNGKey(0),
                 inputs,
-                dummy_parents,
+                abstract_parents,
                 query=cp.query,
                 parent_sizes=cp.parent_sizes,
                 total=rows,
@@ -210,15 +237,6 @@ def _build_plan(domain, cliques):
         jtree=jtree,
         maximal_cliques=maximal_cliques,
     )
-
-
-def _make_dummy_potentials(domain, cliques):
-    """Build zero-valued potentials with the right pytree structure."""
-    arrays = {}
-    for cl in cliques:
-        shape = tuple(domain[attr] for attr in cl)
-        arrays[cl] = jnp.zeros(shape, dtype=jnp.float32)
-    return CliqueVector(domain, list(cliques), arrays)
 
 
 def _build_lookups(plan, potentials, messages, domain):
