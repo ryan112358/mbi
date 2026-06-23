@@ -74,13 +74,20 @@ class MarkovRandomField:
         """
         total = max(1, int(rows or self.total))
         domain = self.domain
-        cliques = [set(cl) for cl in self.cliques]
         jtree, elimination_order = junction_tree.make_junction_tree(
-            domain, cliques
+            domain, [set(cl) for cl in self.cliques]
         )
 
+        # Use maximal cliques from the junction tree for conditioning
+        # decisions (not the original measurement cliques).  The junction
+        # tree merges overlapping cliques into super-cliques that capture
+        # the full dependency structure of the model.
+        cliques = [set(cl) for cl in jtree.nodes]
+
         potentials = self.potentials.expand(list(jtree.nodes))
-        marginals = marginal_oracles.message_passing_stable(potentials)
+        marginals = marginal_oracles.message_passing_stable(
+            potentials, self.total
+        )
 
         def synthetic_col(counts, total):
             """Generates a synthetic column by sampling or rounding based on counts and total."""
@@ -145,11 +152,19 @@ class MarkovRandomField:
                     u = np.random.rand(total)
                 else:
                     perm = np.argsort(inverse, kind="stable")
-                    inverse_sorted = inverse[perm]
 
                     group_starts = np.zeros(len(counts), dtype=int)
                     np.cumsum(counts[:-1], out=group_starts[1:])
 
+                    # Shuffle within each parent group to break
+                    # spurious correlations with previously generated
+                    # columns that shared the same parent set.
+                    for gi in range(len(counts)):
+                        s = group_starts[gi]
+                        e = s + counts[gi]
+                        np.random.shuffle(perm[s:e])
+
+                    inverse_sorted = inverse[perm]
                     sorted_indices = np.arange(total)
 
                     ranks_sorted = sorted_indices - group_starts[inverse_sorted]
