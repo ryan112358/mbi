@@ -1,10 +1,14 @@
-"""Efficient handling of deterministic variable constraints.
+"""Handling of structural constraints between variables.
 
-Provides utilities for exploiting deterministic relationships between variables
-(e.g., A' = f(A) where A' is a coarsening of A) during message passing in
-graphical models. Instead of materializing full |A| x |A'| constraint factors,
-messages are routed through the constraint in O(|A|) time using coarsen/refine
-operations.
+Provides two constraint types:
+
+* ``DeterministicConstraint`` — exploits many-to-one (coarsening)
+  relationships via O(|fine|) coarsen/refine operations during message
+  passing, avoiding full |fine| × |coarse| factor materialization.
+
+* ``ArbitraryConstraint`` — represents any set of allowed (or disallowed)
+  index combinations as a dense ``-inf``/``0`` log-space factor.  No special
+  message-passing shortcuts; the factor participates in standard inference.
 """
 
 from __future__ import annotations
@@ -63,6 +67,105 @@ class DeterministicConstraint:
     @property
     def n_coarse(self) -> int:
         return int(self.mapping.max()) + 1
+
+
+@attr.dataclass(frozen=True, hash=False, eq=False)
+class ArbitraryConstraint:
+    """Structural constraint over an arbitrary subset of value combinations.
+
+    Materialized as a dense -inf/0 log-space factor for standard message
+    passing.  Specify exactly one of ``valid`` or ``invalid``.
+
+    Attributes:
+        attributes: Variable names.
+        valid: Array of shape (n, len(attributes)) listing allowed combos.
+        invalid: Array of shape (n, len(attributes)) listing forbidden combos.
+    """
+
+    attributes: tuple[str, ...]
+    valid: np.ndarray | None = None
+    invalid: np.ndarray | None = None
+
+    def __attrs_post_init__(self):
+        if (self.valid is None) == (self.invalid is None):
+            raise ValueError(
+                "Specify exactly one of 'valid' or 'invalid', not both."
+            )
+        data = self.valid if self.valid is not None else self.invalid
+        if data.ndim != 2 or data.shape[1] != len(self.attributes):
+            raise ValueError(
+                f'Expected shape (n, {len(self.attributes)}), got {data.shape}.'
+            )
+
+    def __hash__(self):
+        data = self.valid if self.valid is not None else self.invalid
+        return hash((self.attributes, data.tobytes(), self.valid is not None))
+
+    def __eq__(self, other):
+        if not isinstance(other, ArbitraryConstraint):
+            return NotImplemented
+        data_self = self.valid if self.valid is not None else self.invalid
+        data_other = other.valid if other.valid is not None else other.invalid
+        return (
+            self.attributes == other.attributes
+            and (self.valid is not None) == (other.valid is not None)
+            and np.array_equal(data_self, data_other)
+        )
+
+    @property
+    def clique(self) -> tuple[str, ...]:
+        return tuple(sorted(self.attributes))
+
+    def as_potential(self, domain: Domain) -> Factor:
+        """Return a log-space potential: 0 for allowed, -inf for forbidden."""
+        proj = domain.project(self.attributes)
+        if self.valid is not None:
+            idx = tuple(self.valid[:, i] for i in range(self.valid.shape[1]))
+            values = jnp.full(proj.shape, -jnp.inf).at[idx].set(0.0)
+        else:
+            idx = tuple(
+                self.invalid[:, i] for i in range(self.invalid.shape[1])
+            )
+            values = jnp.zeros(proj.shape).at[idx].set(-jnp.inf)
+        return Factor(proj, values)
+
+    @classmethod
+    def from_mapping(
+        cls, fine: str, coarse: str, mapping: np.ndarray
+    ) -> ArbitraryConstraint:
+        """Create from a deterministic mapping (functional dependency)."""
+        valid = np.column_stack([np.arange(len(mapping)), np.asarray(mapping)])
+        return cls(attributes=(fine, coarse), valid=valid)
+
+
+# Union type for constraint parameters.
+Constraint = DeterministicConstraint | ArbitraryConstraint
+
+
+def _separate_constraints(constraints, potentials):
+    """Split mixed constraints; fold ArbitraryConstraints into potentials."""
+    deterministic = []
+    for c in constraints:
+        if isinstance(c, DeterministicConstraint):
+            deterministic.append(c)
+        elif isinstance(c, ArbitraryConstraint):
+            domain = potentials.domain
+            cl = domain.canonical(c.clique)
+            factor = c.as_potential(domain)
+            cliques = list(potentials.cliques)
+            arrays = {k: potentials[k] for k in cliques}
+            if cl in arrays:
+                arrays[cl] = arrays[cl] + factor
+            else:
+                cliques.append(cl)
+                arrays[cl] = factor
+            potentials = CliqueVector(domain, cliques, arrays)
+        else:
+            raise TypeError(
+                'Expected DeterministicConstraint or ArbitraryConstraint, '
+                f'got {type(c).__name__}.'
+            )
+    return tuple(deterministic), potentials
 
 
 def _replace_variable(factor, old, new, new_size):
@@ -347,20 +450,24 @@ def constrained_shafer_shenoy(
     potentials: CliqueVector,
     total: float = 1,
     jtree: nx.Graph | None = None,
-    constraints: tuple[DeterministicConstraint, ...] = (),
+    constraints: tuple[Constraint, ...] = (),
 ) -> CliqueVector:
     """Compute marginals using Shafer-Shenoy with constraint-aware shortcuts.
 
     Extends message_passing_shafer_shenoy to handle deterministic constraints
-    without materializing |fine| x |coarse| factors.
+    without materializing |fine| x |coarse| factors.  Also accepts
+    ``ArbitraryConstraint`` objects, which are folded into the potentials
+    as dense factors before inference.
 
     Args:
         potentials: The (log-space) potentials of a graphical model.
         total: The normalization factor.
-
         jtree: An optional junction tree that defines the message passing
             order.
-        constraints: Deterministic constraints to handle efficiently.
+        constraints: Deterministic and/or arbitrary constraints.
+            ``DeterministicConstraint`` objects get efficient O(|fine|)
+            routing; ``ArbitraryConstraint`` objects are materialized as
+            dense factors and added to the potentials.
 
     Returns:
         The marginals of the graphical model.
@@ -368,6 +475,7 @@ def constrained_shafer_shenoy(
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
+    constraints, potentials = _separate_constraints(constraints, potentials)
     domain, cliques = potentials.domain, potentials.cliques
 
     # Build the junction tree, including constraint edges.
@@ -512,7 +620,7 @@ def constrained_implicit(
     total: float = 1,
     jtree: nx.Graph | None = None,
     *,
-    constraints: tuple[DeterministicConstraint, ...] = (),
+    constraints: tuple[Constraint, ...] = (),
     contraction: collections.abc.Callable = (
         marginal_oracles.einsum_materialized
     ),
@@ -521,15 +629,15 @@ def constrained_implicit(
 
     Uses the memory-efficient implicit contraction for cliques that do not
     involve constraints, and falls back to Shafer-Shenoy style constraint
-    routing for pure and embedded constraint cliques.  This avoids *both*
-    super-clique expansion (for standard cliques) and the cost of
-    refining coarse factors to fine-variable space (for constraint cliques).
+    routing for pure and embedded constraint cliques.  Also accepts
+    ``ArbitraryConstraint`` objects, which are folded into the potentials
+    as dense factors before inference.
 
     Args:
         potentials: The (log-space) potentials of a graphical model.
         total: The normalization factor.
         jtree: An optional junction tree.
-        constraints: Deterministic constraints to handle efficiently.
+        constraints: Deterministic and/or arbitrary constraints.
         contraction: Contraction function for log-space sum-product.
 
     Returns:
@@ -539,6 +647,7 @@ def constrained_implicit(
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
+    constraints, potentials = _separate_constraints(constraints, potentials)
     domain, cliques = potentials.domain, potentials.cliques
 
     # Build junction tree with constraint edges.
