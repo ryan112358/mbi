@@ -388,19 +388,22 @@ def default_oracle(
     cliques: tuple[tuple[str, ...], ...] | None = None,
     domain: Domain | None = None,
     backend: str | None = None,
+    has_inf: bool = True,
 ) -> MarginalOracle:
     """Select the best oracle for the given setting.
 
-    Chooses based on hardware backend and clique structure:
+    Chooses based on hardware backend, clique structure, and whether the
+    potentials may contain ``-inf`` entries:
 
-    - **CPU**: ``message_passing_shafer_shenoy`` (fastest on CPU and handles
-      ``-inf`` potentials correctly, unlike HUGIN which can NaN on dense
-      graphs with ``-inf`` entries).
-    - **GPU, max clique size < 1M**: ``message_passing_shafer_shenoy``
-      (fast and numerically robust).
-    - **GPU, max clique size >= 1M**: ``message_passing_implicit`` with
-      ``einsum_materialized`` (avoids materializing super-cliques;
-      HUGIN/SS OOM at ~1e8 and slow at ~1e7).
+    - **CPU**: ``message_passing_shafer_shenoy`` (has_inf=True) or
+      ``message_passing_hugin`` (has_inf=False). Implicit is not used on
+      CPU because the XLA compiler is less effective there.
+    - **GPU/TPU, large cliques (>= 1M)**: ``message_passing_implicit``
+      regardless of ``has_inf`` (avoids materializing super-cliques).
+    - **GPU/TPU, has_inf=True** (default):
+      ``message_passing_shafer_shenoy`` (numerically robust).
+    - **GPU/TPU, has_inf=False**: ``message_passing_hugin`` (faster when
+      ``-inf`` is absent).
 
     Args:
         cliques: Cliques of the graphical model. Used to estimate max clique
@@ -409,6 +412,10 @@ def default_oracle(
             estimate max clique size.
         backend: JAX backend string ('cpu', 'gpu', 'tpu'). If None, uses
             ``jax.default_backend()``.
+        has_inf: Whether potentials may contain ``-inf`` entries (e.g. from
+            deterministic constraints or structural zeros). When True
+            (default), Shafer-Shenoy is preferred for numerical robustness.
+            When False, Hugin may be used for better performance.
 
     Returns:
         A callable satisfying the ``MarginalOracle`` protocol.
@@ -421,10 +428,13 @@ def default_oracle(
     if backend is None:
         backend = jax.default_backend()
 
+    # CPU: SS or Hugin always (XLA compiler less effective on CPU).
     if backend == "cpu":
-        return message_passing_shafer_shenoy
+        if has_inf:
+            return message_passing_shafer_shenoy
+        return message_passing_hugin
 
-    # GPU/TPU path: check if cliques are large enough to benefit from implicit.
+    # GPU/TPU with large cliques: implicit regardless of has_inf.
     if cliques is not None and domain is not None:
         jtree = junction_tree.make_junction_tree(domain, cliques)[0]
         max_cliques = junction_tree.maximal_cliques(jtree)
@@ -432,7 +442,10 @@ def default_oracle(
         if max_size >= 1_000_000:
             return message_passing_implicit
 
-    return message_passing_shafer_shenoy
+    # GPU/TPU with small cliques.
+    if has_inf:
+        return message_passing_shafer_shenoy
+    return message_passing_hugin
 
 
 def brute_force_marginals(
