@@ -806,8 +806,18 @@ def interior_gradient(
 # ---------------------------------------------------------------------------
 
 
-def _optimize(loss_and_grad_fn, params, iters=250, callback_fn=lambda _: None):
-    """Runs an optimization loop using Optax L-BFGS."""
+def _optimize(
+    loss_and_grad_fn,
+    params,
+    iters=1000,
+    atol=1e-6,
+    callback_fn=lambda _: None,
+):
+    """Runs an optimization loop using Optax L-BFGS.
+
+    Stops when the L-inf norm of the gradient falls below ``atol`` or
+    after ``iters`` iterations, whichever comes first.
+    """
 
     if len(jax.tree.leaves(params)) == 0:
         # Nothing to optimize
@@ -825,7 +835,9 @@ def _optimize(loss_and_grad_fn, params, iters=250, callback_fn=lambda _: None):
             grad, opt_state, params, value=loss, grad=grad, value_fn=loss_fn
         )
 
-        return optax.apply_updates(params, updates), opt_state, loss
+        leaves = jax.tree.leaves(grad)
+        grad_norm = jnp.max(jnp.stack([jnp.max(jnp.abs(g)) for g in leaves]))
+        return optax.apply_updates(params, updates), opt_state, loss, grad_norm
 
     optimizer = optax.lbfgs(
         memory_size=1,
@@ -833,8 +845,10 @@ def _optimize(loss_and_grad_fn, params, iters=250, callback_fn=lambda _: None):
     )
     state = optimizer.init(params)
     for _ in range(iters):
-        params, state, _loss = update(params, state)
+        params, state, _loss, grad_norm = update(params, state)
         callback_fn(params)
+        if float(grad_norm) < atol:
+            break
     return params
 
 
@@ -871,15 +885,23 @@ def lbfgs(
 def mle_from_marginals(
     marginals: CliqueVector,
     known_total: float,
-    iters: int = 250,
+    iters: int = 1000,
+    atol: float = 1e-6,
     marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     callback_fn: Callable[..., None] = lambda *_: None,
 ) -> MarkovRandomField:
     """Compute the MLE Graphical Model from the marginals.
 
+    Runs L-BFGS until the gradient L-inf norm falls below ``atol`` or
+    ``iters`` iterations are reached.
+
     Args:
         marginals: The marginal probabilities.
         known_total: The known or estimated number of records in the data.
+        iters: Maximum number of iterations.
+        atol: Convergence tolerance on the L-inf gradient norm.
+        marginal_oracle: The function to compute marginals from potentials.
+        callback_fn: Called after each iteration with the current potentials.
 
     Returns:
         A MarkovRandomField object with the final potentials and marginals.
@@ -893,7 +915,7 @@ def mle_from_marginals(
         return -marginals.dot(mu.log()), mu - marginals
 
     potentials = CliqueVector.zeros(marginals.domain, marginals.cliques)
-    potentials = _optimize(loss_and_grad_fn, potentials, iters=iters)
+    potentials = _optimize(loss_and_grad_fn, potentials, iters=iters, atol=atol)
     return MarkovRandomField(
         potentials=potentials,
         marginals=marginal_oracle(potentials, known_total),
