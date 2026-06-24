@@ -53,5 +53,9 @@ class Model(Projectable, Protocol):
         * JaxDataset (with weights)
     """
 
+    @property
+    def total(self) -> float:
+        """The total count (number of records) represented by the model."""
+
     def synthetic_data(self, rows: int | None = None) -> Dataset:
         """Generate synthetic tabular data from the model."""

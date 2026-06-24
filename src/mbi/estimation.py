@@ -810,7 +810,7 @@ def _optimize(
     loss_and_grad_fn,
     params,
     iters=1000,
-    atol=1e-6,
+    atol=1e-2,
     callback_fn=lambda _: None,
 ):
     """Runs an optimization loop using Optax L-BFGS.
@@ -886,7 +886,7 @@ def mle_from_marginals(
     marginals: CliqueVector,
     known_total: float,
     iters: int = 1000,
-    atol: float = 1e-6,
+    atol: float = 1e-2,
     marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     callback_fn: Callable[..., None] = lambda *_: None,
 ) -> MarkovRandomField:
@@ -899,7 +899,9 @@ def mle_from_marginals(
         marginals: The marginal probabilities.
         known_total: The known or estimated number of records in the data.
         iters: Maximum number of iterations.
-        atol: Convergence tolerance on the L-inf gradient norm.
+        atol: Convergence tolerance on the L-inf gradient norm. The
+            default (1e-2) is calibrated for float32 precision, where
+            gradient norms typically plateau around 1e-3.
         marginal_oracle: The function to compute marginals from potentials.
         callback_fn: Called after each iteration with the current potentials.
 
