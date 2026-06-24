@@ -47,4 +47,5 @@ ac2 = model.project(['A', 'C']).datavector()
 # generate synthetic data
 synth = model.synthetic_data()
 import pandas as pd
+
 print(pd.DataFrame(synth.to_dict()).head())

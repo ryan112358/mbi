@@ -426,6 +426,7 @@ if __name__ == "__main__":
 
     if args.save_synth:
         import pandas as pd
+
         pd.DataFrame(synth_data.to_dict()).to_csv(args.save_synth, index=False)
         print(f"Synthetic data saved to {args.save_synth}")
 

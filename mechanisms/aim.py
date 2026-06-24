@@ -275,6 +275,7 @@ if __name__ == "__main__":
 
     if args.save is not None:
         import pandas as pd
+
         pd.DataFrame(synth.to_dict()).to_csv(args.save, index=False)
 
     synth_errors = []

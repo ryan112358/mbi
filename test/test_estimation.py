@@ -114,7 +114,8 @@ class TestEstimation(unittest.TestCase):
             _DOMAIN, cliques, {cl: P.project(cl) for cl in cliques}
         )
 
-        model = estimation.mle_from_marginals(mu, known_total=total)
+        loss = estimation.mle_loss_fn(mu)
+        model = estimation.LBFGS().estimate(_DOMAIN, loss, known_total=total)
         for cl in cliques:
             expected = mu.project(cl).datavector()
             actual = model.project(cl).datavector()

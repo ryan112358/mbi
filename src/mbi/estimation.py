@@ -129,6 +129,16 @@ class Estimator(ABC):
         if known_total is None:
             known_total = 1.0
 
+        # Nothing to optimize when there are no cliques.
+        if not loss_fn.cliques:
+            potentials = CliqueVector.zeros(domain, ())
+            oracle = self._oracle((), domain)
+            return MarkovRandomField(
+                potentials=potentials,
+                marginals=oracle(potentials, known_total),
+                total=known_total,
+            )
+
         state = self._init(domain, loss_fn, known_total, **kwargs)
         for _ in range(math.ceil(iters / CALLBACK_EVERY)):
             state = self._multi_step(state, loss_fn, known_total)
@@ -457,7 +467,10 @@ class DualAveraging(Estimator):
         state: DualAveragingState,
         known_total: float,
     ) -> MarkovRandomField:
-        return mle_from_marginals(state.w, known_total)
+        loss = mle_loss_fn(state.w)
+        return LBFGS(
+            marginal_oracle=self.marginal_oracle,
+        ).estimate(state.w.domain, loss, known_total=known_total)
 
 
 @attr.dataclass(frozen=True)
@@ -527,7 +540,10 @@ class InteriorGradient(Estimator):
         state: InteriorGradientState,
         known_total: float,
     ) -> MarkovRandomField:
-        return mle_from_marginals(state.x, known_total)
+        loss = mle_loss_fn(state.x)
+        return LBFGS(
+            marginal_oracle=self.marginal_oracle,
+        ).estimate(state.x.domain, loss, known_total=known_total)
 
 
 @attr.dataclass(frozen=True)
@@ -657,8 +673,11 @@ class UniversalAcceleratedMethod(Estimator):
 
     def _step(self, state, loss_fn, known_total):
         marginal_oracle = self._oracle(loss_fn.cliques, state.x.domain)
+
         # Project onto unit simplex (total=1).
-        dual_proj = lambda u: marginal_oracle(u, 1.0)
+        def dual_proj(u):
+            return marginal_oracle(u, 1.0)
+
         max_iter_search = self.max_iter_search
         target_acc = self.target_acc
         norm = self.norm
@@ -741,7 +760,11 @@ class UniversalAcceleratedMethod(Estimator):
 
     def _finalize(self, state, known_total):
         # Scale back to N-simplex and recover potentials via MLE.
-        return mle_from_marginals(state.x * known_total, known_total)
+        marginals = state.x * known_total
+        loss = mle_loss_fn(marginals)
+        return LBFGS(
+            marginal_oracle=self.marginal_oracle,
+        ).estimate(marginals.domain, loss, known_total=known_total)
 
 
 def _mle_loss(
@@ -752,108 +775,23 @@ def _mle_loss(
     return -target_marginals.dot(mu.log())
 
 
-@attr.dataclass(frozen=True)
-class MLEFromMarginals(LBFGS):
-    """Fit a graphical model to exact (noiseless) marginals via L-BFGS.
+def mle_loss_fn(marginals: CliqueVector) -> marginal_loss.MarginalLossFn:
+    """Create a ``MarginalLossFn`` for maximum likelihood estimation.
 
-    This is a specialization of :class:`LBFGS` where the loss is the
-    negative log-likelihood ``-marginals.dot(mu.log())``.  Because the
-    marginals are exact, the loss is convex in theta and L-BFGS converges
-    to the global optimum.
+    The loss is the negative log-likelihood ``-marginals.dot(mu.log())``.
+    The returned object can be passed to any ``Estimator.estimate`` method::
 
-    The ``estimate`` method accepts a ``CliqueVector`` of target marginals
-    instead of a ``MarginalLossFn``.
-
-    Attributes:
-        marginal_oracle: The function to compute marginals from potentials.
-            If ``None`` (default), uses ``default_oracle()`` to auto-select.
-        rtol: Relative convergence tolerance.  The gradient is in count
-            space (``mu - marginals``), so it scales with ``known_total``.
-            Convergence is declared when
-            ``max|gradient| < known_total * rtol``.  The default (1e-4)
-            is achievable within 1000 iterations in float64 even at
-            census scale (~132M records).
-    """
-
-    rtol: float = 1e-4
-
-    def estimate(  # pytype: disable=signature-mismatch
-        self,
-        marginals: CliqueVector,
-        known_total: float,
-        *,
-        iters: int = 1000,
-        callback_fn: Callable | None = None,
-        **kwargs: Any,
-    ) -> MarkovRandomField:
-        """Estimate a MarkovRandomField from exact marginals.
-
-        Args:
-            marginals: Target marginals (unnormalized counts).
-            known_total: The known number of records in the data.
-            iters: Maximum number of iterations.
-            callback_fn: Called every ``CALLBACK_EVERY`` steps with the
-                current model marginals.
-            **kwargs: Forwarded to ``_init`` (e.g. ``potentials``).
-
-        Returns:
-            A MarkovRandomField fit to the given marginals.
-        """
-        # Nothing to optimize when there are no cliques.
-        if not marginals.cliques:
-            potentials = CliqueVector.zeros(marginals.domain, ())
-            oracle = self._oracle((), marginals.domain)
-            return MarkovRandomField(
-                potentials=potentials,
-                marginals=oracle(potentials, known_total),
-                total=known_total,
-            )
-
-        loss_fn = marginal_loss.MarginalLossFn(
-            cliques=marginals.cliques,
-            loss_fn=_mle_loss,
-            data=marginals,
-        )
-        return super().estimate(
-            marginals.domain,
-            loss_fn,
-            known_total=known_total,
-            iters=iters,
-            callback_fn=callback_fn,
-            **kwargs,
-        )
-
-
-def mle_from_marginals(
-    marginals: CliqueVector,
-    known_total: float,
-    iters: int = 1000,
-    rtol: float = 1e-4,
-    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
-    callback_fn: Callable | None = None,
-) -> MarkovRandomField:
-    """Compute the MLE Graphical Model from the marginals.
-
-    Convenience wrapper around :class:`MLEFromMarginals`.  See its docstring
-    for details on the algorithm and tolerance.
+        loss = mle_loss_fn(marginals)
+        model = LBFGS().estimate(domain, loss, known_total=N)
 
     Args:
-        marginals: The target marginals (unnormalized counts).
-        known_total: The known or estimated number of records in the data.
-        iters: Maximum number of iterations.
-        rtol: Relative convergence tolerance.
-        marginal_oracle: The function to compute marginals from potentials.
-        callback_fn: Called every ``CALLBACK_EVERY`` steps.
+        marginals: Target marginals (unnormalized counts).
 
     Returns:
-        A MarkovRandomField object with the final potentials and marginals.
+        A ``MarginalLossFn`` suitable for any estimator.
     """
-    return MLEFromMarginals(
-        marginal_oracle=marginal_oracle,
-        rtol=rtol,
-    ).estimate(
-        marginals,
-        known_total,
-        iters=iters,
-        callback_fn=callback_fn,
+    return marginal_loss.MarginalLossFn(
+        cliques=marginals.cliques,
+        loss_fn=_mle_loss,
+        data=marginals,
     )
