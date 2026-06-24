@@ -609,6 +609,12 @@ class UniversalAcceleratedMethod(Estimator):
     Each optimization step performs an internal line-search via
     ``jax.lax.while_loop``.
 
+    **Numerical stability:** Internally operates on the *unit* simplex
+    (total=1) to keep potentials and gradients O(1).  The user-facing loss
+    ``loss_fn`` is evaluated on the N-scaled marginals via the wrapper
+    ``f_scaled(p) = loss_fn(N * p)``.  This prevents softmax saturation
+    that otherwise causes the linesearch to degenerate for large ``N``.
+
     See `Nesterov (2015) <https://optimization-online.org/wp-content/uploads/2013/04/3833.pdf>`_
     and `Roulet & d'Aspremont (2017) <https://arxiv.org/pdf/1702.03828>`_.
 
@@ -633,7 +639,10 @@ class UniversalAcceleratedMethod(Estimator):
         else:
             potentials = potentials.expand(loss_fn.cliques)
         marginal_oracle = self._oracle(loss_fn.cliques, domain)
-        x = z = marginal_oracle(potentials, known_total)
+        # Project onto unit simplex (total=1) for numerical stability.
+        x = z = marginal_oracle(potentials, 1.0)
+        # f_scaled has Hessian ~ N²·H_f; with H_f ~ 1/N we get L ~ N,
+        # so initial stepsize ~ 1/N.
         stepsize = 1.0 / known_total
         return _AcceleratedStepSearchState(
             x=x,
@@ -648,11 +657,16 @@ class UniversalAcceleratedMethod(Estimator):
 
     def _step(self, state, loss_fn, known_total):
         marginal_oracle = self._oracle(loss_fn.cliques, state.x.domain)
-        dual_proj = lambda u: marginal_oracle(u, known_total)
+        # Project onto unit simplex (total=1).
+        dual_proj = lambda u: marginal_oracle(u, 1.0)
         max_iter_search = self.max_iter_search
         target_acc = self.target_acc
         norm = self.norm
         use_linesearch = self.linesearch
+
+        # Wrap loss to operate on unit simplex: f_scaled(p) = loss_fn(N*p).
+        def scaled_loss(p):
+            return loss_fn(p * known_total)
 
         def cond_fun(carry):
             return jnp.logical_not(
@@ -670,13 +684,13 @@ class UniversalAcceleratedMethod(Estimator):
             theta = jnp.where(prev_theta < 0.0, 1.0, new_theta)
 
             y = (1 - theta) * carry.x + theta * carry.z
-            value_y, grad_y = jax.value_and_grad(loss_fn)(y)
+            value_y, grad_y = jax.value_and_grad(scaled_loss)(y)
             u = carry.u - stepsize / theta * grad_y
             z = dual_proj(u)
             x = (1 - theta) * carry.x + theta * z
 
             if use_linesearch:
-                new_value = loss_fn(x)
+                new_value = scaled_loss(x)
                 if norm == 1:
                     sq_norm_diff = optax.tree.norm(
                         optax.tree.sub(x, y), ord=1, squared=True
@@ -721,8 +735,13 @@ class UniversalAcceleratedMethod(Estimator):
         carry = jax.lax.while_loop(cond_fun, body_fun, state)
         return carry._replace(accept=jnp.asarray(False))
 
+    def _callback_value(self, state, known_total):
+        # Scale back to N-simplex for user-facing callbacks.
+        return state.x * known_total
+
     def _finalize(self, state, known_total):
-        return mle_from_marginals(state.x, known_total)
+        # Scale back to N-simplex and recover potentials via MLE.
+        return mle_from_marginals(state.x * known_total, known_total)
 
 
 def _mle_loss(
