@@ -97,9 +97,7 @@ class TestExtSyntheticDataAccuracy(unittest.TestCase):
         """Chain A-B-C: conditioning through shared attribute B."""
         domain = Domain(["A", "B", "C"], [5, 5, 5])
         cliques = [("A", "B"), ("B", "C")]
-        self._test_model_structure(
-            domain, cliques, cross_cliques=[("A", "C")]
-        )
+        self._test_model_structure(domain, cliques, cross_cliques=[("A", "C")])
 
     def test_star(self):
         """Star with hub: spokes share a hub but not each other."""
