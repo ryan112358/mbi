@@ -886,22 +886,25 @@ def mle_from_marginals(
     marginals: CliqueVector,
     known_total: float,
     iters: int = 1000,
-    atol: float = 1e-2,
+    rtol: float = 1e-4,
     marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     callback_fn: Callable[..., None] = lambda *_: None,
 ) -> MarkovRandomField:
     """Compute the MLE Graphical Model from the marginals.
 
-    Runs L-BFGS until the gradient L-inf norm falls below ``atol`` or
-    ``iters`` iterations are reached.
+    Runs L-BFGS until the gradient L-inf norm falls below
+    ``known_total * rtol`` or ``iters`` iterations are reached.
 
     Args:
         marginals: The marginal probabilities.
         known_total: The known or estimated number of records in the data.
         iters: Maximum number of iterations.
-        atol: Convergence tolerance on the L-inf gradient norm. The
-            default (1e-2) is calibrated for float32 precision, where
-            gradient norms typically plateau around 1e-3.
+        rtol: Relative convergence tolerance. The gradient is in count
+            space (``mu - marginals``), so it scales with ``known_total``.
+            Convergence is declared when
+            ``max|gradient| < known_total * rtol``.  The default (1e-4)
+            is achievable within 1000 iterations in float64 even at
+            census scale (~132M records).
         marginal_oracle: The function to compute marginals from potentials.
         callback_fn: Called after each iteration with the current potentials.
 
@@ -917,7 +920,9 @@ def mle_from_marginals(
         return -marginals.dot(mu.log()), mu - marginals
 
     potentials = CliqueVector.zeros(marginals.domain, marginals.cliques)
-    potentials = _optimize(loss_and_grad_fn, potentials, iters=iters, atol=atol)
+    potentials = _optimize(
+        loss_and_grad_fn, potentials, iters=iters, atol=known_total * rtol
+    )
     return MarkovRandomField(
         potentials=potentials,
         marginals=marginal_oracle(potentials, known_total),

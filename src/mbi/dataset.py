@@ -120,12 +120,6 @@ class Dataset:
     def to_dict(self) -> dict[str, np.ndarray]:
         return self._data
 
-    @property
-    def df(self):
-        import pandas
-
-        return pandas.DataFrame(self._data)
-
     @staticmethod
     def synthetic(domain: Domain, N: int) -> Dataset:
         """Generate synthetic data conforming to the given domain.

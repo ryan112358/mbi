@@ -425,7 +425,8 @@ if __name__ == "__main__":
     err_max = np.max(errors)
 
     if args.save_synth:
-        synth_data.df.to_csv(args.save_synth, index=False)
+        import pandas as pd
+        pd.DataFrame(synth_data.to_dict()).to_csv(args.save_synth, index=False)
         print(f"Synthetic data saved to {args.save_synth}")
 
     if args.save_errors:
