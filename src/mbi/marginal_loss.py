@@ -220,3 +220,33 @@ def primal_feasibility(mu: CliqueVector) -> chex.Numeric:
         return ans / count
     except Exception:  # pylint: disable=broad-exception-caught
         return 0
+
+
+def _mle_loss(
+    mu: CliqueVector,
+    target_marginals: CliqueVector,
+) -> jax.Array:
+    """Negative log-likelihood: ``-target.dot(mu.log())``."""
+    return -target_marginals.dot(mu.log())
+
+
+def mle_loss_fn(marginals: CliqueVector) -> "MarginalLossFn":
+    """Create a ``MarginalLossFn`` for maximum likelihood estimation.
+
+    The loss is the negative log-likelihood ``-marginals.dot(mu.log())``.
+    The returned object can be passed to any ``Estimator.estimate`` method::
+
+        loss = mle_loss_fn(marginals)
+        model = LBFGS().estimate(domain, loss, known_total=N)
+
+    Args:
+        marginals: Target marginals (unnormalized counts).
+
+    Returns:
+        A ``MarginalLossFn`` suitable for any estimator.
+    """
+    return MarginalLossFn(
+        cliques=marginals.cliques,
+        loss_fn=_mle_loss,
+        data=marginals,
+    )

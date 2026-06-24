@@ -467,7 +467,7 @@ class DualAveraging(Estimator):
         state: DualAveragingState,
         known_total: float,
     ) -> MarkovRandomField:
-        loss = mle_loss_fn(state.w)
+        loss = marginal_loss.mle_loss_fn(state.w)
         return LBFGS(
             marginal_oracle=self.marginal_oracle,
         ).estimate(state.w.domain, loss, known_total=known_total)
@@ -540,7 +540,7 @@ class InteriorGradient(Estimator):
         state: InteriorGradientState,
         known_total: float,
     ) -> MarkovRandomField:
-        loss = mle_loss_fn(state.x)
+        loss = marginal_loss.mle_loss_fn(state.x)
         return LBFGS(
             marginal_oracle=self.marginal_oracle,
         ).estimate(state.x.domain, loss, known_total=known_total)
@@ -761,37 +761,7 @@ class UniversalAcceleratedMethod(Estimator):
     def _finalize(self, state, known_total):
         # Scale back to N-simplex and recover potentials via MLE.
         marginals = state.x * known_total
-        loss = mle_loss_fn(marginals)
+        loss = marginal_loss.mle_loss_fn(marginals)
         return LBFGS(
             marginal_oracle=self.marginal_oracle,
         ).estimate(marginals.domain, loss, known_total=known_total)
-
-
-def _mle_loss(
-    mu: CliqueVector,
-    target_marginals: CliqueVector,
-) -> jax.Array:
-    """Negative log-likelihood: ``-target.dot(mu.log())``."""
-    return -target_marginals.dot(mu.log())
-
-
-def mle_loss_fn(marginals: CliqueVector) -> marginal_loss.MarginalLossFn:
-    """Create a ``MarginalLossFn`` for maximum likelihood estimation.
-
-    The loss is the negative log-likelihood ``-marginals.dot(mu.log())``.
-    The returned object can be passed to any ``Estimator.estimate`` method::
-
-        loss = mle_loss_fn(marginals)
-        model = LBFGS().estimate(domain, loss, known_total=N)
-
-    Args:
-        marginals: Target marginals (unnormalized counts).
-
-    Returns:
-        A ``MarginalLossFn`` suitable for any estimator.
-    """
-    return marginal_loss.MarginalLossFn(
-        cliques=marginals.cliques,
-        loss_fn=_mle_loss,
-        data=marginals,
-    )
