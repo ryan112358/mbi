@@ -24,7 +24,7 @@ class TestMarginalLoss(unittest.TestCase):
 
         # Calculate loss function and lipschitz constant
         loss_fn = from_linear_measurements(
-            measurements, norm='l2', domain=domain
+            measurements, domain, norm='l2'
         )
 
         calculated_L = loss_fn.lipschitz
@@ -41,7 +41,7 @@ class TestMarginalLoss(unittest.TestCase):
         measurements = [m1]
 
         loss_fn = from_linear_measurements(
-            measurements, norm='l2', domain=domain
+            measurements, domain, norm='l2'
         )
 
         calculated_L = loss_fn.lipschitz

@@ -164,9 +164,9 @@ def calculate_l2_lipschitz(
 
 def from_linear_measurements(
     measurements: list[LinearMeasurement],
+    domain: Domain,
     norm: str = "l2",
     normalize: bool = False,
-    domain: Domain | None = None,
 ) -> MarginalLossFn:
     """Construct a MarginalLossFn from a list of LinearMeasurements.
 
@@ -193,7 +193,7 @@ def from_linear_measurements(
 
     loss = MarginalLossFn(maximal_cliques, loss_fn, data)
 
-    if norm == "l2" and not normalize and domain is not None:
+    if norm == "l2" and not normalize:
         lipschitz = calculate_l2_lipschitz(domain, maximal_cliques, loss)
         return MarginalLossFn(maximal_cliques, loss_fn, data, lipschitz)
 
@@ -222,31 +222,10 @@ def primal_feasibility(mu: CliqueVector) -> chex.Numeric:
         return 0
 
 
-def _mle_loss(
-    mu: CliqueVector,
-    target_marginals: CliqueVector,
-) -> jax.Array:
-    """Negative log-likelihood: ``-target.dot(mu.log())``."""
-    return -target_marginals.dot(mu.log())
-
-
 def mle_loss_fn(marginals: CliqueVector) -> "MarginalLossFn":
-    """Create a ``MarginalLossFn`` for maximum likelihood estimation.
-
-    The loss is the negative log-likelihood ``-marginals.dot(mu.log())``.
-    The returned object can be passed to any ``Estimator.estimate`` method::
-
-        loss = mle_loss_fn(marginals)
-        model = LBFGS().estimate(domain, loss, known_total=N)
-
-    Args:
-        marginals: Target marginals (unnormalized counts).
-
-    Returns:
-        A ``MarginalLossFn`` suitable for any estimator.
-    """
+    """MLE loss: ``-marginals.dot(mu.log())``."""
     return MarginalLossFn(
         cliques=marginals.cliques,
-        loss_fn=_mle_loss,
+        loss_fn=lambda mu, target: -target.dot(mu.log()),
         data=marginals,
     )

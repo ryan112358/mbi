@@ -44,7 +44,7 @@ class TestEstimation(unittest.TestCase):
     @parameterized.expand(itertools.product(_CLIQUE_SETS))
     def test_mirror_descent(self, cliques):
         measurements = fake_measurements(cliques)
-        loss_fn = marginal_loss.from_linear_measurements(measurements)
+        loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
 
         model = estimation.MirrorDescent().estimate(
             _DOMAIN, loss_fn, known_total=1.0, iters=250
@@ -58,7 +58,7 @@ class TestEstimation(unittest.TestCase):
     def test_mirror_descent_l1(self, cliques):
         measurements = fake_measurements(cliques)
         loss_fn = marginal_loss.from_linear_measurements(
-            measurements, norm="l1"
+            measurements, _DOMAIN, norm="l1"
         )
 
         model = estimation.MirrorDescent(stepsize=0.01).estimate(
@@ -73,7 +73,7 @@ class TestEstimation(unittest.TestCase):
     def test_multiplicative_weights(self, cliques):
         measurements = fake_measurements(cliques)
         potentials = CliqueVector.zeros(_DOMAIN, [_DOMAIN.attributes])
-        loss_fn = marginal_loss.from_linear_measurements(measurements)
+        loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
         model = estimation.MirrorDescent().estimate(
             _DOMAIN, loss_fn, known_total=1.0, potentials=potentials, iters=250
         )

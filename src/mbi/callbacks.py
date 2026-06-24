@@ -10,6 +10,7 @@ import jax
 
 from . import marginal_loss
 from .clique_vector import CliqueVector
+from .domain import Domain
 from .factor import Projectable
 from .marginal_loss import LinearMeasurement
 
@@ -52,15 +53,17 @@ class Callback:
 
 def default(
     measurements: list[LinearMeasurement],
+    domain: Domain,
     data: Projectable | None = None,
 ) -> Callback:
     """Creates a default Callback with standard loss functions."""
     loss_fns = {
         "L2 Loss": marginal_loss.from_linear_measurements(
-            measurements, norm="l2", normalize=True
+            measurements, domain, norm="l2", normalize=True
         ),
         "L1 Loss": marginal_loss.from_linear_measurements(
             measurements,
+            domain,
             norm="l1",
             normalize=True,
         ),
@@ -77,10 +80,10 @@ def default(
             for M in measurements
         ]
         loss_fns["L2 Error"] = marginal_loss.from_linear_measurements(
-            ground_truth, norm="l2", normalize=True
+            ground_truth, domain, norm="l2", normalize=True
         )
         loss_fns["L1 Error"] = marginal_loss.from_linear_measurements(
-            ground_truth, norm="l1", normalize=True
+            ground_truth, domain, norm="l1", normalize=True
         )
 
     loss_fns = {key: jax.jit(val.__call__) for key, val in loss_fns.items()}

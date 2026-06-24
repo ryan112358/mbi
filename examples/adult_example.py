@@ -41,7 +41,7 @@ for cl in cliques:
 # now estimate the data distribution from the noisy measurements
 
 estimated_total = estimation.minimum_variance_unbiased_total(measurements)
-loss_fn = marginal_loss.from_linear_measurements(measurements)
+loss_fn = marginal_loss.from_linear_measurements(measurements, domain)
 model = estimation.MirrorDescent(stepsize=4e-5).estimate(
     domain, loss_fn, known_total=estimated_total, iters=2500
 )
