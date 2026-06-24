@@ -125,7 +125,7 @@ class Estimator(ABC):
         if isinstance(loss_fn, list):
             if known_total is None:
                 known_total = minimum_variance_unbiased_total(loss_fn)
-            loss_fn = marginal_loss.from_linear_measurements(loss_fn)
+            loss_fn = marginal_loss.from_linear_measurements(loss_fn, domain=domain)
         if known_total is None:
             known_total = 1.0
 
@@ -176,7 +176,7 @@ class Estimator(ABC):
                 marginal_loss.LinearMeasurement(abstract_values, cl)
             )
 
-        loss_fn = marginal_loss.from_linear_measurements(all_measurements)
+        loss_fn = marginal_loss.from_linear_measurements(all_measurements, domain=domain)
         abstract_state = jax.eval_shape(
             functools.partial(self._init, domain), loss_fn, 1.0
         )
@@ -216,7 +216,7 @@ def _initialize(domain, loss_fn, known_total, potentials):
     if isinstance(loss_fn, list):
         if known_total is None:
             known_total = minimum_variance_unbiased_total(loss_fn)
-        loss_fn = marginal_loss.from_linear_measurements(loss_fn)
+        loss_fn = marginal_loss.from_linear_measurements(loss_fn, domain=domain)
 
     if known_total is None:
         known_total = 1.0
