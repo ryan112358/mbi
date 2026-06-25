@@ -289,7 +289,7 @@ def model_summary(
                 cliques=tuple(input_cliques), domain=domain
             )
 
-        potentials = CliqueVector.zeros(domain, input_cliques)
+        potentials = CliqueVector.abstract(domain, input_cliques)
         compiled = (
             jax.jit(lambda p: marginal_oracle(p, 1.0))
             .lower(potentials)
