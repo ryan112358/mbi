@@ -193,7 +193,12 @@ def from_linear_measurements(
 
     loss = MarginalLossFn(maximal_cliques, loss_fn, data)
 
-    if norm == "l2" and not normalize:
+    # Lipschitz requires concrete measurement values.
+    has_abstract = any(
+        isinstance(m.noisy_measurement, jax.ShapeDtypeStruct)
+        for m in measurements
+    )
+    if norm == "l2" and not normalize and not has_abstract:
         lipschitz = calculate_l2_lipschitz(domain, maximal_cliques, loss)
         return MarginalLossFn(maximal_cliques, loss_fn, data, lipschitz)
 

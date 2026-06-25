@@ -175,6 +175,7 @@ class Estimator(ABC):
             all_measurements.append(
                 marginal_loss.LinearMeasurement(abstract_values, cl)
             )
+        all_measurements = jax.eval_shape(lambda x: x, all_measurements)
 
         loss_fn = marginal_loss.from_linear_measurements(
             all_measurements, domain
