@@ -376,17 +376,6 @@ class ApproxMirrorDescent:
     ) -> None:
         """Warm up the JIT cache for ``estimate``.
 
-        Triggers ahead-of-time compilation of the jitted step function
-        without materializing any concrete arrays.  Because
-        ``MarginalLossFn`` is a JAX pytree, the compiled program depends
-        only on the clique structure and loss type (static metadata), not
-        on measurement values (dynamic leaves).
-
-        You may pass concrete ``measurements`` you already have, plus
-        ``extra_cliques`` for cliques whose measurements are not yet
-        available.  Abstract ``LinearMeasurement`` objects with
-        ``ShapeDtypeStruct`` values are constructed for extra cliques.
-
         Args:
             domain: The domain over which the model is defined.
             measurements: Optional list of ``LinearMeasurement`` objects.
@@ -397,6 +386,7 @@ class ApproxMirrorDescent:
             shape = (domain.project(cl).size(),)
             abstract_values = jax.ShapeDtypeStruct(shape, jnp.float32)
             all_measurements.append(LinearMeasurement(abstract_values, cl))
+        all_measurements = jax.eval_shape(lambda x: x, all_measurements)
 
         loss_fn = marginal_loss.from_linear_measurements(
             all_measurements, domain

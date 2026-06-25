@@ -65,3 +65,22 @@ class TestApproximateOracles(unittest.TestCase):
             expected = M.noisy_measurement
             actual = mu.project(M.clique).datavector()
             np.testing.assert_allclose(actual, expected, atol=1e-2)
+
+    def test_precompile(self):
+        """precompile() with concrete measurements should not raise."""
+        cliques = [("a", "b"), ("b", "c")]
+        measurements = fake_measurements(cliques)
+        est = approximate_oracles.ApproxMirrorDescent(stepsize=1.0)
+        est.precompile(_DOMAIN, measurements)
+
+    def test_precompile_with_extra_cliques(self):
+        """precompile() with both measurements and extra_cliques."""
+        cliques = [("a", "b"), ("b", "c")]
+        measurements = fake_measurements(cliques)
+        est = approximate_oracles.ApproxMirrorDescent(stepsize=1.0)
+        est.precompile(_DOMAIN, measurements, extra_cliques=[("c", "d")])
+
+    def test_precompile_extra_cliques_only(self):
+        """precompile() with only extra_cliques (no concrete measurements)."""
+        est = approximate_oracles.ApproxMirrorDescent(stepsize=1.0)
+        est.precompile(_DOMAIN, extra_cliques=[("a", "b"), ("b", "c")])

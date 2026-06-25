@@ -128,3 +128,19 @@ class TestEstimation(unittest.TestCase):
         est = estimation.MirrorDescent()
         future = est.precompile(_DOMAIN, measurements)
         future.result()  # Should not raise.
+
+    def test_precompile_with_extra_cliques(self):
+        """precompile() with both measurements and extra_cliques."""
+        cliques = [("a", "b"), ("b", "c")]
+        measurements = fake_measurements(cliques)
+        est = estimation.MirrorDescent()
+        future = est.precompile(
+            _DOMAIN, measurements, extra_cliques=[("c", "d")]
+        )
+        future.result()  # Should not raise.
+
+    def test_precompile_extra_cliques_only(self):
+        """precompile() with only extra_cliques (no concrete measurements)."""
+        est = estimation.MirrorDescent()
+        future = est.precompile(_DOMAIN, extra_cliques=[("a", "b"), ("b", "c")])
+        future.result()  # Should not raise.
