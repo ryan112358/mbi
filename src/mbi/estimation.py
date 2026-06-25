@@ -431,7 +431,7 @@ class DualAveraging(Estimator):
         marginal_oracle = self._oracle(loss_fn.cliques, domain)
 
         D = np.sqrt(
-            domain.size() * np.log(domain.size())
+            domain.size() * math.log(domain.size())
         )  # upper bound on entropy
         Q = 0  # upper bound on variance of stochastic gradients
         gamma = Q / D
