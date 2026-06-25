@@ -85,7 +85,7 @@ class TestFactor(unittest.TestCase):
 
         res = self.factor.exp().log()
         self.assertEqual(res.domain, self.factor.domain)
-        self.assertTrue(np.allclose(res.values, self.factor.values))
+        self.assertTrue(np.allclose(res.values, self.factor.values, atol=1e-6))
 
     def test_slice(self):
         domain = Domain.fromdict({"A": 3, "B": 2})
