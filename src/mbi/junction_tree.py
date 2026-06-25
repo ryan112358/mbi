@@ -178,6 +178,7 @@ def model_summary(
     cliques: Sequence[Clique],
     jtree: nx.Graph | None = None,
     marginal_oracle: "MarginalOracle | None" = None,
+    compile: bool = False,
     bytes_per_cell: int = 4,
 ) -> str:
     """Return a human-readable summary of the model structure.
@@ -191,8 +192,11 @@ def model_summary(
         cliques: The measurement cliques (before maximal subsumption).
         jtree: An optional pre-built junction tree (``nx.Graph``).
             If ``None``, one is constructed via ``make_junction_tree``.
-        marginal_oracle: A marginal oracle function. If ``None``, uses
+        marginal_oracle: A marginal oracle function. If ``None`` and
+            ``compile=True``, uses
             ``marginal_oracles.default_oracle(cliques, domain)``.
+        compile: If True, compile the marginal oracle and surface XLA
+            cost/memory analysis. Defaults to False.
         bytes_per_cell: Bytes per table cell (4 for float32, 8 for float64).
 
     Returns:
@@ -290,6 +294,9 @@ def model_summary(
     ]
 
     # --- XLA compilation analysis ---
+    if not compile:
+        return "\n".join(lines)
+
     try:
         import jax  # pylint: disable=import-outside-toplevel
 
