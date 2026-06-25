@@ -202,39 +202,25 @@ def model_summary(
     Returns:
         A multi-line string with the summary.
     """
-    from .clique_utils import maximal_subset  # avoid circular import
-
     input_cliques = [tuple(cl) for cl in cliques]
-    maximal = maximal_subset(input_cliques)
 
     if jtree is None:
-        jtree, elim_order = make_junction_tree(domain, input_cliques)
-    else:
-        elim_order = None
+        jtree, _ = make_junction_tree(domain, input_cliques)
     jtree_nodes = maximal_cliques(jtree)
 
-    # --- Clique stats ---
     clique_sizes = [domain.size(cl) for cl in input_cliques]
-    maximal_sizes = [domain.size(cl) for cl in maximal]
-
-    # --- Junction tree node stats ---
     node_sizes = [domain.size(cl) for cl in jtree_nodes]
 
-    # --- Message stats (separators = intersections of adjacent nodes) ---
     messages = []
     for u, v in jtree.edges():
         sep = tuple(set(u) & set(v))
         messages.append((sep, domain.size(sep) if sep else 1))
     msg_sizes = [s for _, s in messages]
 
-    # --- Treewidth ---
     treewidth = max(len(cl) for cl in jtree_nodes) - 1
-
-    # --- Memory ---
     total_node_cells = sum(node_sizes)
     total_msg_cells = sum(msg_sizes) * 2  # messages go both directions
-    total_cells = total_node_cells + total_msg_cells
-    mem_bytes = total_cells * bytes_per_cell
+    mem_bytes = (total_node_cells + total_msg_cells) * bytes_per_cell
 
     lines = [
         "=== Model Summary ===",
@@ -245,22 +231,21 @@ def model_summary(
         ),
         "",
         "Cliques:",
-        f"  Input cliques:   {len(input_cliques)}",
-        f"  Maximal cliques: {len(maximal)}",
+        f"  Input:    {len(input_cliques)}",
         (
-            f"  Largest clique:  {max(clique_sizes)} cells "
+            f"  Largest:  {_fmt_size(max(clique_sizes))} cells "
             f"({max(input_cliques, key=lambda c: domain.size(c))})"
         ),
-        f"  Total clique cells: {_fmt_size(sum(clique_sizes))}",
+        f"  Total:    {_fmt_size(sum(clique_sizes))} cells",
         "",
         "Junction Tree:",
-        f"  Treewidth:       {treewidth}",
-        f"  Nodes:           {len(jtree_nodes)}",
+        f"  Treewidth: {treewidth}",
+        f"  Nodes:     {len(jtree_nodes)}",
         (
-            f"  Largest node:    {_fmt_size(max(node_sizes))} cells "
+            f"  Largest:   {_fmt_size(max(node_sizes))} cells "
             f"({max(jtree_nodes, key=lambda c: domain.size(c))})"
         ),
-        f"  Total node cells: {_fmt_size(total_node_cells)}",
+        f"  Total:     {_fmt_size(total_node_cells)} cells",
         "",
     ]
 
@@ -271,15 +256,12 @@ def model_summary(
         largest_msg_sep, largest_msg_size = messages[largest_msg_idx]
         lines += [
             "Messages:",
-            f"  Edges:           {len(messages)}",
+            f"  Edges:   {len(messages)}",
             (
-                f"  Largest message: {_fmt_size(largest_msg_size)} cells "
+                f"  Largest: {_fmt_size(largest_msg_size)} cells "
                 f"({largest_msg_sep})"
             ),
-            (
-                f"  Total message cells: {_fmt_size(sum(msg_sizes))} "
-                f"(x2 = {_fmt_size(total_msg_cells)})"
-            ),
+            f"  Total:   {_fmt_size(total_msg_cells)} cells (x2 directions)",
             "",
         ]
 
@@ -293,7 +275,6 @@ def model_summary(
         f"  Total:    {_fmt_bytes(mem_bytes)}",
     ]
 
-    # --- XLA compilation analysis ---
     if not compile:
         return "\n".join(lines)
 
