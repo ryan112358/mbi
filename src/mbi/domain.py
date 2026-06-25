@@ -51,6 +51,8 @@ class Domain:
     )
     labels: tuple[tuple[Any, ...], ...] | None = attr.field(
         default=None,
+        eq=False,
+        hash=False,
         converter=lambda l: tuple(tuple(x) for x in l)
         if l is not None
         else None,
