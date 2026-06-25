@@ -124,7 +124,7 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
         cliques = [("a", "b"), ("b", "c")]
         measurements, P = _fake_measurements(_DOMAIN, cliques)
         loss_fn = marginal_loss.from_linear_measurements(
-            measurements, norm="l1"
+            measurements, _DOMAIN, norm="l1"
         )
 
         model = MixtureOfProductsEstimator(
@@ -147,7 +147,7 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
         cliques = [("a", "b"), ("b", "c")]
         measurements, P = _fake_measurements(_DOMAIN, cliques)
         loss_fn = marginal_loss.from_linear_measurements(
-            measurements, norm="l2"
+            measurements, _DOMAIN, norm="l2"
         )
 
         model = MixtureOfProductsEstimator(

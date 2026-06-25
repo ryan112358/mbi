@@ -18,7 +18,7 @@ from __future__ import annotations
 import concurrent.futures
 import functools
 import math
-import warnings
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, NamedTuple
@@ -125,9 +125,19 @@ class Estimator(ABC):
         if isinstance(loss_fn, list):
             if known_total is None:
                 known_total = minimum_variance_unbiased_total(loss_fn)
-            loss_fn = marginal_loss.from_linear_measurements(loss_fn)
+            loss_fn = marginal_loss.from_linear_measurements(loss_fn, domain)
         if known_total is None:
             known_total = 1.0
+
+        # Nothing to optimize when there are no cliques.
+        if not loss_fn.cliques:
+            potentials = CliqueVector.zeros(domain, ())
+            oracle = self._oracle((), domain)
+            return MarkovRandomField(
+                potentials=potentials,
+                marginals=oracle(potentials, known_total),
+                total=known_total,
+            )
 
         state = self._init(domain, loss_fn, known_total, **kwargs)
         for _ in range(math.ceil(iters / CALLBACK_EVERY)):
@@ -166,7 +176,9 @@ class Estimator(ABC):
                 marginal_loss.LinearMeasurement(abstract_values, cl)
             )
 
-        loss_fn = marginal_loss.from_linear_measurements(all_measurements)
+        loss_fn = marginal_loss.from_linear_measurements(
+            all_measurements, domain
+        )
         abstract_state = jax.eval_shape(
             functools.partial(self._init, domain), loss_fn, 1.0
         )
@@ -206,7 +218,7 @@ def _initialize(domain, loss_fn, known_total, potentials):
     if isinstance(loss_fn, list):
         if known_total is None:
             known_total = minimum_variance_unbiased_total(loss_fn)
-        loss_fn = marginal_loss.from_linear_measurements(loss_fn)
+        loss_fn = marginal_loss.from_linear_measurements(loss_fn, domain)
 
     if known_total is None:
         known_total = 1.0
@@ -262,6 +274,27 @@ class LBFGSState(NamedTuple):
 
     potentials: CliqueVector
     opt_state: Any
+
+
+class _AcceleratedStepSearchState(NamedTuple):
+    """State for Universal Accelerated Method step search.
+
+    References:
+        Nesterov, `Universal Gradient Methods for Convex Optimization
+        Problems <https://optimization-online.org/wp-content/uploads/2013/04/3833.pdf>`_
+
+        Roulet and d'Aspremont, `Sharpness, Restart and
+        Acceleration <https://arxiv.org/pdf/1702.03828>`_
+    """
+
+    x: CliqueVector
+    z: CliqueVector
+    u: CliqueVector
+    prev_stepsize: jax.Array | float
+    stepsize: jax.Array | float
+    prev_theta: jax.Array | float
+    accept: jax.Array | bool
+    iter_search: jax.Array | int
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +469,10 @@ class DualAveraging(Estimator):
         state: DualAveragingState,
         known_total: float,
     ) -> MarkovRandomField:
-        return mle_from_marginals(state.w, known_total)
+        loss = marginal_loss.mle_loss_fn(state.w)
+        return LBFGS(
+            marginal_oracle=self.marginal_oracle,
+        ).estimate(state.w.domain, loss, known_total=known_total)
 
 
 @attr.dataclass(frozen=True)
@@ -506,7 +542,10 @@ class InteriorGradient(Estimator):
         state: InteriorGradientState,
         known_total: float,
     ) -> MarkovRandomField:
-        return mle_from_marginals(state.x, known_total)
+        loss = marginal_loss.mle_loss_fn(state.x)
+        return LBFGS(
+            marginal_oracle=self.marginal_oracle,
+        ).estimate(state.x.domain, loss, known_total=known_total)
 
 
 @attr.dataclass(frozen=True)
@@ -588,6 +627,12 @@ class UniversalAcceleratedMethod(Estimator):
     Each optimization step performs an internal line-search via
     ``jax.lax.while_loop``.
 
+    **Numerical stability:** Internally operates on the *unit* simplex
+    (total=1) to keep potentials and gradients O(1).  The user-facing loss
+    ``loss_fn`` is evaluated on the N-scaled marginals via the wrapper
+    ``f_scaled(p) = loss_fn(N * p)``.  This prevents softmax saturation
+    that otherwise causes the linesearch to degenerate for large ``N``.
+
     See `Nesterov (2015) <https://optimization-online.org/wp-content/uploads/2013/04/3833.pdf>`_
     and `Roulet & d'Aspremont (2017) <https://arxiv.org/pdf/1702.03828>`_.
 
@@ -612,7 +657,10 @@ class UniversalAcceleratedMethod(Estimator):
         else:
             potentials = potentials.expand(loss_fn.cliques)
         marginal_oracle = self._oracle(loss_fn.cliques, domain)
-        x = z = marginal_oracle(potentials, known_total)
+        # Project onto unit simplex (total=1) for numerical stability.
+        x = z = marginal_oracle(potentials, 1.0)
+        # f_scaled has Hessian ~ N²·H_f; with H_f ~ 1/N we get L ~ N,
+        # so initial stepsize ~ 1/N.
         stepsize = 1.0 / known_total
         return _AcceleratedStepSearchState(
             x=x,
@@ -627,11 +675,19 @@ class UniversalAcceleratedMethod(Estimator):
 
     def _step(self, state, loss_fn, known_total):
         marginal_oracle = self._oracle(loss_fn.cliques, state.x.domain)
-        dual_proj = lambda u: marginal_oracle(u, known_total)
+
+        # Project onto unit simplex (total=1).
+        def dual_proj(u):
+            return marginal_oracle(u, 1.0)
+
         max_iter_search = self.max_iter_search
         target_acc = self.target_acc
         norm = self.norm
         use_linesearch = self.linesearch
+
+        # Wrap loss to operate on unit simplex: f_scaled(p) = loss_fn(N*p).
+        def scaled_loss(p):
+            return loss_fn(p * known_total)
 
         def cond_fun(carry):
             return jnp.logical_not(
@@ -649,13 +705,13 @@ class UniversalAcceleratedMethod(Estimator):
             theta = jnp.where(prev_theta < 0.0, 1.0, new_theta)
 
             y = (1 - theta) * carry.x + theta * carry.z
-            value_y, grad_y = jax.value_and_grad(loss_fn)(y)
+            value_y, grad_y = jax.value_and_grad(scaled_loss)(y)
             u = carry.u - stepsize / theta * grad_y
             z = dual_proj(u)
             x = (1 - theta) * carry.x + theta * z
 
             if use_linesearch:
-                new_value = loss_fn(x)
+                new_value = scaled_loss(x)
                 if norm == 1:
                     sq_norm_diff = optax.tree.norm(
                         optax.tree.sub(x, y), ord=1, squared=True
@@ -700,417 +756,14 @@ class UniversalAcceleratedMethod(Estimator):
         carry = jax.lax.while_loop(cond_fun, body_fun, state)
         return carry._replace(accept=jnp.asarray(False))
 
+    def _callback_value(self, state, known_total):
+        # Scale back to N-simplex for user-facing callbacks.
+        return state.x * known_total
+
     def _finalize(self, state, known_total):
-        return mle_from_marginals(state.x, known_total)
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible function wrappers (deprecated)
-# ---------------------------------------------------------------------------
-
-
-def mirror_descent(
-    domain: Domain,
-    loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
-    *,
-    known_total: float | None = None,
-    potentials: CliqueVector | None = None,
-    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
-    iters: int = 1000,
-    stepsize: float | None = None,
-    callback_fn: Callable[[CliqueVector], None] = lambda _: None,
-) -> MarkovRandomField:
-    """Deprecated: use ``MirrorDescent(...).estimate(...)`` instead."""
-    warnings.warn(
-        "mirror_descent() is deprecated, use MirrorDescent().estimate()",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    if marginal_oracle is None:
-        marginal_oracle = marginal_oracles.default_oracle()
-    return MirrorDescent(
-        stepsize=stepsize,
-        marginal_oracle=marginal_oracle,
-    ).estimate(
-        domain,
-        loss_fn,
-        known_total=known_total,
-        iters=iters,
-        callback_fn=callback_fn,
-        potentials=potentials,
-    )
-
-
-def dual_averaging(
-    domain: Domain,
-    loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
-    *,
-    known_total: float | None = None,
-    potentials: CliqueVector | None = None,
-    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
-    iters: int = 1000,
-    callback_fn: Callable[[CliqueVector], None] = lambda _: None,
-) -> MarkovRandomField:
-    """Deprecated: use ``DualAveraging(...).estimate(...)`` instead."""
-    warnings.warn(
-        "dual_averaging() is deprecated, use DualAveraging().estimate()",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    if marginal_oracle is None:
-        marginal_oracle = marginal_oracles.default_oracle()
-    return DualAveraging(
-        marginal_oracle=marginal_oracle,
-    ).estimate(
-        domain,
-        loss_fn,
-        known_total=known_total,
-        iters=iters,
-        callback_fn=callback_fn,
-        potentials=potentials,
-    )
-
-
-def interior_gradient(
-    domain: Domain,
-    loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
-    *,
-    known_total: float | None = None,
-    potentials: CliqueVector | None = None,
-    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
-    iters: int = 1000,
-    callback_fn: Callable[[CliqueVector], None] = lambda _: None,
-) -> MarkovRandomField:
-    """Deprecated: use ``InteriorGradient(...).estimate(...)`` instead."""
-    warnings.warn(
-        "interior_gradient() is deprecated, use InteriorGradient().estimate()",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    if marginal_oracle is None:
-        marginal_oracle = marginal_oracles.default_oracle()
-    return InteriorGradient(
-        marginal_oracle=marginal_oracle,
-    ).estimate(
-        domain,
-        loss_fn,
-        known_total=known_total,
-        iters=iters,
-        callback_fn=callback_fn,
-        potentials=potentials,
-    )
-
-
-# ---------------------------------------------------------------------------
-# L-BFGS (not refactored to class — complex optax integration)
-# ---------------------------------------------------------------------------
-
-
-def _optimize(loss_and_grad_fn, params, iters=250, callback_fn=lambda _: None):
-    """Runs an optimization loop using Optax L-BFGS."""
-
-    if len(jax.tree.leaves(params)) == 0:
-        # Nothing to optimize
-        callback_fn(params)
-        return params
-
-    def loss_fn(theta):
-        return loss_and_grad_fn(theta)[0]
-
-    @jax.jit
-    def update(params, opt_state):
-        loss, grad = loss_and_grad_fn(params)
-
-        updates, opt_state = optimizer.update(
-            grad, opt_state, params, value=loss, grad=grad, value_fn=loss_fn
-        )
-
-        return optax.apply_updates(params, updates), opt_state, loss
-
-    optimizer = optax.lbfgs(
-        memory_size=1,
-        linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
-    )
-    state = optimizer.init(params)
-    for _ in range(iters):
-        params, state, _loss = update(params, state)
-        callback_fn(params)
-    return params
-
-
-def lbfgs(
-    domain: Domain,
-    loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
-    *,
-    known_total: float | None = None,
-    potentials: CliqueVector | None = None,
-    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
-    iters: int = 1000,
-    callback_fn: Callable[[CliqueVector], None] = lambda _: None,
-) -> MarkovRandomField:
-    """Deprecated: use ``LBFGS(...).estimate(...)`` instead."""
-    warnings.warn(
-        "lbfgs() is deprecated, use LBFGS().estimate()",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    if marginal_oracle is None:
-        marginal_oracle = marginal_oracles.default_oracle()
-    return LBFGS(
-        marginal_oracle=marginal_oracle,
-    ).estimate(
-        domain,
-        loss_fn,
-        known_total=known_total,
-        iters=iters,
-        callback_fn=callback_fn,
-        potentials=potentials,
-    )
-
-
-def mle_from_marginals(
-    marginals: CliqueVector,
-    known_total: float,
-    iters: int = 250,
-    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
-    callback_fn: Callable[..., None] = lambda *_: None,
-) -> MarkovRandomField:
-    """Compute the MLE Graphical Model from the marginals.
-
-    Args:
-        marginals: The marginal probabilities.
-        known_total: The known or estimated number of records in the data.
-
-    Returns:
-        A MarkovRandomField object with the final potentials and marginals.
-    """
-
-    if marginal_oracle is None:
-        marginal_oracle = marginal_oracles.default_oracle()
-
-    def loss_and_grad_fn(theta):
-        mu = marginal_oracle(theta, known_total)
-        return -marginals.dot(mu.log()), mu - marginals
-
-    potentials = CliqueVector.zeros(marginals.domain, marginals.cliques)
-    potentials = _optimize(loss_and_grad_fn, potentials, iters=iters)
-    return MarkovRandomField(
-        potentials=potentials,
-        marginals=marginal_oracle(potentials, known_total),
-        total=known_total,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Universal Accelerated Method (not refactored — complex while_loop)
-# ---------------------------------------------------------------------------
-
-
-class _AcceleratedStepSearchState(NamedTuple):
-    """State of the step search.
-
-    Attributes:
-        x: parameters defining the optimization algorithm (see Roulet and
-        d'Aspremont Algorithm 2).
-        z: same as x, see ref.
-        u: dual variable corresponding to z.
-        prev_stepsize: reciprocal of the estimate of the Lipshitz-continuity
-        parameter of the gradient of the objective at the previous iteration of
-        the algorithm.
-        stepsize: reciprocal of the estimate of the Lipshitz-continuity parameter
-        of the gradient of the objective at the current iteration of the
-        algorithm.
-        prev_theta: numerical value decreasing along iterates at the previous
-        iteration of the algorithm, see ref.
-        accept: whether the step is accepted or not.
-        iter_search: iteration count of the search.
-
-    References:
-        Nesterov, [Universal Gradient Methods for Convex Optimization
-        Problems](https://optimization-online.org/wp-content/uploads/2013/04/3833.pdf)
-
-        Roulet and d'Aspremont, [Sharpness, Restart and
-        Acceleration](https://arxiv.org/pdf/1702.03828)
-    """
-
-    x: CliqueVector
-    z: CliqueVector
-    u: CliqueVector
-    prev_stepsize: jax.Array | float
-    stepsize: jax.Array | float
-    prev_theta: jax.Array | float
-    accept: jax.Array | bool
-    iter_search: jax.Array | int
-
-
-def _universal_accelerated_method_step_init(
-    fun: Callable[[CliqueVector], jax.Array],
-    dual_init_params,
-    dual_proj: Callable[..., Any],
-    max_iter_search: int = 30,
-    target_acc: float = 0.0,
-    stepsize: float = 1.0,
-    norm: int = 2,
-    linesearch=True,
-) -> tuple[
-    _AcceleratedStepSearchState,
-    Callable[[_AcceleratedStepSearchState], bool],
-    Callable[[_AcceleratedStepSearchState], _AcceleratedStepSearchState],
-]:
-    """Accelerated first order method adapted to any smoothness.
-
-    Minimizes fun(x) over a constraint set M.
-
-    The algorithm requires an oracle "dual_proj(g)" that computes
-    argmin_y <g, y> + h(y)
-    s.t. y in M
-    where h is a distance generating function.
-
-    This method is inspired from ref 1 and the algorithm is described in
-    essentially described in Algorithm 2 of ref 2. One difference is that we
-    keep track of the dual variable returned by the dual_proj to avoid mapping
-    back and forth between the primal and dual spaces.
-
-    This function provides the initial state and the continuation and body
-    functions for the step the method (which searches for a valid stepsize each
-    time).
-
-    Args:
-        fun: objective to minimize.
-        dual_init_params: initial parameters in dual space.
-        dual_proj: projection onto some constraint set according to a bregman
-        divergence.
-        max_iter_search: maximal number of iterations to run the search.
-        target_acc: target accuracy of the method. If `fun` is non-smooth, this
-        needs to be set > 0. Convergence beyond that target accuracy is not
-        guaranteed. If the function is smooth, set `target_acc=0`.
-        stepsize: initial estimate of the stepsize.
-        norm: type of norm measuring the smoothness of `fun`.
-        linesearch: if true, uses linesearch to determine acceptance of step,
-        otherwise use constant stepsize given by `stepsize`.
-
-    Returns:
-        (init_carry, cond_fun, body_fun) where
-        init_carry: initial state of the step search.
-        cond_fun: continuation criterion when searching for next step.
-        body_fun: step when searching step.
-
-    References:
-        1 Nesterov, [Universal Gradient Methods for Convex Optimization
-        Problems](https://optimization-online.org/wp-content/uploads/2013/04/3833.pdf)
-
-        2 Roulet and d'Aspremont, [Sharpness, Restart and
-        Acceleration](https://arxiv.org/pdf/1702.03828)
-    """
-
-    def cond_fun(carry: _AcceleratedStepSearchState) -> bool | jax.Array:
-        """Continuation criterion when searching for next step."""
-        return jnp.logical_not(
-            jnp.logical_or(carry.accept, carry.iter_search >= max_iter_search),
-        )
-
-    def body_fun(
-        carry: _AcceleratedStepSearchState,
-    ) -> _AcceleratedStepSearchState:
-        """Step when searching step."""
-        # Computes new theta
-        prev_theta, prev_smooth_estim = (
-            carry.prev_theta,
-            1 / carry.prev_stepsize,
-        )
-        smooth_estim, stepsize = 1 / carry.stepsize, carry.stepsize
-        aux = 1 + 4 * smooth_estim / (prev_theta**2 * prev_smooth_estim)
-        new_theta = 2 / (1 + jnp.sqrt(aux))
-        # We hardcode the first iteration to be prev_theta=-1
-        theta = jnp.where(carry.prev_theta < 0.0, 1.0, new_theta)
-
-        # Computes sequences of params
-        y = (1 - theta) * carry.x + theta * carry.z
-        value_y, grad_y = jax.value_and_grad(fun)(y)
-        u = carry.u - stepsize / theta * grad_y
-        z = dual_proj(u)
-        x = (1 - theta) * carry.x + theta * z
-
-        # Check condition
-        if linesearch:
-            new_value = fun(x)
-            if norm == 1:
-                sq_norm_diff = optax.tree.norm(
-                    optax.tree.sub(x, y), ord=1, squared=True
-                )
-            elif norm == 2:
-                sq_norm_diff = optax.tree.norm(
-                    optax.tree_utils.tree_sub(x, y), ord=2, squared=True
-                )
-            else:
-                raise ValueError(f"norm={norm} not supported")
-            taylor_approx = (
-                value_y + grad_y.dot(x - y) + 0.5 * smooth_estim * sq_norm_diff
-            )
-            accept = new_value <= (taylor_approx + 0.5 * target_acc * theta)
-            new_stepsize = 1.1 * stepsize
-        else:
-            accept = True
-            new_stepsize = stepsize
-
-        candidate = _AcceleratedStepSearchState(
-            x=x,
-            z=z,
-            u=u,
-            prev_stepsize=stepsize,
-            stepsize=new_stepsize,
-            prev_theta=theta,
-            accept=accept,
-            iter_search=jnp.asarray(0),
-        )
-        base = carry._replace(
-            stepsize=0.5 * carry.stepsize, iter_search=carry.iter_search + 1
-        )
-        return jax.tree.map(
-            lambda x, y: jnp.where(accept, x, y), candidate, base
-        )
-
-    x = z = dual_proj(dual_init_params)
-    u = dual_init_params
-    init_carry = _AcceleratedStepSearchState(
-        x=x,
-        z=z,
-        u=u,
-        prev_stepsize=stepsize,
-        stepsize=stepsize,
-        prev_theta=jnp.asarray(-1.0),
-        accept=jnp.asarray(False),
-        iter_search=jnp.asarray(0),
-    )
-    return init_carry, cond_fun, body_fun
-
-
-def universal_accelerated_method(
-    domain: Domain,
-    loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
-    *,
-    known_total: float | None = None,
-    potentials: CliqueVector | None = None,
-    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
-    iters: int = 1000,
-    callback_fn: Callable[[CliqueVector], None] = lambda _: None,
-) -> MarkovRandomField:
-    """Deprecated: use ``UniversalAcceleratedMethod(...).estimate(...)`` instead."""
-    warnings.warn(
-        "universal_accelerated_method() is deprecated, use"
-        " UniversalAcceleratedMethod().estimate()",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    if marginal_oracle is None:
-        marginal_oracle = marginal_oracles.default_oracle()
-    return UniversalAcceleratedMethod(
-        marginal_oracle=marginal_oracle,
-    ).estimate(
-        domain,
-        loss_fn,
-        known_total=known_total,
-        iters=iters,
-        callback_fn=callback_fn,
-        potentials=potentials,
-    )
+        # Scale back to N-simplex and recover potentials via MLE.
+        marginals = state.x * known_total
+        loss = marginal_loss.mle_loss_fn(marginals)
+        return LBFGS(
+            marginal_oracle=self.marginal_oracle,
+        ).estimate(marginals.domain, loss, known_total=known_total)

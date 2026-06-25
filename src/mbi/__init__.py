@@ -10,7 +10,16 @@ import warnings
 
 import jax
 
-if jax.config.jax_enable_compilation_cache:
+if not jax.config.jax_enable_x64:  # pylint: disable=no-member
+    warnings.warn(
+        "JAX is running in float32 mode. For large datasets (N > 100K),"
+        " this can cause estimation algorithms to stall or diverge due to"
+        " insufficient floating-point precision. Enable float64 with:"
+        ' jax.config.update("jax_enable_x64", True)',
+        stacklevel=1,
+    )
+
+if jax.config.jax_enable_compilation_cache:  # pylint: disable=no-member
     warnings.warn(
         "JAX persistent compilation cache is enabled. MBI generates many"
         " small compiled programs, which makes the cache counterproductive"

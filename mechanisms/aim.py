@@ -274,7 +274,9 @@ if __name__ == "__main__":
     model, synth = mech.run(data, workload)
 
     if args.save is not None:
-        synth.df.to_csv(args.save, index=False)
+        import pandas as pd
+
+        pd.DataFrame(synth.to_dict()).to_csv(args.save, index=False)
 
     synth_errors = []
     model_errors = []

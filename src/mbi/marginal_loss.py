@@ -164,9 +164,9 @@ def calculate_l2_lipschitz(
 
 def from_linear_measurements(
     measurements: list[LinearMeasurement],
+    domain: Domain,
     norm: str = "l2",
     normalize: bool = False,
-    domain: Domain | None = None,
 ) -> MarginalLossFn:
     """Construct a MarginalLossFn from a list of LinearMeasurements.
 
@@ -193,7 +193,7 @@ def from_linear_measurements(
 
     loss = MarginalLossFn(maximal_cliques, loss_fn, data)
 
-    if norm == "l2" and not normalize and domain is not None:
+    if norm == "l2" and not normalize:
         lipschitz = calculate_l2_lipschitz(domain, maximal_cliques, loss)
         return MarginalLossFn(maximal_cliques, loss_fn, data, lipschitz)
 
@@ -220,3 +220,12 @@ def primal_feasibility(mu: CliqueVector) -> chex.Numeric:
         return ans / count
     except Exception:  # pylint: disable=broad-exception-caught
         return 0
+
+
+def mle_loss_fn(marginals: CliqueVector) -> "MarginalLossFn":
+    """MLE loss: ``-marginals.dot(mu.log())``."""
+    return MarginalLossFn(
+        cliques=marginals.cliques,
+        loss_fn=lambda mu, target: -target.dot(mu.log()),
+        data=marginals,
+    )

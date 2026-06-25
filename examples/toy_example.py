@@ -28,7 +28,7 @@ measurements = [
     marginal_loss.LinearMeasurement(ybc, ['B', 'C']),
 ]
 
-loss_fn = marginal_loss.from_linear_measurements(measurements)
+loss_fn = marginal_loss.from_linear_measurements(measurements, domain)
 
 # estimate the data distribution
 model = estimation.MirrorDescent().estimate(domain, loss_fn, known_total=1000)
@@ -46,4 +46,6 @@ ac2 = model.project(['A', 'C']).datavector()
 
 # generate synthetic data
 synth = model.synthetic_data()
-print(synth.df.head())
+import pandas as pd
+
+print(pd.DataFrame(synth.to_dict()).head())
