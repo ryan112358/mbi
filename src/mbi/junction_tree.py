@@ -149,3 +149,141 @@ def hypothetical_model_size(domain: Domain, cliques: Sequence[Clique]) -> float:
     cells = sum(domain.size(cl) for cl in max_cliques)
     size_mb = cells * 8 / 2**20
     return size_mb
+
+
+def _fmt_size(n: int) -> str:
+    """Format a number of cells as a human-readable string."""
+    if n >= 1e9:
+        return f"{n / 1e9:.2f}B"
+    if n >= 1e6:
+        return f"{n / 1e6:.2f}M"
+    if n >= 1e3:
+        return f"{n / 1e3:.2f}K"
+    return str(n)
+
+
+def _fmt_bytes(nbytes: int) -> str:
+    """Format a byte count as a human-readable string."""
+    if nbytes >= 2**30:
+        return f"{nbytes / 2**30:.2f} GiB"
+    if nbytes >= 2**20:
+        return f"{nbytes / 2**20:.2f} MiB"
+    if nbytes >= 2**10:
+        return f"{nbytes / 2**10:.2f} KiB"
+    return f"{nbytes} B"
+
+
+def model_summary(
+    domain: Domain,
+    cliques: Sequence[Clique],
+    jtree: nx.Graph | None = None,
+    bytes_per_cell: int = 4,
+) -> str:
+    """Return a human-readable summary of the model structure.
+
+    Surfaces key diagnostic information for debugging and capacity planning:
+    clique statistics, junction tree node and message sizes, treewidth,
+    and memory estimates.
+
+    Args:
+        domain: The full data domain.
+        cliques: The measurement cliques (before maximal subsumption).
+        jtree: An optional pre-built junction tree (``nx.Graph``).
+            If ``None``, one is constructed via ``make_junction_tree``.
+        bytes_per_cell: Bytes per table cell (4 for float32, 8 for float64).
+
+    Returns:
+        A multi-line string with the summary.
+    """
+    from .clique_utils import maximal_subset  # avoid circular import
+
+    input_cliques = [tuple(cl) for cl in cliques]
+    maximal = maximal_subset(input_cliques)
+
+    if jtree is None:
+        jtree, elim_order = make_junction_tree(domain, input_cliques)
+    else:
+        elim_order = None
+    jtree_nodes = maximal_cliques(jtree)
+
+    # --- Clique stats ---
+    clique_sizes = [domain.size(cl) for cl in input_cliques]
+    maximal_sizes = [domain.size(cl) for cl in maximal]
+
+    # --- Junction tree node stats ---
+    node_sizes = [domain.size(cl) for cl in jtree_nodes]
+
+    # --- Message stats (separators = intersections of adjacent nodes) ---
+    messages = []
+    for u, v in jtree.edges():
+        sep = tuple(set(u) & set(v))
+        messages.append((sep, domain.size(sep) if sep else 1))
+    msg_sizes = [s for _, s in messages]
+
+    # --- Treewidth ---
+    treewidth = max(len(cl) for cl in jtree_nodes) - 1
+
+    # --- Memory ---
+    total_node_cells = sum(node_sizes)
+    total_msg_cells = sum(msg_sizes) * 2  # messages go both directions
+    total_cells = total_node_cells + total_msg_cells
+    mem_bytes = total_cells * bytes_per_cell
+
+    lines = [
+        "=== Model Summary ===",
+        "",
+        (
+            f"Domain: {len(domain)} attributes, "
+            f"{_fmt_size(domain.size())} total cells"
+        ),
+        "",
+        "Cliques:",
+        f"  Input cliques:   {len(input_cliques)}",
+        f"  Maximal cliques: {len(maximal)}",
+        (
+            f"  Largest clique:  {max(clique_sizes)} cells "
+            f"({max(input_cliques, key=lambda c: domain.size(c))})"
+        ),
+        f"  Total clique cells: {_fmt_size(sum(clique_sizes))}",
+        "",
+        "Junction Tree:",
+        f"  Treewidth:       {treewidth}",
+        f"  Nodes:           {len(jtree_nodes)}",
+        (
+            f"  Largest node:    {_fmt_size(max(node_sizes))} cells "
+            f"({max(jtree_nodes, key=lambda c: domain.size(c))})"
+        ),
+        f"  Total node cells: {_fmt_size(total_node_cells)}",
+        "",
+    ]
+
+    if msg_sizes:
+        largest_msg_idx = max(
+            range(len(messages)), key=lambda i: messages[i][1]
+        )
+        largest_msg_sep, largest_msg_size = messages[largest_msg_idx]
+        lines += [
+            "Messages:",
+            f"  Edges:           {len(messages)}",
+            (
+                f"  Largest message: {_fmt_size(largest_msg_size)} cells "
+                f"({largest_msg_sep})"
+            ),
+            (
+                f"  Total message cells: {_fmt_size(sum(msg_sizes))} "
+                f"(x2 = {_fmt_size(total_msg_cells)})"
+            ),
+            "",
+        ]
+
+    dtype_name = {4: "float32", 8: "float64"}.get(
+        bytes_per_cell, f"{bytes_per_cell}B"
+    )
+    lines += [
+        f"Memory ({dtype_name}):",
+        f"  Nodes:    {_fmt_bytes(total_node_cells * bytes_per_cell)}",
+        f"  Messages: {_fmt_bytes(total_msg_cells * bytes_per_cell)}",
+        f"  Total:    {_fmt_bytes(mem_bytes)}",
+    ]
+
+    return "\n".join(lines)
