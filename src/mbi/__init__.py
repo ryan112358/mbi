@@ -30,7 +30,7 @@ if jax.config.jax_enable_compilation_cache:  # pylint: disable=no-member
     )
 
 from . import callbacks, estimation, extensions, junction_tree, marginal_oracles
-from .junction_tree import model_summary
+from ._model_summary import summarize
 from ._api import Model, Projectable
 from .estimation import Estimator
 from .extensions import constraints
@@ -59,7 +59,7 @@ __all__ = [
     "Model",
     "MarginalOracle",
     "Estimator",
-    "model_summary",
+    "summarize",
     "estimation",
     "extensions",
     "callbacks",
