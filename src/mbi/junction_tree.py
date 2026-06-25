@@ -177,19 +177,22 @@ def model_summary(
     domain: Domain,
     cliques: Sequence[Clique],
     jtree: nx.Graph | None = None,
+    marginal_oracle: "MarginalOracle | None" = None,
     bytes_per_cell: int = 4,
 ) -> str:
     """Return a human-readable summary of the model structure.
 
     Surfaces key diagnostic information for debugging and capacity planning:
     clique statistics, junction tree node and message sizes, treewidth,
-    and memory estimates.
+    memory estimates, and (optionally) XLA compilation cost analysis.
 
     Args:
         domain: The full data domain.
         cliques: The measurement cliques (before maximal subsumption).
         jtree: An optional pre-built junction tree (``nx.Graph``).
             If ``None``, one is constructed via ``make_junction_tree``.
+        marginal_oracle: A marginal oracle function. If ``None``, uses
+            ``marginal_oracles.default_oracle(cliques, domain)``.
         bytes_per_cell: Bytes per table cell (4 for float32, 8 for float64).
 
     Returns:
@@ -285,5 +288,50 @@ def model_summary(
         f"  Messages: {_fmt_bytes(total_msg_cells * bytes_per_cell)}",
         f"  Total:    {_fmt_bytes(mem_bytes)}",
     ]
+
+    # --- XLA compilation analysis ---
+    try:
+        import jax  # pylint: disable=import-outside-toplevel
+
+        from .clique_vector import CliqueVector  # avoid circular import
+        from . import marginal_oracles as mo  # avoid circular import
+
+        if marginal_oracle is None:
+            marginal_oracle = mo.default_oracle(
+                cliques=tuple(input_cliques), domain=domain
+            )
+
+        potentials = CliqueVector.zeros(domain, input_cliques)
+        compiled = (
+            jax.jit(lambda p: marginal_oracle(p, 1.0))
+            .lower(potentials)
+            .compile()
+        )
+
+        lines += ["", f"XLA Compilation ({marginal_oracle.__name__}):"]
+
+        cost = compiled.cost_analysis()
+        if cost:
+            flops = cost.get("flops", 0)
+            transcendentals = cost.get("transcendentals", 0)
+            bytes_accessed = cost.get("bytes accessed", 0)
+            lines += [
+                f"  FLOPs:           {_fmt_size(flops)}",
+                f"  Transcendentals: {_fmt_size(transcendentals)}",
+                f"  Bytes accessed:  {_fmt_bytes(int(bytes_accessed))}",
+            ]
+
+        try:
+            mem = compiled.memory_analysis()
+            lines += [
+                f"  Arg size:        {_fmt_bytes(mem.argument_size_in_bytes)}",
+                f"  Output size:     {_fmt_bytes(mem.output_size_in_bytes)}",
+                f"  Temp size:       {_fmt_bytes(mem.temp_size_in_bytes)}",
+            ]
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        lines += ["", f"XLA Compilation: unavailable ({e})"]
 
     return "\n".join(lines)
