@@ -398,7 +398,9 @@ class ApproxMirrorDescent:
             abstract_values = jax.ShapeDtypeStruct(shape, jnp.float32)
             all_measurements.append(LinearMeasurement(abstract_values, cl))
 
-        loss_fn = marginal_loss.from_linear_measurements(all_measurements, domain)
+        loss_fn = marginal_loss.from_linear_measurements(
+            all_measurements, domain
+        )
         potentials = CliqueVector.abstract(domain, loss_fn.cliques)
 
         # Use eval_shape to get the abstract state pytree without
