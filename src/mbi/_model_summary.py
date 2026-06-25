@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax
 import networkx as nx
@@ -84,6 +84,7 @@ def summarize(
 
     messages = []
     for u, v in jtree.edges():
+        u, v = cast(tuple[str, ...], u), cast(tuple[str, ...], v)
         sep = tuple(set(u) & set(v))
         messages.append((sep, domain.size(sep) if sep else 1))
     msg_sizes = [s for _, s in messages]
