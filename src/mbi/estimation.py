@@ -642,14 +642,22 @@ class UniversalAcceleratedMethod(Estimator):
         max_iter_search: Max inner line-search iterations per step.
         target_acc: Target accuracy (set > 0 for non-smooth objectives).
         norm: Norm measuring smoothness (1 or 2).
-        linesearch: Whether to use adaptive line-search.
+        linesearch: Whether to use adaptive line-search.  Disabled by default
+            because the acceptance condition uses the CliqueVector L2 norm
+            which double-counts overlapping variables, causing the linesearch
+            to accept overly large stepsizes and stall convergence.
     """
 
+    # TODO: Fix the linesearch acceptance condition to use the correct norm
+    # that accounts for variable overlap in the junction tree.  The current
+    # CliqueVector L2 norm double-counts variables that appear in multiple
+    # cliques, making the quadratic upper bound too loose.  Once fixed,
+    # linesearch can be re-enabled as the default.
     marginal_oracle: marginal_oracles.MarginalOracle | None = None
     max_iter_search: int = 30
     target_acc: float = 0.0
     norm: int = 2
-    linesearch: bool = True
+    linesearch: bool = False
 
     def _init(self, domain, loss_fn, known_total, *, potentials=None):
         if potentials is None:
@@ -659,9 +667,11 @@ class UniversalAcceleratedMethod(Estimator):
         marginal_oracle = self._oracle(loss_fn.cliques, domain)
         # Project onto unit simplex (total=1) for numerical stability.
         x = z = marginal_oracle(potentials, 1.0)
-        # f_scaled has Hessian ~ N²·H_f; with H_f ~ 1/N we get L ~ N,
-        # so initial stepsize ~ 1/N.
-        stepsize = 1.0 / known_total
+        # f_scaled(p) = loss_fn(N*p) has Lipschitz-continuous gradient with
+        # constant N² * L, where L = loss_fn.lipschitz.  The initial stepsize
+        # is the inverse of this smoothness estimate.
+        L = loss_fn.lipschitz or 1.0
+        stepsize = 1.0 / (known_total * known_total * L)
         return _AcceleratedStepSearchState(
             x=x,
             z=z,
