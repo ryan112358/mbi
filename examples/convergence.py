@@ -1,4 +1,4 @@
-from mbi import Dataset, LinearMeasurement
+from mbi import Dataset, Domain, LinearMeasurement
 from mbi import estimation, callbacks, marginal_oracles
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,6 +6,7 @@ import argparse
 import pickle
 from scipy import sparse
 import jax
+import json
 import pandas as pd
 
 # jax.config.update('jax_debug_nans', True)
@@ -48,7 +49,11 @@ if __name__ == "__main__":
     parser.set_defaults(**default_params())
     args = parser.parse_args()
 
-    data = Dataset.load("../data/adult.csv", "../data/adult-domain.json")
+    domain = Domain.fromdict(json.load(open("../data/adult-domain.json")))
+    data = Dataset(
+        pd.read_csv("../data/adult.csv", usecols=domain.attrs).to_dict("list"),
+        domain,
+    )
     projections = [
         ["race", "capital-loss", "income>50K"],
         ["marital-status", "capital-gain", "income>50K"],

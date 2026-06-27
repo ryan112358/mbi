@@ -1,9 +1,12 @@
 import numpy as np
 import itertools
-from mbi import Dataset, LinearMeasurement, estimation, callbacks, junction_tree
+from mbi import Dataset, Domain, LinearMeasurement, estimation, callbacks, junction_tree
 from scipy.special import softmax
 import os as _os
 import sys as _sys
+
+import json
+import pandas as pd
 
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from cdp2adp import cdp_rho
@@ -212,7 +215,10 @@ if __name__ == "__main__":
     parser.set_defaults(**default_params())
     args = parser.parse_args()
 
-    data = Dataset.load(args.dataset, args.domain)
+    domain = Domain.fromdict(json.load(open(args.domain)))
+    data = Dataset(
+        pd.read_csv(args.dataset, usecols=domain.attrs).to_dict("list"), domain
+    )
 
     workload = list(itertools.combinations(data.domain, args.degree))
     workload = [cl for cl in workload if data.domain.size(cl) <= args.max_cells]

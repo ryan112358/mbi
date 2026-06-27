@@ -1,15 +1,15 @@
 """Provides the Dataset class for representing and manipulating tabular data.
 
-This module defines the `Dataset` class, which serves as a wrapper around a
-numpy array, associating it with a `Domain` object. It allows for
-structured representation of data, facilitating operations like projection onto
-subsets of attributes and conversion into a data vector format suitable for
-various statistical and machine learning tasks.
+This module defines the ``Dataset`` class, which wraps a dictionary of
+1D numpy arrays (one per attribute) and a :class:`Domain` object.  It
+supports projection, data vector computation, compression / decompression,
+and weighted records.
 """
 
 from __future__ import annotations
 
 import csv
+import dataclasses
 import functools
 import json
 import math
@@ -26,15 +26,14 @@ from .domain import Domain
 from .factor import Factor
 
 
-def _validate_column(data: np.ndarray, size: int):
+def _validate_column_meta(data: np.ndarray, attr: str):
+    """Validate shape and dtype of a single column (no value checks)."""
     if data.ndim != 1:
-        raise ValueError(
-            f"Expected column data to be 1D, found shape {data.shape}"
-        )
+        raise ValueError(f"Column '{attr}' must be 1D, got shape {data.shape}")
     if not np.issubdtype(data.dtype, np.integer):
-        raise ValueError(f"Expected integer data, got {data.dtype}")
-    if not np.all((data >= 0) & (data < size)):
-        raise ValueError(f"Expected data in range [0, {size})")
+        raise ValueError(
+            f"Column '{attr}' must have integer dtype, got {data.dtype}"
+        )
 
 
 def _validate_data(data: dict[str, np.ndarray], domain: Domain):
@@ -42,11 +41,11 @@ def _validate_data(data: dict[str, np.ndarray], domain: Domain):
         raise ValueError("Keys in data dictionary must match domain attributes")
     n = None
     for col in data:
-        _validate_column(data[col], domain[col])
+        _validate_column_meta(data[col], col)
         if n is None:
             n = data[col].shape[0]
         if n != data[col].shape[0]:
-            raise ValueError("Expected data to have same size for each record.")
+            raise ValueError("All columns must have the same length.")
 
 
 def _validate_mapping(map_array: np.ndarray, attr: str):
@@ -58,88 +57,84 @@ def _validate_mapping(map_array: np.ndarray, attr: str):
         raise ValueError(f"Mapping for {attr} must be non-negative")
 
 
+@dataclasses.dataclass(frozen=True, eq=False)
 class Dataset:
+    """A discrete tabular dataset backed by a dictionary of 1D numpy arrays.
 
-    def __init__(
-        self,
-        data: ArrayLike | dict[str, ArrayLike],
-        domain: Domain,
-        weights: np.ndarray | None = None,
-    ):
-        """Create a Dataset object.
+    Args:
+        data: Dictionary mapping attribute names to 1D integer arrays.
+        domain: A Domain describing the attributes and their sizes.
+        weights: Optional per-row weights (defaults to all ones).
+    """
 
-        Args:
-            data: A numpy array (n x d) or a dictionary of 1d arrays (length n),
-                keyed by attribute.
-            domain: A Domain object.
-            weights: Weight for each row.
-        """
+    data: dict[str, ArrayLike]
+    domain: Domain
+    weights: ArrayLike | None = dataclasses.field(default=None)
 
-        if isinstance(data, np.ndarray):
-            if data.shape[1] != len(domain.attrs):
-                raise ValueError("Shape of data does not match shape of domain")
-            n = data.shape[0]
-            data = {attr: data[:, i] for i, attr in enumerate(domain.attrs)}
+    def __post_init__(self):
+        object.__setattr__(
+            self,
+            "data",
+            {k: np.asarray(v) for k, v in self.data.items()},
+        )
+        if self.weights is not None:
+            object.__setattr__(self, "weights", np.asarray(self.weights))
 
-        elif isinstance(data, dict):
-            if len(data) > 0:
-                n = list(data.values())[0].shape[0]
-            else:
-                n = None
+        _validate_data(self.data, self.domain)
 
-        elif hasattr(data, "values"):  # Pandas DataFrame
-            warnings.warn(
-                "Pandas dataframe inputs are deprecated, please pass in a"
-                " dictionary of numpy arrays instead."
-            )
-            n = data.shape[0]
-            data = {attr: data[attr].values for attr in domain.attrs}
-
+        if self.data:
+            n = next(iter(self.data.values())).shape[0]
+        elif self.weights is not None:
+            n = self.weights.size
         else:
-            raise ValueError(f"Unrecognized data type {type(data)}")
+            raise ValueError(
+                "Weights must be provided if data is empty (cannot infer N)"
+            )
 
-        _validate_data(data, domain)
-
-        if n is None:
-            if weights is None:
-                raise ValueError(
-                    "Weights must be provided if data is empty (cannot infer N)"
-                )
-            n = weights.size
-
-        if weights is None:
-            weights = np.ones(n)
-
-        assert n == weights.size
-
-        self.domain = domain
-        self._data = data
-        self.weights = weights
-        self._n = n
+        if self.weights is None:
+            object.__setattr__(self, "weights", np.ones(n))
+        elif self.weights.size != n:
+            raise ValueError(
+                f"Weights length ({self.weights.size}) does not match "
+                f"data length ({n})"
+            )
 
     def to_dict(self) -> dict[str, np.ndarray]:
-        return self._data
+        return self.data
 
     @staticmethod
     def synthetic(domain: Domain, N: int) -> Dataset:
-        """Generate synthetic data conforming to the given domain.
+        """Generate random data conforming to the given domain.
 
         Args:
             domain: The domain object.
-            N: The number of individuals.
+            N: The number of rows.
         """
-        arr = [np.random.randint(low=0, high=n, size=N) for n in domain.shape]
-        values = np.array(arr).T
-        return Dataset(values, domain)
+        data = {
+            attr: np.random.randint(low=0, high=n, size=N)
+            for attr, n in zip(domain.attrs, domain.shape)
+        }
+        return Dataset(data, domain)
 
     @staticmethod
     def load(path: str, domain: str | Domain) -> Dataset:
-        """Load data into a dataset object.
+        """Load data from a CSV file.
+
+        .. deprecated::
+            ``Dataset.load`` will be removed in a future release.
+            Load the CSV yourself, convert columns to a
+            ``dict[str, np.ndarray]``, and pass it to ``Dataset`` directly.
 
         Args:
             path: Path to csv file.
-            domain: Path to json file encoding the domain information.
+            domain: Path to json file encoding the domain, or a Domain.
         """
+        warnings.warn(
+            "Dataset.load is deprecated. Load your data, convert columns "
+            "to a dict of numpy arrays, and instantiate Dataset directly.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if isinstance(domain, str):
             with open(domain, "r", encoding="utf-8") as f:
                 config = json.load(f)
@@ -156,19 +151,17 @@ class Dataset:
                 raise ValueError("data must contain domain attributes")
 
             indices = [header_map[attr] for attr in domain_obj.attrs]
-
-            data = []
+            rows = []
             for row in reader:
-                # Convert to int, handling potential float strings like '1.0'
                 try:
                     mapped_row = [int(float(row[i])) for i in indices]
                 except ValueError:
-                    # Fallback or error if data is not numeric
-                    # Assuming domain implies discrete/integer data
                     mapped_row = [int(row[i]) for i in indices]
-                data.append(mapped_row)
+                rows.append(mapped_row)
 
-        return Dataset(np.array(data), domain_obj)
+        arr = np.array(rows)
+        data = {attr: arr[:, i] for i, attr in enumerate(domain_obj.attrs)}
+        return Dataset(data, domain_obj)
 
     def project(
         self, cols: int | str | Sequence[str] | Sequence[int]
@@ -178,22 +171,24 @@ class Dataset:
             cols = [cols]
 
         domain = self.domain.project(cols)
-        data = {col: self._data[col] for col in domain.attrs}
-        data = Dataset(data, domain, self.weights)
-        return Factor(data.domain, jnp.asarray(data.datavector(flatten=False)))
+        data = {col: self.data[col] for col in domain.attrs}
+        sub = Dataset(data, domain, self.weights)
+        return Factor(sub.domain, jnp.asarray(sub.datavector(flatten=False)))
 
     def supports(self, cols: str | Sequence[str]) -> bool:
         return self.domain.supports(cols)
 
     def drop(self, cols: Sequence[str]) -> Factor:
-        """Returns a new Dataset with the specified columns removed."""
+        """Returns a Factor with the specified columns marginalized out."""
         proj = [c for c in self.domain if c not in cols]
         return self.project(proj)
 
     @property
     def records(self) -> int:
         """Returns the number of records (rows) in the dataset."""
-        return self._n
+        if not self.data:
+            return self.weights.size
+        return next(iter(self.data.values())).shape[0]
 
     def datavector(self, flatten: bool = True) -> NDArray:
         """Return the database in vector-of-counts form."""
@@ -201,7 +196,7 @@ class Dataset:
         if len(dims) == 0:
             result = self.weights.sum()
             return np.array([result]) if flatten else result
-        multi_index = tuple(self._data[a] for a in self.domain.attrs)
+        multi_index = tuple(self.data[a] for a in self.domain.attrs)
         linear_indices = np.ravel_multi_index(multi_index, dims, order="C")
         counts = np.bincount(
             linear_indices, minlength=math.prod(dims), weights=self.weights
@@ -212,13 +207,14 @@ class Dataset:
         """Compress the dataset by mapping domain elements to a smaller domain.
 
         Args:
-            mapping: A dictionary where keys are attribute names and values are 1D arrays.
-                     mapping[attr][i] gives the new value for original value i.
+            mapping: A dictionary where keys are attribute names and values
+                are 1D arrays.  ``mapping[attr][i]`` gives the new value
+                for original value ``i``.
 
         Returns:
             A new Dataset with transformed values and updated domain.
         """
-        new_data = dict(self._data)
+        new_data = dict(self.data)
         new_domain_config = self.domain.config.copy()
 
         for attr, map_array in mapping.items():
@@ -232,7 +228,7 @@ class Dataset:
                     f" size {self.domain[attr]} for attribute {attr}"
                 )
 
-            new_col = map_array[self._data[attr]]
+            new_col = map_array[self.data[attr]]
             new_data[attr] = new_col.astype(
                 np.min_scalar_type(np.max(map_array))
             )
@@ -257,7 +253,7 @@ class Dataset:
         Returns:
             A new Dataset with restored domain size and sampled values.
         """
-        new_data = dict(self._data)
+        new_data = dict(self.data)
         new_domain_config = self.domain.config.copy()
 
         for attr, map_array in mapping.items():
@@ -276,13 +272,13 @@ class Dataset:
             starts[1:] = np.cumsum(counts)
             starts = starts[:-1]
 
-            current_col = self._data[attr]
+            current_col = self.data[attr]
 
             col_counts = counts[current_col]
             if np.any(col_counts == 0):
                 raise ValueError(
-                    f"Data contains values for {attr} that have no preimage in"
-                    " the mapping."
+                    f"Data contains values for {attr} that have no preimage"
+                    " in the mapping."
                 )
 
             random_offsets = np.floor(
