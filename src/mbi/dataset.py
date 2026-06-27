@@ -57,6 +57,29 @@ def _validate_mapping(map_array: np.ndarray, attr: str):
         raise ValueError(f"Mapping for {attr} must be non-negative")
 
 
+def _group_labels(orig_labels, mapping):
+    """Group labels into tuples according to a compression mapping."""
+    grouped = [[] for _ in range(int(mapping.max()) + 1)]
+    for i, b in enumerate(mapping):
+        grouped[b].append(orig_labels[i])
+    return tuple(tuple(g) for g in grouped)
+
+
+def _compress_labels(domain, mapping, new_domain_config, labels=None):
+    """Build compressed label tuples from a domain and mapping."""
+    if domain.labels is None:
+        return None
+    lc = dict(domain.labels_config)
+    for attr, m in mapping.items():
+        if attr not in lc:
+            continue
+        if labels and attr in labels:
+            lc[attr] = labels[attr]
+        else:
+            lc[attr] = _group_labels(lc[attr], m)
+    return tuple(lc[a] for a in new_domain_config)
+
+
 @dataclasses.dataclass(frozen=True, eq=False)
 class Dataset:
     """A discrete tabular dataset backed by a dictionary of 1D numpy arrays.
@@ -203,13 +226,22 @@ class Dataset:
         )
         return counts if flatten else counts.reshape(dims)
 
-    def compress(self, mapping: dict[str, np.ndarray]) -> Dataset:
+    def compress(
+        self,
+        mapping: dict[str, np.ndarray],
+        labels: dict[str, tuple] | None = None,
+    ) -> Dataset:
         """Compress the dataset by mapping domain elements to a smaller domain.
 
         Args:
             mapping: A dictionary where keys are attribute names and values
                 are 1D arrays.  ``mapping[attr][i]`` gives the new value
                 for original value ``i``.
+            labels: Optional explicit labels for the compressed domain.
+                If not provided and the domain has labels, the original
+                labels are grouped into tuples (e.g. compressing
+                ``("cat", "dog", "bird")`` with mapping ``[0, 0, 1]``
+                gives ``(("cat", "dog"), ("bird",))``).
 
         Returns:
             A new Dataset with transformed values and updated domain.
@@ -232,12 +264,14 @@ class Dataset:
             new_data[attr] = new_col.astype(
                 np.min_scalar_type(np.max(map_array))
             )
-
-            new_size = int(np.max(map_array) + 1)
-            new_domain_config[attr] = new_size
+            new_domain_config[attr] = int(np.max(map_array) + 1)
 
         new_domain = Domain(
-            new_domain_config.keys(), new_domain_config.values()
+            new_domain_config.keys(),
+            new_domain_config.values(),
+            labels=_compress_labels(
+                self.domain, mapping, new_domain_config, labels
+            ),
         )
         return Dataset(new_data, new_domain, self.weights)
 
