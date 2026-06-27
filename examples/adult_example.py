@@ -1,10 +1,15 @@
 from mbi import (Dataset, Domain, marginal_loss, estimation)
+import json
 import numpy as np
+import pandas as pd
 
 # load adult dataset
 
-data = Dataset.load("../data/adult.csv", "../data/adult-domain.json")
-domain = data.domain
+domain = Domain.fromdict(json.load(open("../data/adult-domain.json")))
+data = Dataset(
+    pd.read_csv("../data/adult.csv", usecols=domain.attrs).to_dict("list"),
+    domain,
+)
 total = data.records
 
 print(domain)

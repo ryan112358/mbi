@@ -1,9 +1,10 @@
 from mbi import approximate_oracles, LinearMeasurement, callbacks
 import numpy as np
 import argparse
-from mbi import Dataset
+from mbi import Dataset, Domain
 import itertools
 import os
+import json
 import pandas as pd
 from scipy import sparse
 
@@ -78,7 +79,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     prng = np.random.RandomState(args.seed)
-    data = Dataset.load(args.dataset, args.domain)
+    domain = Domain.fromdict(json.load(open(args.domain)))
+    data = Dataset(
+        pd.read_csv(args.dataset, usecols=domain.attrs).to_dict("list"), domain
+    )
 
     workload = list(itertools.combinations(data.domain, args.degree))
     workload = [cl for cl in workload if data.domain.size(cl) <= args.max_cells]

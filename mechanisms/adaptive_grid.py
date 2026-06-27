@@ -444,7 +444,10 @@ if __name__ == "__main__":
     parser.set_defaults(**default_params())
     args = parser.parse_args()
 
-    data = Dataset.load(args.dataset, args.domain)
+    domain = Domain.fromdict(json.load(open(args.domain)))
+    data = Dataset(
+        pd.read_csv(args.dataset, usecols=domain.attrs).to_dict("list"), domain
+    )
     mbi_args = {
         "iters": args.pgm_iters,
     }

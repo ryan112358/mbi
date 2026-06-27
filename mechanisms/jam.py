@@ -19,10 +19,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import json
 import numpy as np
+import pandas as pd
 
 from mbi import (
     Dataset,
+    Domain,
     estimation,
     junction_tree,
     LinearMeasurement,
@@ -390,8 +393,15 @@ if __name__ == "__main__":
     public_csv_path = os.path.join(data_folder, "pub.csv")
     domain_json_path = os.path.join(data_folder, f"{args.dataset}-domain.json")
 
-    private_data = Dataset.load(path=private_csv_path, domain=domain_json_path)
-    public_data = Dataset.load(path=public_csv_path, domain=domain_json_path)
+    domain = Domain.fromdict(json.load(open(domain_json_path)))
+    private_data = Dataset(
+        pd.read_csv(private_csv_path, usecols=domain.attrs).to_dict("list"),
+        domain,
+    )
+    public_data = Dataset(
+        pd.read_csv(public_csv_path, usecols=domain.attrs).to_dict("list"),
+        domain,
+    )
 
     mech = JAM(
         epsilon=args.epsilon,

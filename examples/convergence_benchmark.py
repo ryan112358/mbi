@@ -38,8 +38,10 @@ import os
 import sys
 import time
 
+import json
 import jax
 import numpy as np
+import pandas as pd
 
 import mbi
 from mbi import estimation, marginal_loss
@@ -125,8 +127,10 @@ def load_problem(sigma: float = SIGMA, seed: int = SEED):
     loss_fn : mbi.MarginalLossFn
     N : float
     """
-    dataset = mbi.Dataset.load(_CSV_PATH, _DOMAIN_PATH)
-    domain = dataset.domain
+    domain = mbi.Domain.fromdict(json.load(open(_DOMAIN_PATH)))
+    dataset = mbi.Dataset(
+        pd.read_csv(_CSV_PATH, usecols=domain.attrs).to_dict("list"), domain
+    )
     N = float(dataset.records)
 
     attrs = list(domain.attrs)
