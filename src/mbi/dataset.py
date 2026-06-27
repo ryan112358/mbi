@@ -203,30 +203,19 @@ class Dataset:
         )
         return counts if flatten else counts.reshape(dims)
 
-    def compress(
-        self,
-        mapping: dict[str, np.ndarray],
-        labels: dict[str, tuple] | None = None,
-    ) -> Dataset:
+    def compress(self, mapping: dict[str, np.ndarray]) -> Dataset:
         """Compress the dataset by mapping domain elements to a smaller domain.
 
         Args:
             mapping: A dictionary where keys are attribute names and values
                 are 1D arrays.  ``mapping[attr][i]`` gives the new value
                 for original value ``i``.
-            labels: Optional explicit labels for the compressed domain.
-                If not provided and the domain has labels, the original
-                labels are grouped into tuples (e.g. compressing
-                ``("cat", "dog", "bird")`` with mapping ``[0, 0, 1]``
-                gives ``(("cat", "dog"), ("bird",))``).
 
         Returns:
             A new Dataset with transformed values and updated domain.
         """
         new_data = dict(self.data)
         new_domain_config = self.domain.config.copy()
-        labels_config = self.domain.labels_config
-        new_labels = dict(labels_config) if labels_config else None
 
         for attr, map_array in mapping.items():
             if attr not in self.domain:
@@ -247,33 +236,8 @@ class Dataset:
             new_size = int(np.max(map_array) + 1)
             new_domain_config[attr] = new_size
 
-            # Update labels for compressed attribute.
-            if labels and attr in labels:
-                if new_labels is None:
-                    new_labels = {}
-                new_labels[attr] = labels[attr]
-            elif new_labels and attr in new_labels:
-                orig = new_labels[attr]
-                grouped = [[] for _ in range(new_size)]
-                for i, bucket in enumerate(map_array):
-                    grouped[bucket].append(orig[i])
-                new_labels[attr] = tuple(tuple(g) for g in grouped)
-
-        new_label_tuples = None
-        if new_labels:
-            attrs = list(new_domain_config.keys())
-            new_label_tuples = tuple(
-                new_labels[a] for a in attrs if a in new_labels
-            )
-            if len(new_label_tuples) == len(attrs):
-                pass  # all attributes have labels
-            else:
-                new_label_tuples = None  # partial labels → drop
-
         new_domain = Domain(
-            new_domain_config.keys(),
-            new_domain_config.values(),
-            labels=new_label_tuples,
+            new_domain_config.keys(), new_domain_config.values()
         )
         return Dataset(new_data, new_domain, self.weights)
 
