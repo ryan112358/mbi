@@ -13,6 +13,8 @@ import functools
 from collections.abc import Callable, Sequence
 from typing import Any
 
+import numpy as np
+
 import attr
 import chex
 import jax
@@ -23,6 +25,11 @@ from .clique_utils import Clique, maximal_subset
 from .clique_vector import CliqueVector
 from .domain import Domain
 from .factor import Factor
+
+
+def _weighted_datavector(weights: np.ndarray, x: Factor) -> jax.Array:
+    """Datavector scaled by pre-baked weights (pickle-safe)."""
+    return x.datavector() * weights
 
 
 @functools.partial(
@@ -46,6 +53,56 @@ class LinearMeasurement:
     clique: Clique = attr.field(converter=tuple)
     stddev: float = 1.0
     query: Callable[[Factor], jax.Array] = Factor.datavector
+
+    def compress(
+        self, mapping: dict[str, np.ndarray], domain: Domain
+    ) -> "LinearMeasurement":
+        """Compress this measurement by merging domain values.
+
+        Args:
+            mapping: Maps attribute names to 1D integer arrays.
+                ``mapping[attr][i]`` gives the compressed value for
+                original value ``i``.
+            domain: The full dataset domain (needed to reshape the
+                measurement vector into the clique's shape).
+
+        Returns:
+            A new ``LinearMeasurement`` over the compressed domain.
+        """
+        if not any(a in mapping for a in self.clique):
+            return self
+
+        y = np.asarray(self.noisy_measurement)
+
+        # Build per-attribute index arrays (mapping or identity).
+        indices, compressed_sizes = [], []
+        for a in self.clique:
+            if a in mapping:
+                m = np.asarray(mapping[a])
+                indices.append(m)
+                compressed_sizes.append(int(m.max()) + 1)
+            else:
+                indices.append(np.arange(domain[a]))
+                compressed_sizes.append(domain[a])
+
+        # Flat compressed index for every element of y.
+        grids = np.meshgrid(*indices, indexing="ij")
+        flat_idx = np.ravel_multi_index(
+            [g.ravel() for g in grids], compressed_sizes
+        )
+
+        total = int(np.prod(compressed_sizes))
+        y_compressed = np.bincount(flat_idx, weights=y, minlength=total)
+        inv_coefs = 1.0 / np.sqrt(
+            np.bincount(flat_idx, minlength=total).astype(float)
+        )
+
+        return LinearMeasurement(
+            y_compressed * inv_coefs,
+            self.clique,
+            self.stddev,
+            query=functools.partial(_weighted_datavector, inv_coefs),
+        )
 
 
 @functools.partial(

@@ -1,4 +1,5 @@
 import unittest
+import numpy as np
 import jax.numpy as jnp
 from mbi.domain import Domain
 from mbi.marginal_loss import LinearMeasurement, from_linear_measurements, calculate_l2_lipschitz
@@ -44,6 +45,61 @@ class TestMarginalLoss(unittest.TestCase):
         expected_L = 1.0 / m1.stddev**2
 
         self.assertAlmostEqual(calculated_L, expected_L, delta=1e-3)
+
+
+class TestCompress(unittest.TestCase):
+
+    def test_single_column(self):
+        """Compress a one-way measurement by merging pairs."""
+        domain = Domain.fromdict({'a': 6})
+        y = np.array([10.0, 20.0, 30.0, 40.0, 50.0, 60.0])
+        m = LinearMeasurement(y, ('a',), stddev=1.0)
+        mapping = {'a': np.array([0, 0, 1, 1, 2, 2])}
+        mc = m.compress(mapping, domain)
+
+        expected = np.array([30, 70, 110]) / np.sqrt(2)
+        np.testing.assert_allclose(mc.noisy_measurement, expected)
+        self.assertEqual(mc.stddev, 1.0)
+        self.assertEqual(mc.clique, ('a',))
+
+    def test_multi_column(self):
+        """Compress one attribute of a two-way measurement."""
+        domain = Domain.fromdict({'a': 4, 'b': 3})
+        y = np.arange(12, dtype=float)  # shape (4, 3) flattened
+        m = LinearMeasurement(y, ('a', 'b'), stddev=2.0)
+        mapping = {'a': np.array([0, 0, 1, 1])}
+        mc = m.compress(mapping, domain)
+
+        y2d = y.reshape(4, 3)
+        # Compressed: sum pairs along axis 0, then divide by sqrt(2)
+        expected = np.vstack([y2d[0] + y2d[1], y2d[2] + y2d[3]]) / np.sqrt(2)
+        np.testing.assert_allclose(mc.noisy_measurement, expected.ravel())
+        self.assertEqual(mc.stddev, 2.0)
+
+    def test_irrelevant_mapping_returns_self(self):
+        domain = Domain.fromdict({'a': 4})
+        m = LinearMeasurement(np.ones(4), ('a',))
+        mc = m.compress({'z': np.array([0, 1])}, domain)
+        self.assertIs(m, mc)
+
+    def test_query_produces_correct_loss(self):
+        """Compressed measurement should recover true compressed marginal."""
+        domain = Domain.fromdict({'a': 6})
+        true_counts = np.array([100.0, 150.0, 200.0, 250.0, 300.0, 350.0])
+        m = LinearMeasurement(true_counts, ('a',), stddev=1.0)
+        mapping = {'a': np.array([0, 0, 1, 1, 2, 2])}
+        mc = m.compress(mapping, domain)
+
+        compressed_domain = Domain.fromdict({'a': 3})
+        loss_fn = from_linear_measurements([mc], compressed_domain)
+        # The compressed true counts: [250, 450, 650]
+        from mbi import estimation
+
+        model = estimation.MirrorDescent(stepsize=1e-3).estimate(
+            compressed_domain, loss_fn, known_total=1350.0, iters=200
+        )
+        result = np.asarray(model.project(('a',)).datavector())
+        np.testing.assert_allclose(result, [250, 450, 650], rtol=0.01)
 
 
 if __name__ == '__main__':
