@@ -33,9 +33,9 @@ from . import callbacks, estimation, extensions, junction_tree, marginal_oracles
 from ._model_summary import ModelSummary, summarize
 from ._api import Model, Projectable
 from .estimation import Estimator
-from .extensions import constraints
-from .extensions.constraints import DeterministicConstraint
+from .extensions import message_passing
 from .clique_vector import CliqueVector
+from .constraint import Constraint
 from .dataset import Dataset
 from .domain import Domain
 from .factor import Factor
@@ -46,7 +46,7 @@ from .markov_random_field import MarkovRandomField
 Clique = tuple[str, ...]
 
 __all__ = [
-    "DeterministicConstraint",
+    "Constraint",
     "Domain",
     "Dataset",
     "Factor",
