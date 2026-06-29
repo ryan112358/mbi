@@ -1,10 +1,19 @@
-"""Constraint-aware message passing for graphical models.
+"""Extension message-passing oracles with efficient constraint handling.
 
-Provides efficient handling of deterministic variable constraints
-(e.g., A' = f(A) where A' is a coarsening of A) during message passing.
-For mapping constraints, messages are routed through the constraint in
-O(|A|) time using coarsen/refine operations. For general valid/invalid
-constraints, the full potential is materialized and folded in.
+Alternative implementations of the Shafer-Shenoy and implicit message-passing
+oracles from :mod:`mbi.marginal_oracles`.  Key differences:
+
+1. **More efficient constraint handling.**  For deterministic (mapping)
+   constraints, messages are routed through the constraint in O(|fine|)
+   time via ``coarsen``/``refine`` operations, avoiding the full
+   O(|fine| × |coarse|) potential materialization used by the core oracles.
+2. **AI-written, less well-tested.**  These implementations were developed
+   with AI assistance and have narrower test coverage than the core oracles.
+   They are kept separate until they mature enough to replace the originals.
+
+Usage::
+
+    from mbi.extensions.message_passing import shafer_shenoy, implicit
 """
 
 from __future__ import annotations
@@ -326,7 +335,7 @@ def _fold_non_deterministic(potentials, constraints):
 
 
 @jax.jit(static_argnames=['jtree'])
-def constrained_shafer_shenoy(
+def shafer_shenoy(
     potentials: CliqueVector,
     total: float = 1,
     jtree: nx.Graph | None = None,
@@ -491,7 +500,7 @@ def constrained_shafer_shenoy(
 
 
 @jax.jit(static_argnames=['jtree', 'contraction'])
-def constrained_implicit(
+def implicit(
     potentials: CliqueVector,
     total: float = 1,
     jtree: nx.Graph | None = None,
