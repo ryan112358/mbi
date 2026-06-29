@@ -1,7 +1,5 @@
-import json
 import unittest
 import numpy as np
-import pandas as pd
 from mbi import (
     Domain,
     Factor,
@@ -122,13 +120,7 @@ class TestMarkovRandomField(unittest.TestCase):
         logic derived from the Adult dataset reproduction case.
         """
         try:
-            domain = Domain.fromdict(json.load(open("data/adult-domain.json")))
-            data = Dataset(
-                pd.read_csv("data/adult.csv", usecols=domain.attrs).to_dict(
-                    "list"
-                ),
-                domain,
-            )
+            data = Dataset.load("data/adult.csv", "data/adult-domain.json")
         except FileNotFoundError:
             # Skip if data is not present (e.g. in CI environment without data folder)
             return
