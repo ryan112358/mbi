@@ -11,7 +11,8 @@ from mbi.marginal_oracles import (
     einsum_fused,
     einsum_semistable,
 )
-from mbi.extensions.constraints import (
+from mbi.constraint import Constraint
+from mbi.extensions.message_passing import (
     constrained_shafer_shenoy,
     constrained_implicit,
 )
@@ -296,3 +297,155 @@ class TestDefaultOracle(unittest.TestCase):
             np.testing.assert_allclose(
                 mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
             )
+
+
+# --- Constraint-aware oracle tests ---
+
+_CDOMAIN = Domain(["A", "Ap", "B", "C"], [6, 3, 4, 5])
+
+_CONSTRAINT_CONFIGS = [
+    # Single constraint.
+    (
+        Constraint(
+            Domain(["A", "Ap"], [6, 3]), mapping=np.array([0, 0, 1, 1, 2, 2])
+        ),
+    ),
+    # Uneven grouping.
+    (
+        Constraint(
+            Domain(["A", "Ap"], [6, 3]), mapping=np.array([0, 1, 2, 2, 2, 2])
+        ),
+    ),
+]
+
+_CONSTRAINED_CLIQUE_SETS = [
+    [("A", "B"), ("Ap", "C")],
+    [("A",), ("Ap",), ("B", "C")],
+    [("A", "B"), ("A",), ("Ap", "C")],
+    [("A", "B"), ("Ap", "C"), ("B",)],
+    [("A", "Ap"), ("B", "C")],
+    [("A", "Ap", "B"), ("Ap", "C")],
+]
+
+_CONSTRAINED_ORACLES = [
+    constrained_shafer_shenoy,
+    functools.partial(constrained_implicit, contraction=einsum_materialized),
+    functools.partial(constrained_implicit, contraction=einsum_fused),
+]
+
+# Baseline oracles that accept constraints= and fold them as -inf potentials.
+_FOLDING_ORACLES = [
+    message_passing_shafer_shenoy,
+    message_passing_hugin,
+]
+
+
+def _fold_baseline(potentials, total, constraints):
+    """Brute-force baseline with constraints folded as -inf potentials."""
+    cliques = list(potentials.cliques)
+    arrays = dict(potentials.arrays)
+    for c in constraints:
+        cl = potentials.domain.canonical(c.clique)
+        pot = c.potential.transpose(cl)
+        if cl in arrays:
+            arrays[cl] = arrays[cl] + pot
+        else:
+            arrays[cl] = pot
+            cliques.append(cl)
+    folded = CliqueVector(potentials.domain, cliques, arrays)
+    return marginal_oracles.brute_force_marginals(folded, total)
+
+
+class TestConstrainedOracles(unittest.TestCase):
+
+    @parameterized.expand(
+        itertools.product(
+            _CONSTRAINED_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
+        )
+    )
+    def test_matches_brute_force(self, oracle, cliques, constraints):
+        """Constrained oracle matches brute-force with folded -inf baseline."""
+        theta = CliqueVector.random(_CDOMAIN, cliques)
+        mu = oracle(theta, 10.0, constraints=constraints)
+        baseline = _fold_baseline(theta, 10.0, constraints)
+        for cl in cliques:
+            np.testing.assert_allclose(
+                mu[cl].datavector(),
+                baseline[cl].datavector(),
+                atol=1e-4,
+                err_msg=f"{oracle}, {cl}",
+            )
+
+    @parameterized.expand(
+        itertools.product(
+            _CONSTRAINED_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
+        )
+    )
+    def test_sums_to_total(self, oracle, cliques, constraints):
+        """Constrained marginals sum to the requested total."""
+        theta = CliqueVector.random(_CDOMAIN, cliques)
+        mu = oracle(theta, 10.0, constraints=constraints)
+        for cl in cliques:
+            np.testing.assert_allclose(
+                mu[cl].datavector().sum(), 10.0, atol=1e-4
+            )
+
+    @parameterized.expand(
+        itertools.product(
+            _CONSTRAINED_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
+        )
+    )
+    def test_no_nans(self, oracle, cliques, constraints):
+        """Constrained marginals contain no NaNs."""
+        theta = CliqueVector.random(_CDOMAIN, cliques)
+        mu = oracle(theta, 10.0, constraints=constraints)
+        for cl in cliques:
+            self.assertFalse(jnp.isnan(mu[cl].values).any(), f"NaN in {cl}")
+
+    @parameterized.expand(
+        itertools.product(
+            _FOLDING_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
+        )
+    )
+    def test_folding_matches_brute_force(self, oracle, cliques, constraints):
+        """Core oracles with folded constraints match brute-force baseline."""
+        theta = CliqueVector.random(_CDOMAIN, cliques)
+        mu = oracle(theta, 10.0, constraints=constraints)
+        baseline = _fold_baseline(theta, 10.0, constraints)
+        for cl in cliques:
+            np.testing.assert_allclose(
+                mu[cl].datavector(),
+                baseline[cl].datavector(),
+                atol=1e-4,
+                err_msg=f"{oracle}, {cl}",
+            )
+
+    @parameterized.expand(
+        itertools.product(
+            _CONSTRAINED_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
+        )
+    )
+    def test_constraints_satisfied(self, oracle, cliques, constraints):
+        """Invalid entries in the constraint marginal are zero."""
+        theta = CliqueVector.random(_CDOMAIN, cliques)
+        mu = oracle(theta, 10.0, constraints=constraints)
+        for c in constraints:
+            fine, coarse = c.domain.attributes
+            # Build the expected mask from the constraint.
+            expected_zero = np.ones(c.domain.shape, dtype=bool)
+            for a in range(c.domain.shape[0]):
+                expected_zero[a, c.mapping[a]] = False
+            # Check every user clique that contains fine or coarse.
+            for cl in cliques:
+                vals = mu[cl].datavector()
+                if fine in cl and coarse in cl:
+                    # Joint over both: invalid cells must be zero.
+                    joint = mu[cl].project((fine, coarse))
+                    np.testing.assert_allclose(
+                        joint.values[expected_zero],
+                        0.0,
+                        atol=1e-5,
+                        err_msg=f"constraint violated in clique {cl}",
+                    )
+                # All marginals should be non-negative.
+                self.assertTrue((vals >= -1e-6).all(), f"negative in {cl}")

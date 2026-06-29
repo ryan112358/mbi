@@ -1,10 +1,10 @@
-"""Efficient handling of deterministic variable constraints.
+"""Constraint-aware message passing for graphical models.
 
-Provides utilities for exploiting deterministic relationships between variables
-(e.g., A' = f(A) where A' is a coarsening of A) during message passing in
-graphical models. Instead of materializing full |A| x |A'| constraint factors,
-messages are routed through the constraint in O(|A|) time using coarsen/refine
-operations.
+Provides efficient handling of deterministic variable constraints
+(e.g., A' = f(A) where A' is a coarsening of A) during message passing.
+For mapping constraints, messages are routed through the constraint in
+O(|A|) time using coarsen/refine operations. For general valid/invalid
+constraints, the full potential is materialized and folded in.
 """
 
 from __future__ import annotations
@@ -13,56 +13,16 @@ import collections
 import collections.abc
 
 
-import attr
 import jax
 import jax.numpy as jnp
 import networkx as nx
-import numpy as np
 
 from .. import junction_tree, marginal_oracles
 from ..clique_utils import clique_mapping
 from ..clique_vector import CliqueVector
+from ..constraint import Constraint
 from ..domain import Domain
 from ..factor import Factor
-
-
-@attr.dataclass(frozen=True, hash=False, eq=False)
-class DeterministicConstraint:
-    """A deterministic relationship: coarse = f(fine).
-
-    Attributes:
-        fine: The finer-grained variable name.
-        coarse: The coarser variable name.
-        mapping: Array of shape (|fine|,) mapping fine values to coarse values.
-    """
-
-    fine: str
-    coarse: str
-    mapping: np.ndarray
-
-    def __hash__(self):
-        return hash((self.fine, self.coarse, self.mapping.tobytes()))
-
-    def __eq__(self, other):
-        if not isinstance(other, DeterministicConstraint):
-            return NotImplemented
-        return (
-            self.fine == other.fine
-            and self.coarse == other.coarse
-            and np.array_equal(self.mapping, other.mapping)
-        )
-
-    @property
-    def clique(self) -> tuple[str, ...]:
-        return tuple(sorted((self.fine, self.coarse)))
-
-    @property
-    def n_fine(self) -> int:
-        return len(self.mapping)
-
-    @property
-    def n_coarse(self) -> int:
-        return int(self.mapping.max()) + 1
 
 
 def _replace_variable(factor, old, new, new_size):
@@ -89,44 +49,39 @@ def _segment_logsumexp(values, mapping, n_segments, axis):
 
 def coarsen(factor, constraint):
     """Log-space fine-to-coarse aggregation via segment-logsumexp."""
-    axis = factor.domain.axes((constraint.fine,))[0]
+    fine, coarse = constraint.domain.attributes
+    n_coarse = constraint.domain.shape[1]
+    axis = factor.domain.axes((fine,))[0]
     values = _segment_logsumexp(
-        factor.values, constraint.mapping, constraint.n_coarse, axis
+        factor.values, constraint.mapping, n_coarse, axis
     )
     return _replace_variable(
-        Factor(factor.domain, values),
-        constraint.fine,
-        constraint.coarse,
-        constraint.n_coarse,
+        Factor(factor.domain, values), fine, coarse, n_coarse
     )
 
 
 def refine(factor, constraint):
     """Log-space coarse-to-fine scatter via indexing."""
-    axis = factor.domain.axes((constraint.coarse,))[0]
+    fine, coarse = constraint.domain.attributes
+    n_fine = constraint.domain.shape[0]
+    axis = factor.domain.axes((coarse,))[0]
     values = jnp.take(factor.values, constraint.mapping, axis=axis)
     return _replace_variable(
-        Factor(factor.domain, values),
-        constraint.coarse,
-        constraint.fine,
-        constraint.n_fine,
+        Factor(factor.domain, values), coarse, fine, n_fine
     )
 
 
 def project_to_coarse(factor, constraint):
     """Probability-space fine-to-coarse aggregation via segment-sum."""
-    axis = factor.domain.axes((constraint.fine,))[0]
+    fine, coarse = constraint.domain.attributes
+    n_coarse = constraint.domain.shape[1]
+    axis = factor.domain.axes((fine,))[0]
     values = jnp.moveaxis(factor.values, axis, 0)
-    result = jnp.zeros(
-        (constraint.n_coarse,) + values.shape[1:], dtype=values.dtype
-    )
+    result = jnp.zeros((n_coarse,) + values.shape[1:], dtype=values.dtype)
     result = result.at[constraint.mapping].add(values)
     values = jnp.moveaxis(result, 0, axis)
     return _replace_variable(
-        Factor(factor.domain, values),
-        constraint.fine,
-        constraint.coarse,
-        constraint.n_coarse,
+        Factor(factor.domain, values), fine, coarse, n_coarse
     )
 
 
@@ -135,11 +90,13 @@ def _constraint_slice(factor, constraint):
 
     For each value of the fine variable a, selects coarse = mapping[a].
     """
-    fine_axis = factor.domain.axes((constraint.fine,))[0]
-    coarse_axis = factor.domain.axes((constraint.coarse,))[0]
+    fine, coarse = constraint.domain.attributes
+    n_fine = constraint.domain.shape[0]
+    fine_axis = factor.domain.axes((fine,))[0]
+    coarse_axis = factor.domain.axes((coarse,))[0]
 
     idx_shape = [1] * len(factor.domain.shape)
-    idx_shape[fine_axis] = constraint.n_fine
+    idx_shape[fine_axis] = n_fine
     indices = jnp.array(constraint.mapping).reshape(idx_shape)
 
     values = jnp.take_along_axis(factor.values, indices, axis=coarse_axis)
@@ -158,27 +115,25 @@ def _constraint_expand(factor, constraint):
     Inverse of _constraint_slice. For each fine value a, places the
     factor's values at coarse = mapping[a] and zeros elsewhere.
     """
-    fine_axis = factor.domain.axes((constraint.fine,))[0]
+    fine, coarse = constraint.domain.attributes
+    n_fine, n_coarse = constraint.domain.shape
+    fine_axis = factor.domain.axes((fine,))[0]
     coarse_axis = fine_axis + 1
 
-    indicator = jnp.zeros(
-        (constraint.n_fine, constraint.n_coarse), dtype=factor.values.dtype
-    )
-    indicator = indicator.at[
-        jnp.arange(constraint.n_fine), constraint.mapping
-    ].set(1.0)
+    indicator = jnp.zeros((n_fine, n_coarse), dtype=factor.values.dtype)
+    indicator = indicator.at[jnp.arange(n_fine), constraint.mapping].set(1.0)
 
     ind_shape = [1] * (len(factor.domain.shape) + 1)
-    ind_shape[fine_axis] = constraint.n_fine
-    ind_shape[coarse_axis] = constraint.n_coarse
+    ind_shape[fine_axis] = n_fine
+    ind_shape[coarse_axis] = n_coarse
 
     values = jnp.expand_dims(factor.values, axis=coarse_axis)
     result_values = values * indicator.reshape(ind_shape)
 
     attrs = list(factor.domain.attributes)
     shape = list(factor.domain.shape)
-    attrs.insert(coarse_axis, constraint.coarse)
-    shape.insert(coarse_axis, constraint.n_coarse)
+    attrs.insert(coarse_axis, coarse)
+    shape.insert(coarse_axis, n_coarse)
     return Factor(Domain(attrs, shape), result_values)
 
 
@@ -207,14 +162,15 @@ def _constraint_message(constraint, inputs, target_has_fine):
 
     Routes messages through the constraint in O(|fine|) time.
     """
+    fine, coarse = constraint.domain.attributes
     # Pre-process: slice any input that has both fine and coarse.
     clean = []
     for f in inputs:
-        if constraint.fine in f.domain and constraint.coarse in f.domain:
+        if fine in f.domain and coarse in f.domain:
             clean.append(_constraint_slice(f, constraint))
         else:
             clean.append(f)
-    fine_sum, coarse_sum = _partition_by_variable(clean, constraint.fine)
+    fine_sum, coarse_sum = _partition_by_variable(clean, fine)
 
     if target_has_fine:
         result = _add_optional(
@@ -232,18 +188,19 @@ def _constraint_message(constraint, inputs, target_has_fine):
 def _embedded_message(tau, sep_vars, constraints_list):
     """Outgoing message from a clique with an embedded constraint."""
     for c in constraints_list:
-        if c.fine not in tau.domain or c.coarse not in tau.domain:
+        fine, coarse = c.domain.attributes
+        if fine not in tau.domain or coarse not in tau.domain:
             continue
         tau = _constraint_slice(tau, c)
-        if c.coarse in sep_vars and c.fine not in sep_vars:
+        if coarse in sep_vars and fine not in sep_vars:
             # Only coarse in separator — must coarsen to reach it.
-            keep = tuple((sep_vars - {c.coarse}) | {c.fine})
+            keep = tuple((sep_vars - {coarse}) | {fine})
             extra = set(tau.domain.attributes) - set(keep)
             if extra:
                 tau = tau.logsumexp(tau.domain.invert(keep))
             return coarsen(tau, c)
         # Fine in separator (or both) — keep per-element info.
-        sep_without_coarse = tuple(sep_vars - {c.coarse})
+        sep_without_coarse = tuple(sep_vars - {coarse})
         return tau.logsumexp(tau.domain.invert(sep_without_coarse))
     return tau.logsumexp(tau.domain.invert(tuple(sep_vars)))
 
@@ -261,10 +218,15 @@ def _classify_cliques(max_cliques, constraints):
     embedded = {}
     for mc in max_cliques:
         mc_set = set(mc)
-        cs = [c for c in constraints if c.fine in mc_set and c.coarse in mc_set]
+        cs = [
+            c
+            for c in constraints
+            if c.domain.attributes[0] in mc_set
+            and c.domain.attributes[1] in mc_set
+        ]
         if not cs:
             continue
-        if len(cs) == 1 and mc_set == {cs[0].fine, cs[0].coarse}:
+        if len(cs) == 1 and mc_set == set(cs[0].domain.attributes):
             pure_constraint[mc] = cs[0]
         else:
             embedded[mc] = cs
@@ -284,6 +246,7 @@ def _derive_pure_marginal(
     for con_mc, c in pure_constraint.items():
         if not set(clique) <= set(con_mc):
             continue
+        fine, coarse = c.domain.attributes
 
         inputs = [
             messages[(k, con_mc)]
@@ -291,22 +254,22 @@ def _derive_pure_marginal(
             if (k, con_mc) in messages
         ]
         inputs.extend(constraint_init.get(con_mc, []))
-        fine_sum, coarse_sum = _partition_by_variable(inputs, c.fine)
+        fine_sum, coarse_sum = _partition_by_variable(inputs, fine)
 
         # Reduce any inputs containing both variables to fine-only.
-        if fine_sum is not None and c.coarse in fine_sum.domain:
+        if fine_sum is not None and coarse in fine_sum.domain:
             fine_sum = _constraint_slice(fine_sum, c)
 
         belief = _add_optional(
             fine_sum, refine(coarse_sum, c) if coarse_sum else None
         )
         if belief is None:
-            belief = Factor.zeros(domain.project((c.fine,)))
+            belief = Factor.zeros(domain.project((fine,)))
 
         belief = belief.normalize(total, log=True).exp()
-        if c.fine in clique and c.coarse in clique:
+        if fine in clique and coarse in clique:
             return _constraint_expand(belief, c).project(clique)
-        if c.fine in clique:
+        if fine in clique:
             return belief.project(clique)
         return project_to_coarse(belief, c).project(clique)
 
@@ -326,7 +289,8 @@ def _try_expand_belief(clique, result_cv, constraints):
                 (
                     c
                     for c in constraints
-                    if c.coarse == var and c.fine in belief_cl
+                    if c.domain.attributes[1] == var
+                    and c.domain.attributes[0] in belief_cl
                 ),
                 None,
             )
@@ -342,25 +306,44 @@ def _try_expand_belief(clique, result_cv, constraints):
     return None
 
 
-@jax.jit(static_argnames=['jtree', 'constraints'])
+def _fold_non_deterministic(potentials, constraints):
+    """Fold non-deterministic constraints as materialized potentials."""
+    non_det = [c for c in constraints if not c.is_deterministic]
+    if not non_det:
+        return potentials
+    domain = potentials.domain
+    cliques = list(potentials.cliques)
+    arrays = {cl: potentials[cl] for cl in cliques}
+    for c in non_det:
+        cl = domain.canonical(c.clique)
+        factor = c.potential
+        if cl in arrays:
+            arrays[cl] = arrays[cl] + factor
+        else:
+            cliques.append(cl)
+            arrays[cl] = factor
+    return CliqueVector(domain, cliques, arrays)
+
+
+@jax.jit(static_argnames=['jtree'])
 def constrained_shafer_shenoy(
     potentials: CliqueVector,
     total: float = 1,
     jtree: nx.Graph | None = None,
-    constraints: tuple[DeterministicConstraint, ...] = (),
+    constraints: tuple[Constraint, ...] = (),
 ) -> CliqueVector:
     """Compute marginals using Shafer-Shenoy with constraint-aware shortcuts.
 
-    Extends message_passing_shafer_shenoy to handle deterministic constraints
-    without materializing |fine| x |coarse| factors.
+    Deterministic (mapping) constraints are routed through efficient O(|fine|)
+    coarsen/refine operations. General (valid/invalid) constraints are folded
+    into potentials as materialized ``-inf``/``0`` factors.
 
     Args:
         potentials: The (log-space) potentials of a graphical model.
         total: The normalization factor.
-
         jtree: An optional junction tree that defines the message passing
             order.
-        constraints: Deterministic constraints to handle efficiently.
+        constraints: Structural constraints to handle.
 
     Returns:
         The marginals of the graphical model.
@@ -368,12 +351,16 @@ def constrained_shafer_shenoy(
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
+    # Fold non-deterministic constraints as materialized potentials.
+    potentials = _fold_non_deterministic(potentials, constraints)
+    det_constraints = tuple(c for c in constraints if c.is_deterministic)
+
     domain, cliques = potentials.domain, potentials.cliques
 
     # Build the junction tree, including constraint edges.
     extra = [
         domain.canonical(c.clique)
-        for c in constraints
+        for c in det_constraints
         if domain.canonical(c.clique) not in cliques
     ]
     if jtree is None:
@@ -382,7 +369,7 @@ def constrained_shafer_shenoy(
         )[0]
     message_order = junction_tree.message_passing_order(jtree)
     max_cliques = junction_tree.maximal_cliques(jtree)
-    pure_constraint, embedded = _classify_cliques(max_cliques, constraints)
+    pure_constraint, embedded = _classify_cliques(max_cliques, det_constraints)
     neighbors = {cl: list(jtree.neighbors(cl)) for cl in max_cliques}
 
     # Partition user potentials by pure-constraint membership.
@@ -426,9 +413,10 @@ def constrained_shafer_shenoy(
                 if k != j and (k, i) in messages
             ]
             inputs.extend(constraint_init.get(i, []))
-            msg = _constraint_message(c, inputs, c.fine in sep_vars)
+            fine, coarse = c.domain.attributes
+            msg = _constraint_message(c, inputs, fine in sep_vars)
             if msg is None:
-                sizes = {c.fine: c.n_fine, c.coarse: c.n_coarse}
+                sizes = dict(zip(c.domain.attributes, c.domain.shape))
                 sep = tuple(sep_vars)
                 msg = Factor.zeros(Domain(list(sep), [sizes[s] for s in sep]))
             messages[(i, j)] = msg
@@ -470,8 +458,6 @@ def constrained_shafer_shenoy(
         if result_cv.supports(cl):
             result[cl] = result_cv.project(cl)
         elif any(set(cl) <= set(mc) for mc in pure_constraint):
-            # Clique subsumed by a pure constraint — derive from
-            # constraint messages and absorbed potentials.
             result[cl] = _derive_pure_marginal(
                 cl,
                 pure_constraint,
@@ -482,9 +468,7 @@ def constrained_shafer_shenoy(
                 domain,
             )
         else:
-            # Try re-expanding beliefs where constraint slicing removed
-            # a coarse variable the user needs.
-            expanded = _try_expand_belief(cl, result_cv, constraints)
+            expanded = _try_expand_belief(cl, result_cv, det_constraints)
             if expanded is not None:
                 result[cl] = expanded
             else:
@@ -506,13 +490,13 @@ def constrained_shafer_shenoy(
 # ---------------------------------------------------------------------------
 
 
-@jax.jit(static_argnames=['jtree', 'constraints', 'contraction'])
+@jax.jit(static_argnames=['jtree', 'contraction'])
 def constrained_implicit(
     potentials: CliqueVector,
     total: float = 1,
     jtree: nx.Graph | None = None,
     *,
-    constraints: tuple[DeterministicConstraint, ...] = (),
+    constraints: tuple[Constraint, ...] = (),
     contraction: collections.abc.Callable = (
         marginal_oracles.einsum_materialized
     ),
@@ -520,16 +504,15 @@ def constrained_implicit(
     """Hybrid message passing: implicit for standard cliques, SS for constraints.
 
     Uses the memory-efficient implicit contraction for cliques that do not
-    involve constraints, and falls back to Shafer-Shenoy style constraint
-    routing for pure and embedded constraint cliques.  This avoids *both*
-    super-clique expansion (for standard cliques) and the cost of
-    refining coarse factors to fine-variable space (for constraint cliques).
+    involve deterministic constraints, and falls back to Shafer-Shenoy style
+    constraint routing for pure and embedded constraint cliques. General
+    (valid/invalid) constraints are folded in as materialized potentials.
 
     Args:
         potentials: The (log-space) potentials of a graphical model.
         total: The normalization factor.
         jtree: An optional junction tree.
-        constraints: Deterministic constraints to handle efficiently.
+        constraints: Structural constraints to handle.
         contraction: Contraction function for log-space sum-product.
 
     Returns:
@@ -539,12 +522,16 @@ def constrained_implicit(
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
+    # Fold non-deterministic constraints as materialized potentials.
+    potentials = _fold_non_deterministic(potentials, constraints)
+    det_constraints = tuple(c for c in constraints if c.is_deterministic)
+
     domain, cliques = potentials.domain, potentials.cliques
 
     # Build junction tree with constraint edges.
     extra = [
         domain.canonical(c.clique)
-        for c in constraints
+        for c in det_constraints
         if domain.canonical(c.clique) not in cliques
     ]
     if jtree is None:
@@ -553,7 +540,7 @@ def constrained_implicit(
         ]
     message_order = junction_tree.message_passing_order(jtree)
     max_cliques = junction_tree.maximal_cliques(jtree)
-    pure_constraint, embedded = _classify_cliques(max_cliques, constraints)
+    pure_constraint, embedded = _classify_cliques(max_cliques, det_constraints)
     neighbors = {cl: list(jtree.neighbors(cl)) for cl in max_cliques}
 
     # Map user cliques → maximal cliques.
@@ -595,9 +582,10 @@ def constrained_implicit(
                 if k != j and (k, i) in messages
             ]
             inputs.extend(constraint_init.get(i, []))
-            msg = _constraint_message(c, inputs, c.fine in sep_vars)
+            fine, coarse = c.domain.attributes
+            msg = _constraint_message(c, inputs, fine in sep_vars)
             if msg is None:
-                sizes = {c.fine: c.n_fine, c.coarse: c.n_coarse}
+                sizes = dict(zip(c.domain.attributes, c.domain.shape))
                 sep = tuple(sep_vars)
                 msg = Factor.zeros(Domain(list(sep), [sizes[s] for s in sep]))
             messages[(i, j)] = msg
@@ -718,10 +706,11 @@ def constrained_implicit(
 
 def _normalize_to_fine(inputs, constraint):
     """Normalize all inputs to fine-variable space."""
+    fine, coarse = constraint.domain.attributes
     cleaned = []
     for f in inputs:
-        has_fine = constraint.fine in f.domain
-        has_coarse = constraint.coarse in f.domain
+        has_fine = fine in f.domain
+        has_coarse = coarse in f.domain
         if has_fine and has_coarse:
             cleaned.append(_constraint_slice(f, constraint))
         elif has_coarse and not has_fine:
@@ -733,8 +722,10 @@ def _normalize_to_fine(inputs, constraint):
 
 def _target_for_constraint(target_domain, constraint):
     """Adjust target domain and return (domain, post_op) for post-processing."""
-    has_fine = constraint.fine in target_domain
-    has_coarse = constraint.coarse in target_domain
+    fine, coarse = constraint.domain.attributes
+    n_fine = constraint.domain.shape[0]
+    has_fine = fine in target_domain
+    has_coarse = coarse in target_domain
 
     if not has_fine and not has_coarse:
         return target_domain, 'none'
@@ -743,16 +734,16 @@ def _target_for_constraint(target_domain, constraint):
     if has_coarse and not has_fine:
         attrs = list(target_domain.attributes)
         shape = list(target_domain.shape)
-        idx = attrs.index(constraint.coarse)
-        attrs[idx] = constraint.fine
-        shape[idx] = constraint.n_fine
+        idx = attrs.index(coarse)
+        attrs[idx] = fine
+        shape[idx] = n_fine
         return Domain(attrs, shape), 'coarsen'
     # Both — drop coarse from target, will expand later.
-    attrs = [a for a in target_domain.attributes if a != constraint.coarse]
+    attrs = [a for a in target_domain.attributes if a != coarse]
     shape = [
         s
         for a, s in zip(target_domain.attributes, target_domain.shape)
-        if a != constraint.coarse
+        if a != coarse
     ]
     return Domain(attrs, shape), 'expand'
 

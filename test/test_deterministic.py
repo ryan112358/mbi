@@ -8,26 +8,37 @@ import unittest
 
 import jax.numpy as jnp
 from mbi.clique_vector import CliqueVector
+from mbi.constraint import Constraint
 from mbi.domain import Domain
-from mbi.extensions.constraints import coarsen
-from mbi.extensions.constraints import constrained_implicit
-from mbi.extensions.constraints import constrained_shafer_shenoy
-from mbi.extensions.constraints import DeterministicConstraint
-from mbi.extensions.constraints import project_to_coarse
-from mbi.extensions.constraints import refine
+from mbi.extensions.message_passing import coarsen
+from mbi.extensions.message_passing import constrained_implicit
+from mbi.extensions.message_passing import constrained_shafer_shenoy
+from mbi.extensions.message_passing import project_to_coarse
+from mbi.extensions.message_passing import refine
 from mbi.factor import Factor
 from mbi.marginal_oracles import message_passing_shafer_shenoy
 import numpy as np
 from parameterized import parameterized
 
 
+def _mapping_constraint(fine, coarse, mapping):
+    """Shorthand: build a Constraint from variable names and a mapping array."""
+    n_fine = len(mapping)
+    n_coarse = int(np.max(mapping)) + 1
+    return Constraint(
+        domain=Domain([fine, coarse], [n_fine, n_coarse]), mapping=mapping
+    )
+
+
 def _make_constraint_factor(domain, constraint):
     """Build the explicit 0/-inf constraint factor for baseline comparison."""
-    shape = (constraint.n_fine, constraint.n_coarse)
+    fine, coarse = constraint.domain.attributes
+    n_fine, n_coarse = constraint.domain.shape
+    shape = (n_fine, n_coarse)
     vals = np.full(shape, -np.inf)
     for a, a_prime in enumerate(constraint.mapping):
         vals[a, a_prime] = 0.0
-    dom = Domain([constraint.fine, constraint.coarse], list(shape))
+    dom = Domain([fine, coarse], list(shape))
     return Factor(dom, jnp.array(vals)).transpose(
         domain.canonical(constraint.clique)
     )
@@ -35,7 +46,7 @@ def _make_constraint_factor(domain, constraint):
 
 def _baseline_marginals(domain, cliques, potentials, constraints, total=10.0):
     """Marginals via standard Shafer-Shenoy with explicit -inf constraints."""
-    if isinstance(constraints, DeterministicConstraint):
+    if isinstance(constraints, Constraint):
         constraints = [constraints]
     arrays = {cl: potentials[cl] for cl in cliques}
     all_cliques = list(cliques)
@@ -89,7 +100,7 @@ def _random_surjection(n_domain, n_range, rng):
 
 
 _SIMPLE_DOMAIN = Domain(['A', 'Ap', 'B', 'C'], [6, 3, 4, 5])
-_SIMPLE_CONSTRAINT = DeterministicConstraint(
+_SIMPLE_CONSTRAINT = _mapping_constraint(
     'A', 'Ap', np.array([0, 0, 1, 1, 2, 2])
 )
 _CLIQUE_CONFIGS = [
@@ -104,7 +115,7 @@ class TestCoarsenRefine(unittest.TestCase):
 
     def setUp(self):
         self.mapping = np.array([0, 0, 1, 1, 2, 2])
-        self.constraint = DeterministicConstraint('A', 'Ap', self.mapping)
+        self.constraint = _mapping_constraint('A', 'Ap', self.mapping)
 
     def test_coarsen_1d(self):
         dom = Domain(['A'], [6])
@@ -170,7 +181,7 @@ class TestCoarsenRefineRandomized(unittest.TestCase):
         n_fine = rng.integers(4, 20)
         n_coarse = rng.integers(2, n_fine)
         mapping = _random_surjection(n_fine, n_coarse, rng)
-        constraint = DeterministicConstraint('X', 'Y', mapping)
+        constraint = _mapping_constraint('X', 'Y', mapping)
 
         n_other = rng.integers(2, 6)
         dom = Domain(['X', 'Z'], [n_fine, n_other])
@@ -242,10 +253,8 @@ class TestMultipleConstraints(unittest.TestCase):
 
     def _two_constraint_setup(self):
         domain = Domain(['A', 'Ap', 'B', 'Bp', 'C'], [6, 3, 8, 4, 5])
-        c1 = DeterministicConstraint('A', 'Ap', np.array([0, 0, 1, 1, 2, 2]))
-        c2 = DeterministicConstraint(
-            'B', 'Bp', np.array([0, 0, 1, 1, 2, 2, 3, 3])
-        )
+        c1 = _mapping_constraint('A', 'Ap', np.array([0, 0, 1, 1, 2, 2]))
+        c2 = _mapping_constraint('B', 'Bp', np.array([0, 0, 1, 1, 2, 2, 3, 3]))
         return domain, (c1, c2)
 
     def test_two_constraints_basic(self):
@@ -276,12 +285,8 @@ class TestMultipleConstraints(unittest.TestCase):
         domain = Domain(
             ['A', 'Ap', 'B', 'Bp', 'C'], [n_a, n_ap, n_b, n_bp, n_c]
         )
-        c1 = DeterministicConstraint(
-            'A', 'Ap', _random_surjection(n_a, n_ap, rng)
-        )
-        c2 = DeterministicConstraint(
-            'B', 'Bp', _random_surjection(n_b, n_bp, rng)
-        )
+        c1 = _mapping_constraint('A', 'Ap', _random_surjection(n_a, n_ap, rng))
+        c2 = _mapping_constraint('B', 'Bp', _random_surjection(n_b, n_bp, rng))
         cliques = [('A', 'C'), ('Bp',)]
         total = 10.0
 
@@ -302,9 +307,7 @@ class TestMultipleConstraints(unittest.TestCase):
 class TestComplexTopologies(unittest.TestCase):
     """Tests with more complex graph structures."""
 
-    _CONSTRAINT = DeterministicConstraint(
-        'A', 'Ap', np.array([0, 0, 1, 1, 2, 2])
-    )
+    _CONSTRAINT = _mapping_constraint('A', 'Ap', np.array([0, 0, 1, 1, 2, 2]))
 
     def _check(self, domain, cliques, constraint=None):
         _assert_matches_baseline(
@@ -321,7 +324,7 @@ class TestComplexTopologies(unittest.TestCase):
 
     def test_fine_in_multiple_factors(self):
         domain = Domain(['A', 'Ap', 'B', 'C', 'D'], [10, 3, 4, 5, 3])
-        constraint = DeterministicConstraint(
+        constraint = _mapping_constraint(
             'A', 'Ap', np.array([0, 0, 0, 0, 1, 1, 1, 2, 2, 2])
         )
         self._check(
@@ -330,7 +333,7 @@ class TestComplexTopologies(unittest.TestCase):
 
     def test_coarse_in_multiple_factors(self):
         domain = Domain(['A', 'Ap', 'B', 'C', 'D'], [10, 3, 4, 5, 3])
-        constraint = DeterministicConstraint(
+        constraint = _mapping_constraint(
             'A', 'Ap', np.array([0, 0, 0, 0, 1, 1, 1, 2, 2, 2])
         )
         self._check(
@@ -339,7 +342,7 @@ class TestComplexTopologies(unittest.TestCase):
 
     def test_uneven_groups(self):
         domain = Domain(['A', 'Ap', 'B'], [10, 3, 4])
-        constraint = DeterministicConstraint(
+        constraint = _mapping_constraint(
             'A', 'Ap', np.array([0, 1, 2, 2, 2, 2, 2, 2, 2, 2])
         )
         self._check(domain, [('A', 'B'), ('Ap',)], constraint)
@@ -348,7 +351,7 @@ class TestComplexTopologies(unittest.TestCase):
         n_fine, n_coarse = 50, 5
         mapping = np.repeat(np.arange(n_coarse), n_fine // n_coarse)
         domain = Domain(['A', 'Ap', 'B'], [n_fine, n_coarse, 8])
-        constraint = DeterministicConstraint('A', 'Ap', mapping)
+        constraint = _mapping_constraint('A', 'Ap', mapping)
         self._check(domain, [('A', 'B'), ('Ap',)], constraint)
 
     def test_disconnected_components(self):
@@ -368,7 +371,7 @@ class TestComplexTopologies(unittest.TestCase):
     def test_identity_mapping(self):
         """1:1 mapping (permutation) — degenerate constraint."""
         domain = Domain(['A', 'Ap', 'B'], [4, 4, 5])
-        constraint = DeterministicConstraint('A', 'Ap', np.array([0, 1, 2, 3]))
+        constraint = _mapping_constraint('A', 'Ap', np.array([0, 1, 2, 3]))
         self._check(domain, [('A', 'B'), ('Ap',)], constraint)
 
     def test_orphan_coarse_variable(self):
@@ -407,21 +410,14 @@ class TestComplexTopologies(unittest.TestCase):
         self._check(domain, [('A', 'Ap', 'B'), ('A', 'Ap', 'C')])
 
 
-class TestDeterministicConstraint(unittest.TestCase):
+class TestConstraintProperties(unittest.TestCase):
 
     def test_properties(self):
-        c = DeterministicConstraint('A', 'Ap', np.array([0, 0, 1, 1, 2, 2]))
-        self.assertEqual(c.n_fine, 6)
-        self.assertEqual(c.n_coarse, 3)
+        c = _mapping_constraint('A', 'Ap', np.array([0, 0, 1, 1, 2, 2]))
+        self.assertEqual(c.domain.shape[0], 6)
+        self.assertEqual(c.domain.shape[1], 3)
         self.assertEqual(c.clique, ('A', 'Ap'))
-
-    def test_hash_eq(self):
-        c1 = DeterministicConstraint('A', 'Ap', np.array([0, 0, 1]))
-        c2 = DeterministicConstraint('A', 'Ap', np.array([0, 0, 1]))
-        c3 = DeterministicConstraint('A', 'Ap', np.array([0, 1, 1]))
-        self.assertEqual(c1, c2)
-        self.assertNotEqual(c1, c3)
-        self.assertEqual(hash(c1), hash(c2))
+        self.assertTrue(c.is_deterministic)
 
 
 if __name__ == '__main__':

@@ -22,6 +22,7 @@ import functools
 import itertools
 import math
 import string
+import warnings
 from collections.abc import Callable
 from typing import Protocol
 
@@ -32,6 +33,7 @@ import networkx as nx
 from . import junction_tree
 from .clique_utils import clique_mapping
 from .clique_vector import CliqueVector
+from .constraint import Constraint
 from .domain import Domain
 from .einsum import custom_einsum
 from .factor import Factor
@@ -60,12 +62,17 @@ class MarginalOracle(Protocol):
         self,
         potentials: CliqueVector,
         total: float = 1.0,
+        *,
+        constraints: tuple[Constraint, ...] = (),
     ) -> CliqueVector:
         """Compute marginals from potentials.
 
         Args:
             potentials: Potentials of a graphical model.
             total: Normalization constant. Defaults to 1.0.
+            constraints: Structural constraints. Oracles that support
+                constraints fold them into the potentials or handle
+                them natively; unsupported oracles raise ValueError.
 
         Returns:
             Marginals as a CliqueVector.
@@ -189,12 +196,34 @@ def einsum_fused(
     return sum_product(log_factors, dom, einsum_fn=_custom_einsum)
 
 
+def _fold_constraints(
+    potentials: CliqueVector,
+    constraints: tuple[Constraint, ...],
+) -> CliqueVector:
+    """Fold constraints into potentials as -inf/0 log-space factors."""
+    if not constraints:
+        return potentials
+    domain = potentials.domain
+    cliques = list(potentials.cliques)
+    arrays = {cl: potentials[cl] for cl in cliques}
+    for c in constraints:
+        cl = domain.canonical(c.clique)
+        factor = c.potential
+        if cl in arrays:
+            arrays[cl] = arrays[cl] + factor
+        else:
+            cliques.append(cl)
+            arrays[cl] = factor
+    return CliqueVector(domain, cliques, arrays)
+
+
 @jax.jit(static_argnames=["jtree", "return_messages"])
 def message_passing_hugin(
     potentials: CliqueVector,
     total: float = 1.0,
     jtree: nx.Graph | None = None,
     *,
+    constraints: tuple[Constraint, ...] = (),
     return_messages: bool = False,
 ) -> CliqueVector | tuple[CliqueVector, dict]:
     """HUGIN message passing with belief subtraction.
@@ -206,10 +235,20 @@ def message_passing_hugin(
         potentials: Potentials of a graphical model.
         total: Normalization constant.
         jtree: Pre-computed junction tree (optional).
+        constraints: Structural constraints folded into potentials as
+            ``-inf``/``0`` factors before inference.
         return_messages: If True, return ``(marginals, messages)`` where
             *messages* is a dict mapping ``(clique_i, clique_j)`` to the
             log-space message Factor sent from *i* to *j*.
     """
+    if constraints:
+        warnings.warn(
+            "HUGIN uses belief subtraction which is unstable with -inf"
+            " potentials introduced by constraints. Consider using"
+            " message_passing_shafer_shenoy instead.",
+            stacklevel=2,
+        )
+    potentials = _fold_constraints(potentials, constraints)
     if len(potentials.cliques) == 0:
         result = CliqueVector(potentials.domain, [], {})
         return (result, {}) if return_messages else result
@@ -244,6 +283,7 @@ def message_passing_shafer_shenoy(
     total: float = 1.0,
     jtree: nx.Graph | None = None,
     *,
+    constraints: tuple[Constraint, ...] = (),
     return_messages: bool = False,
 ) -> CliqueVector | tuple[CliqueVector, dict]:
     """Shafer-Shenoy message passing with neighbor collection.
@@ -256,10 +296,13 @@ def message_passing_shafer_shenoy(
         potentials: Potentials of a graphical model.
         total: Normalization constant.
         jtree: Pre-computed junction tree (optional).
+        constraints: Structural constraints folded into potentials as
+            ``-inf``/``0`` factors before inference.
         return_messages: If True, return ``(marginals, messages)`` where
             *messages* is a dict mapping ``(clique_i, clique_j)`` to the
             log-space message Factor sent from *i* to *j*.
     """
+    potentials = _fold_constraints(potentials, constraints)
     if len(potentials.cliques) == 0:
         result = CliqueVector(potentials.domain, [], {})
         return (result, {}) if return_messages else result
@@ -304,6 +347,7 @@ def message_passing_implicit(
     total: float = 1.0,
     jtree: nx.Graph | None = None,
     *,
+    constraints: tuple[Constraint, ...] = (),
     contraction: Callable = einsum_materialized,
     return_messages: bool = False,
 ) -> CliqueVector | tuple[CliqueVector, dict]:
@@ -320,11 +364,20 @@ def message_passing_implicit(
         potentials: Potentials of a graphical model.
         total: Normalization constant.
         jtree: Pre-computed junction tree (optional).
+        constraints: Structural constraints folded into potentials as
+            ``-inf``/``0`` factors before inference.
         contraction: Contraction function for log-space sum-product.
         return_messages: If True, return ``(marginals, messages)`` where
             *messages* is a dict mapping ``(clique_i, clique_j)`` to the
             log-space message Factor sent from *i* to *j*.
     """
+    if constraints and contraction is einsum_semistable:
+        raise ValueError(
+            "einsum_semistable is not compatible with constraints"
+            " (-inf potentials). Use einsum_fused or the default"
+            " einsum_materialized instead."
+        )
+    potentials = _fold_constraints(potentials, constraints)
     if len(potentials.cliques) == 0:
         result = CliqueVector(potentials.domain, [], {})
         return (result, {}) if return_messages else result
@@ -451,8 +504,18 @@ def default_oracle(
 def brute_force_marginals(
     potentials: CliqueVector,
     total: float = 1,
+    *,
+    constraints: tuple[Constraint, ...] = (),
 ) -> CliqueVector:
-    """Compute marginals from (log-space) potentials by materializing the full joint distribution."""
+    """Compute marginals from (log-space) potentials by materializing the full joint distribution.
+
+    Args:
+        potentials: Potentials of a graphical model.
+        total: Normalization constant.
+        constraints: Structural constraints folded into potentials as
+            ``-inf``/``0`` factors before inference.
+    """
+    potentials = _fold_constraints(potentials, constraints)
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
@@ -465,11 +528,24 @@ def einsum_marginals(
     potentials: CliqueVector,
     total: float = 1,
     einsum_fn: Callable = jnp.einsum,
+    *,
+    constraints: tuple[Constraint, ...] = (),
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials by using einsum.
 
     This is a "brute-force" approach and is not recommended in practice.
+
+    Args:
+        potentials: Potentials of a graphical model.
+        total: Normalization constant.
+        einsum_fn: Einsum function to use.
+        constraints: Structural constraints. Raises ValueError if non-empty.
     """
+    if constraints:
+        raise ValueError(
+            "einsum_marginals does not support constraints. Use"
+            " message_passing_shafer_shenoy or constrained_shafer_shenoy."
+        )
     # not strictly necessary, but consistent
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
@@ -499,6 +575,8 @@ def variable_elimination(
     clique: Clique,
     total: float = 1,
     evidence: dict[str, int] | None = None,
+    *,
+    constraints: tuple[Constraint, ...] = (),
 ) -> Factor:
     """Compute an out-of-model/unsupported marginal from the potentials.
 
@@ -507,11 +585,14 @@ def variable_elimination(
         clique: The subset of attributes whose marginal you want.
         total: The normalization factor.
         evidence: A dictionary mapping attribute names to observed values.
+        constraints: Structural constraints folded into potentials as
+            ``-inf``/``0`` factors before inference.
 
     Returns:
         The marginal defined over the domain of the input clique, where
         each entry is non-negative and sums to the input total.
     """
+    potentials = _fold_constraints(potentials, constraints)
     clique = tuple(clique)
     evidence = evidence or {}
     if set(clique) & set(evidence.keys()):
@@ -579,6 +660,8 @@ def bulk_variable_elimination(
     potentials: CliqueVector,
     marginal_queries: list[tuple[str, ...]],
     total: float = 1.0,
+    *,
+    constraints: tuple[Constraint, ...] = (),
 ) -> CliqueVector:
     """Compute the marginals of the graphical model with the given potentials.
 
@@ -594,10 +677,13 @@ def bulk_variable_elimination(
       potentials: The (log-space) potentials of a Graphical Model.
       marginal_queries: A list of cliques to obtain marginals for.
       total: The normalization factor.
+      constraints: Structural constraints folded into potentials as
+          ``-inf``/``0`` factors before inference.
 
     Returns:
       A CliqueVector with the marginals computed over the specified cliques.
     """
+    potentials = _fold_constraints(potentials, constraints)
     jitted = jax.jit(variable_elimination, static_argnums=(1,))
 
     # Async + parallel precompilation.
@@ -620,6 +706,8 @@ def calculate_many_marginals(
     marginal_queries: list[Clique],
     total: float = 1.0,
     belief_propagation_oracle: MarginalOracle = message_passing_stable,
+    *,
+    constraints: tuple[Constraint, ...] = (),
 ) -> CliqueVector:
     """Calculate marginals for all projections using belief propagation.
 
@@ -631,10 +719,13 @@ def calculate_many_marginals(
     Args:
         potentials: Potentials of a graphical model.
         marginal_queries: a list of cliques whose marginals are desired.
+        constraints: Structural constraints folded into potentials as
+            ``-inf``/``0`` factors before inference.
 
     Returns:
         A CliqueVector, where each defined over the list of input marginal_queries.
     """
+    potentials = _fold_constraints(potentials, constraints)
 
     domain = potentials.domain
     jtree = junction_tree.make_junction_tree(
@@ -711,7 +802,23 @@ def kron_query(
     query_factors: dict[str, jax.Array],
     total: float = 1,
     suffix: str = "_answer",
+    *,
+    constraints: tuple[Constraint, ...] = (),
 ) -> Factor:
+    """Compute a Kronecker-product query.
+
+    Args:
+        potentials: Potentials of a graphical model.
+        query_factors: Mapping from attribute names to query matrices.
+        total: Normalization constant.
+        suffix: Suffix for the answer attributes.
+        constraints: Structural constraints. Raises ValueError if non-empty.
+    """
+    if constraints:
+        raise ValueError(
+            "kron_query does not support constraints. Fold them into"
+            " potentials before calling kron_query."
+        )
     new_factors = {}
     extra_domain = {}
     extra_cliques = []
