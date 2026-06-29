@@ -544,7 +544,8 @@ def einsum_marginals(
     if constraints:
         raise ValueError(
             "einsum_marginals does not support constraints. Use"
-            " message_passing_shafer_shenoy or constrained_shafer_shenoy."
+            " message_passing_shafer_shenoy or"
+            " extensions.message_passing.shafer_shenoy."
         )
     # not strictly necessary, but consistent
     if len(potentials.cliques) == 0:

@@ -11,8 +11,8 @@ from mbi.clique_vector import CliqueVector
 from mbi.constraint import Constraint
 from mbi.domain import Domain
 from mbi.extensions.message_passing import coarsen
-from mbi.extensions.message_passing import constrained_implicit
-from mbi.extensions.message_passing import constrained_shafer_shenoy
+from mbi.extensions.message_passing import implicit as ext_implicit
+from mbi.extensions.message_passing import shafer_shenoy as ext_shafer_shenoy
 from mbi.extensions.message_passing import project_to_coarse
 from mbi.extensions.message_passing import refine
 from mbi.factor import Factor
@@ -63,7 +63,7 @@ def _baseline_marginals(domain, cliques, potentials, constraints, total=10.0):
     )
 
 
-_ORACLES = [constrained_shafer_shenoy, constrained_implicit]
+_ORACLES = [ext_shafer_shenoy, ext_implicit]
 
 
 def _assert_matches_baseline(

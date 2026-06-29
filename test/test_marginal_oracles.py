@@ -13,8 +13,8 @@ from mbi.marginal_oracles import (
 )
 from mbi.constraint import Constraint
 from mbi.extensions.message_passing import (
-    constrained_shafer_shenoy,
-    constrained_implicit,
+    shafer_shenoy as ext_shafer_shenoy,
+    implicit as ext_implicit,
 )
 import jax.numpy as jnp
 import numpy as np
@@ -57,11 +57,11 @@ _implicit_fused = functools.partial(
     message_passing_implicit, contraction=einsum_fused
 )
 _implicit_constraints_materialized = functools.partial(
-    constrained_implicit,
+    ext_implicit,
     contraction=einsum_materialized,
 )
 _implicit_constraints_fused = functools.partial(
-    constrained_implicit,
+    ext_implicit,
     contraction=einsum_fused,
 )
 
@@ -76,7 +76,7 @@ _ORACLES = [
     _implicit_fused,
     message_passing_hugin,
     message_passing_shafer_shenoy,
-    constrained_shafer_shenoy,
+    ext_shafer_shenoy,
     _implicit_constraints_materialized,
     _implicit_constraints_fused,
     _variable_elimination_oracle,
@@ -88,7 +88,7 @@ _STABLE_ORACLES = [
     marginal_oracles.brute_force_marginals,
     marginal_oracles.message_passing_shafer_shenoy,
     message_passing_shafer_shenoy,
-    constrained_shafer_shenoy,
+    ext_shafer_shenoy,
 ]
 
 _DOMAIN = Domain(["a", "b", "c", "d"], [2, 3, 4, 5])
@@ -328,9 +328,9 @@ _CONSTRAINED_CLIQUE_SETS = [
 ]
 
 _CONSTRAINED_ORACLES = [
-    constrained_shafer_shenoy,
-    functools.partial(constrained_implicit, contraction=einsum_materialized),
-    functools.partial(constrained_implicit, contraction=einsum_fused),
+    ext_shafer_shenoy,
+    functools.partial(ext_implicit, contraction=einsum_materialized),
+    functools.partial(ext_implicit, contraction=einsum_fused),
 ]
 
 # Baseline oracles that accept constraints= and fold them as -inf potentials.
