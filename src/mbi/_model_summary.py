@@ -74,6 +74,17 @@ class ModelSummary:
             self.total_jtree_cells + self.total_message_cells
         ) * self.bytes_per_cell
 
+    @property
+    def short(self) -> str:
+        """One-line summary: potentials, junction tree, and messages size."""
+        pot_bytes = self.total_clique_cells * self.bytes_per_cell
+        msg_bytes = self.total_message_cells * self.bytes_per_cell
+        return (
+            f"potentials={_fmt_bytes(pot_bytes)},"
+            f" jtree={_fmt_bytes(self.total_jtree_cells * self.bytes_per_cell)},"
+            f" messages={_fmt_bytes(msg_bytes)}"
+        )
+
     def __str__(self) -> str:
         dtype_name = {4: "float32", 8: "float64"}.get(
             self.bytes_per_cell, f"{self.bytes_per_cell}B"
