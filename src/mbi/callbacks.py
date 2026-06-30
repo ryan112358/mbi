@@ -14,6 +14,19 @@ from .domain import Domain
 from .factor import Projectable
 from .marginal_loss import LinearMeasurement
 
+_log_fn = print
+
+
+def set_log_fn(fn):
+    """Override the library-wide log function (default: print)."""
+    global _log_fn
+    _log_fn = fn
+
+
+def log(*args, **kwargs):
+    """Log a message using the configured log function."""
+    _log_fn(*args, **kwargs)
+
 
 def _pad(string: str, length: int):
     """Pads a string with spaces on both sides to a target length."""
@@ -35,12 +48,12 @@ class Callback:
             header = "|".join(
                 [_pad(x, 12) for x in ["step", *self.loss_fns.keys()]]
             )
-            print(header)
-            print("=" * len(header))
+            log(header)
+            log("=" * len(header))
         row = [self.loss_fns[key](marginals) for key in self.loss_fns]
         self._logs.append([self._step] + row)
         padded_step = str(self._step) + " " * (9 - len(str(self._step)))
-        print(padded_step, *[f"{v:.6f}"[:6] for v in row], sep="   |   ")
+        log(padded_step, *[f"{v:.6f}"[:6] for v in row], sep="   |   ")
         self._step += 1
 
     @property
