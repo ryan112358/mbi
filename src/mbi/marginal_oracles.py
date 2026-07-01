@@ -199,12 +199,18 @@ def einsum_fused(
 def _fold_constraints(
     potentials: CliqueVector,
     constraints: tuple[Constraint, ...],
-) -> CliqueVector:
-    """Fold constraints into potentials as -inf/0 log-space factors."""
+) -> tuple[CliqueVector, tuple[tuple[str, ...], ...]]:
+    """Fold constraints into potentials as -inf/0 log-space factors.
+
+    Returns:
+        A tuple of (expanded_potentials, input_cliques) where input_cliques
+        are the original cliques before constraint factors were added.
+    """
+    input_cliques = potentials.cliques
     if not constraints:
-        return potentials
+        return potentials, input_cliques
     domain = potentials.domain
-    cliques = list(potentials.cliques)
+    cliques = list(input_cliques)
     arrays = {cl: potentials[cl] for cl in cliques}
     for c in constraints:
         cl = domain.canonical(c.clique)
@@ -214,7 +220,7 @@ def _fold_constraints(
         else:
             cliques.append(cl)
             arrays[cl] = factor
-    return CliqueVector(domain, cliques, arrays)
+    return CliqueVector(domain, cliques, arrays), input_cliques
 
 
 @jax.jit(static_argnames=["jtree", "return_messages"])
@@ -248,7 +254,7 @@ def message_passing_hugin(
             " message_passing_shafer_shenoy instead.",
             stacklevel=2,
         )
-    potentials = _fold_constraints(potentials, constraints)
+    potentials, input_cliques = _fold_constraints(potentials, constraints)
     if len(potentials.cliques) == 0:
         result = CliqueVector(potentials.domain, [], {})
         return (result, {}) if return_messages else result
@@ -273,7 +279,7 @@ def message_passing_hugin(
         messages[(i, j)] = tau.logsumexp(sep)
         beliefs[j] = beliefs[j] + messages[(i, j)]
 
-    marginals = beliefs.normalize(total, log=True).exp().contract(cliques)
+    marginals = beliefs.normalize(total, log=True).exp().contract(input_cliques)
     return (marginals, messages) if return_messages else marginals
 
 
@@ -302,7 +308,7 @@ def message_passing_shafer_shenoy(
             *messages* is a dict mapping ``(clique_i, clique_j)`` to the
             log-space message Factor sent from *i* to *j*.
     """
-    potentials = _fold_constraints(potentials, constraints)
+    potentials, input_cliques = _fold_constraints(potentials, constraints)
     if len(potentials.cliques) == 0:
         result = CliqueVector(potentials.domain, [], {})
         return (result, {}) if return_messages else result
@@ -337,7 +343,7 @@ def message_passing_shafer_shenoy(
         beliefs[cl] = b
 
     beliefs = CliqueVector(potentials.domain, maximal_cliques, beliefs)
-    marginals = beliefs.normalize(total, log=True).exp().contract(cliques)
+    marginals = beliefs.normalize(total, log=True).exp().contract(input_cliques)
     return (marginals, messages) if return_messages else marginals
 
 
@@ -377,7 +383,7 @@ def message_passing_implicit(
             " (-inf potentials). Use einsum_fused or the default"
             " einsum_materialized instead."
         )
-    potentials = _fold_constraints(potentials, constraints)
+    potentials, input_cliques = _fold_constraints(potentials, constraints)
     if len(potentials.cliques) == 0:
         result = CliqueVector(potentials.domain, [], {})
         return (result, {}) if return_messages else result
@@ -423,10 +429,12 @@ def message_passing_implicit(
         input_messages = [val for key, val in messages.items() if key[1] == cl]
         inputs = input_potentials + input_messages
         for cl2 in inverse_mapping[cl]:
+            if cl2 not in input_cliques:
+                continue
             belief = contraction(inputs, domain.project(cl2))
             beliefs[cl2] = belief.normalize(total, log=True).exp()
 
-    marginals = CliqueVector(potentials.domain, cliques, beliefs)
+    marginals = CliqueVector(potentials.domain, input_cliques, beliefs)
     return (marginals, messages) if return_messages else marginals
 
 
@@ -441,21 +449,21 @@ def default_oracle(
     cliques: tuple[tuple[str, ...], ...] | None = None,
     domain: Domain | None = None,
     backend: str | None = None,
-    has_inf: bool = True,
+    has_constraints: bool = True,
 ) -> MarginalOracle:
     """Select the best oracle for the given setting.
 
     Chooses based on hardware backend, clique structure, and whether the
     potentials may contain ``-inf`` entries:
 
-    - **CPU**: ``message_passing_shafer_shenoy`` (has_inf=True) or
-      ``message_passing_hugin`` (has_inf=False). Implicit is not used on
+    - **CPU**: ``message_passing_shafer_shenoy`` (has_constraints=True) or
+      ``message_passing_hugin`` (has_constraints=False). Implicit is not used on
       CPU because the XLA compiler is less effective there.
     - **GPU/TPU, large cliques (>= 1M)**: ``message_passing_implicit``
-      regardless of ``has_inf`` (avoids materializing super-cliques).
-    - **GPU/TPU, has_inf=True** (default):
+      regardless of ``has_constraints`` (avoids materializing super-cliques).
+    - **GPU/TPU, has_constraints=True** (default):
       ``message_passing_shafer_shenoy`` (numerically robust).
-    - **GPU/TPU, has_inf=False**: ``message_passing_hugin`` (faster when
+    - **GPU/TPU, has_constraints=False**: ``message_passing_hugin`` (faster when
       ``-inf`` is absent).
 
     Args:
@@ -465,7 +473,7 @@ def default_oracle(
             estimate max clique size.
         backend: JAX backend string ('cpu', 'gpu', 'tpu'). If None, uses
             ``jax.default_backend()``.
-        has_inf: Whether potentials may contain ``-inf`` entries (e.g. from
+        has_constraints: Whether potentials may contain ``-inf`` entries (e.g. from
             deterministic constraints or structural zeros). When True
             (default), Shafer-Shenoy is preferred for numerical robustness.
             When False, Hugin may be used for better performance.
@@ -483,11 +491,11 @@ def default_oracle(
 
     # CPU: SS or Hugin always (XLA compiler less effective on CPU).
     if backend == "cpu":
-        if has_inf:
+        if has_constraints:
             return message_passing_shafer_shenoy
         return message_passing_hugin
 
-    # GPU/TPU with large cliques: implicit regardless of has_inf.
+    # GPU/TPU with large cliques: implicit regardless of has_constraints.
     if cliques is not None and domain is not None:
         jtree = junction_tree.make_junction_tree(domain, cliques)[0]
         max_cliques = junction_tree.maximal_cliques(jtree)
@@ -496,7 +504,7 @@ def default_oracle(
             return message_passing_implicit
 
     # GPU/TPU with small cliques.
-    if has_inf:
+    if has_constraints:
         return message_passing_shafer_shenoy
     return message_passing_hugin
 
@@ -515,13 +523,13 @@ def brute_force_marginals(
         constraints: Structural constraints folded into potentials as
             ``-inf``/``0`` factors before inference.
     """
-    potentials = _fold_constraints(potentials, constraints)
+    potentials, input_cliques = _fold_constraints(potentials, constraints)
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
     P = sum(potentials.arrays.values()).normalize(total, log=True).exp()
-    marginals = {cl: P.project(cl) for cl in potentials.cliques}
-    return CliqueVector(potentials.domain, potentials.cliques, marginals)
+    marginals = {cl: P.project(cl) for cl in input_cliques}
+    return CliqueVector(potentials.domain, input_cliques, marginals)
 
 
 def einsum_marginals(
@@ -593,7 +601,7 @@ def variable_elimination(
         The marginal defined over the domain of the input clique, where
         each entry is non-negative and sums to the input total.
     """
-    potentials = _fold_constraints(potentials, constraints)
+    potentials, _ = _fold_constraints(potentials, constraints)
     clique = tuple(clique)
     evidence = evidence or {}
     if set(clique) & set(evidence.keys()):
@@ -684,7 +692,7 @@ def bulk_variable_elimination(
     Returns:
       A CliqueVector with the marginals computed over the specified cliques.
     """
-    potentials = _fold_constraints(potentials, constraints)
+    potentials, _ = _fold_constraints(potentials, constraints)
     jitted = jax.jit(variable_elimination, static_argnums=(1,))
 
     # Async + parallel precompilation.
@@ -726,7 +734,7 @@ def calculate_many_marginals(
     Returns:
         A CliqueVector, where each defined over the list of input marginal_queries.
     """
-    potentials = _fold_constraints(potentials, constraints)
+    potentials, _ = _fold_constraints(potentials, constraints)
 
     domain = potentials.domain
     jtree = junction_tree.make_junction_tree(

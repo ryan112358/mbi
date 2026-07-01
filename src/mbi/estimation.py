@@ -20,7 +20,7 @@ import functools
 import math
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple
 
 import attr
@@ -32,6 +32,7 @@ import optax
 from . import marginal_loss, marginal_oracles
 from ._api import Model, Projectable  # noqa: F401  # pylint: disable=unused-import
 from .clique_vector import CliqueVector
+from .constraint import Constraint
 from .domain import Domain
 from .factor import Factor
 from .marginal_loss import LinearMeasurement, MarginalLossFn
@@ -53,6 +54,12 @@ class Estimator(ABC):
     ``_init`` / ``_step`` is the current solution (passed to ``callback_fn``).
     Override ``_callback_value`` only if the callback needs a transformation.
 
+    Attributes:
+        marginal_oracle: Callable for computing marginals from potentials.
+            If ``None``, auto-selected via ``default_oracle()``.
+        constraints: Structural constraints passed to the marginal oracle
+            at each step.  Accepts any sequence of ``Constraint`` objects.
+
     Examples of subclasses:
         * ``MirrorDescent``
         * ``DualAveraging``
@@ -62,6 +69,7 @@ class Estimator(ABC):
     """
 
     marginal_oracle: marginal_oracles.MarginalOracle | None
+    constraints: Sequence[Constraint] = attr.field(factory=tuple, hash=False)
 
     # ------------------------------------------------------------------
     # Abstract interface — subclasses must implement
@@ -103,9 +111,10 @@ class Estimator(ABC):
 
     def _oracle(self, cliques, domain):
         """Return the marginal oracle, falling back to ``default_oracle``."""
-        return self.marginal_oracle or marginal_oracles.default_oracle(
-            cliques, domain
+        oracle = self.marginal_oracle or marginal_oracles.default_oracle(
+            cliques, domain, has_constraints=bool(self.constraints)
         )
+        return functools.partial(oracle, constraints=self.constraints)
 
     # ------------------------------------------------------------------
     # Default implementations
@@ -140,13 +149,15 @@ class Estimator(ABC):
             )
 
         state = self._init(domain, loss_fn, known_total, **kwargs)
+        # De-alias so that donate_argnames in _multi_step is safe.
+        state = jax.tree.map(jnp.copy, state)
         for _ in range(math.ceil(iters / CALLBACK_EVERY)):
             state = self._multi_step(state, loss_fn, known_total)
             if callback_fn is not None:
                 callback_fn(self._callback_value(state, known_total))
         return self._finalize(state, known_total)
 
-    @jax.jit(static_argnames=["self"])
+    @jax.jit(static_argnames=["self"], donate_argnames=["state"])
     def _multi_step(self, state, loss_fn, known_total):
         """Run ``CALLBACK_EVERY`` optimization steps as a fused scan."""
 
@@ -323,6 +334,7 @@ class MirrorDescent(Estimator):
 
     stepsize: float | None = None
     marginal_oracle: marginal_oracles.MarginalOracle | None = None
+    constraints: Sequence[Constraint] = attr.field(factory=tuple, hash=False)
     mesh: jax.sharding.Mesh | None = None
 
     def _init(
@@ -414,6 +426,7 @@ class DualAveraging(Estimator):
     """
 
     marginal_oracle: marginal_oracles.MarginalOracle | None = None
+    constraints: Sequence[Constraint] = attr.field(factory=tuple, hash=False)
     mesh: jax.sharding.Mesh | None = None
 
     def _init(
@@ -494,6 +507,7 @@ class InteriorGradient(Estimator):
     """
 
     marginal_oracle: marginal_oracles.MarginalOracle | None = None
+    constraints: Sequence[Constraint] = attr.field(factory=tuple, hash=False)
     mesh: jax.sharding.Mesh | None = None
 
     def _init(
@@ -567,6 +581,7 @@ class LBFGS(Estimator):
     """
 
     marginal_oracle: marginal_oracles.MarginalOracle | None = None
+    constraints: Sequence[Constraint] = attr.field(factory=tuple, hash=False)
 
     def _init(self, domain, loss_fn, known_total, *, potentials=None):
         if potentials is None:
@@ -655,6 +670,7 @@ class UniversalAcceleratedMethod(Estimator):
     # cliques, making the quadratic upper bound too loose.  Once fixed,
     # linesearch can be re-enabled as the default.
     marginal_oracle: marginal_oracles.MarginalOracle | None = None
+    constraints: Sequence[Constraint] = attr.field(factory=tuple, hash=False)
     max_iter_search: int = 30
     target_acc: float = 0.0
     norm: int = 2
