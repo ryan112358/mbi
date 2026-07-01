@@ -20,7 +20,7 @@ import functools
 import math
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import Any, NamedTuple
 
 import attr
@@ -57,8 +57,6 @@ class Estimator(ABC):
     Attributes:
         marginal_oracle: Callable for computing marginals from potentials.
             If ``None``, auto-selected via ``default_oracle()``.
-        constraints: Structural constraints passed to the marginal oracle
-            at each step.  Accepts any sequence of ``Constraint`` objects.
 
     Examples of subclasses:
         * ``MirrorDescent``
@@ -69,7 +67,6 @@ class Estimator(ABC):
     """
 
     marginal_oracle: marginal_oracles.MarginalOracle | None
-    constraints: Sequence[Constraint] = attr.field(factory=tuple, hash=False)
 
     # ------------------------------------------------------------------
     # Abstract interface — subclasses must implement
@@ -91,11 +88,14 @@ class Estimator(ABC):
         state: Any,
         loss_fn: MarginalLossFn,
         known_total: float,
+        constraints: tuple[Constraint, ...] = (),
     ) -> Any:
         """Perform one optimization step (or one scan block)."""
 
     @abstractmethod
-    def _finalize(self, state: Any, known_total: float) -> Model:
+    def _finalize(
+        self, state: Any, known_total: float, constraints=()
+    ) -> Model:
         """Convert the final optimization state into a Model."""
 
     # ------------------------------------------------------------------
@@ -109,12 +109,12 @@ class Estimator(ABC):
         """
         return state[0]
 
-    def _oracle(self, cliques, domain):
+    def _oracle(self, cliques, domain, constraints=()):
         """Return the marginal oracle, falling back to ``default_oracle``."""
         oracle = self.marginal_oracle or marginal_oracles.default_oracle(
-            cliques, domain, has_constraints=bool(self.constraints)
+            cliques, domain, has_constraints=bool(constraints)
         )
-        return functools.partial(oracle, constraints=self.constraints)
+        return functools.partial(oracle, constraints=constraints)
 
     # ------------------------------------------------------------------
     # Default implementations
@@ -124,13 +124,14 @@ class Estimator(ABC):
         self,
         domain: Domain,
         loss_fn: MarginalLossFn | list[LinearMeasurement],
-        *,
         known_total: float | None = None,
+        constraints: tuple[Constraint, ...] = (),
         iters: int = 1000,
         callback_fn: Callable | None = None,
         **kwargs: Any,
     ) -> Model:
         """Estimate a Model from noisy marginal measurements."""
+        constraints = tuple(constraints)
         if isinstance(loss_fn, list):
             if known_total is None:
                 known_total = minimum_variance_unbiased_total(loss_fn)
@@ -141,28 +142,30 @@ class Estimator(ABC):
         # Nothing to optimize when there are no cliques.
         if not loss_fn.cliques:
             potentials = CliqueVector.zeros(domain, ())
-            oracle = self._oracle((), domain)
+            oracle = self._oracle((), domain, constraints=constraints)
             return MarkovRandomField(
                 potentials=potentials,
                 marginals=oracle(potentials, known_total),
                 total=known_total,
             )
 
-        state = self._init(domain, loss_fn, known_total, **kwargs)
+        state = self._init(
+            domain, loss_fn, known_total, constraints=constraints, **kwargs
+        )
         # De-alias so that donate_argnames in _multi_step is safe.
         state = jax.tree.map(jnp.copy, state)
         for _ in range(math.ceil(iters / CALLBACK_EVERY)):
-            state = self._multi_step(state, loss_fn, known_total)
+            state = self._multi_step(state, loss_fn, known_total, constraints)
             if callback_fn is not None:
                 callback_fn(self._callback_value(state, known_total))
-        return self._finalize(state, known_total)
+        return self._finalize(state, known_total, constraints=constraints)
 
     @jax.jit(static_argnames=["self"], donate_argnames=["state"])
-    def _multi_step(self, state, loss_fn, known_total):
+    def _multi_step(self, state, loss_fn, known_total, constraints=()):
         """Run ``CALLBACK_EVERY`` optimization steps as a fused scan."""
 
         def step(s, _):
-            return self._step(s, loss_fn, known_total), None
+            return self._step(s, loss_fn, known_total, constraints), None
 
         return jax.lax.scan(step, state, None, length=CALLBACK_EVERY)[0]
 
@@ -172,6 +175,7 @@ class Estimator(ABC):
         measurements: list[LinearMeasurement] | None = None,
         *,
         extra_cliques: list[tuple[str, ...]] | None = None,
+        constraints: tuple[Constraint, ...] = (),
     ) -> concurrent.futures.Future:
         """Warm up the JIT cache for ``estimate`` asynchronously.
 
@@ -179,6 +183,7 @@ class Estimator(ABC):
         Callers may ignore the return value (fire-and-forget) or call
         ``future.result()`` to block until compilation is done.
         """
+        constraints = tuple(constraints)
         all_measurements = list(measurements or [])
         for cl in extra_cliques or []:
             shape = (domain.project(cl).size(),)
@@ -192,9 +197,15 @@ class Estimator(ABC):
             all_measurements, domain
         )
         abstract_state = jax.eval_shape(
-            functools.partial(self._init, domain), loss_fn, 1.0
+            functools.partial(self._init, domain),
+            loss_fn,
+            1.0,
+            constraints=constraints,
         )
-        lowered = self._multi_step.lower(self, abstract_state, loss_fn, 1.0)
+        abstract_constraints = jax.eval_shape(lambda x: x, constraints)
+        lowered = self._multi_step.lower(
+            self, abstract_state, loss_fn, 1.0, abstract_constraints
+        )
         return _COMPILE_POOL.submit(lowered.compile)
 
 
@@ -334,7 +345,6 @@ class MirrorDescent(Estimator):
 
     stepsize: float | None = None
     marginal_oracle: marginal_oracles.MarginalOracle | None = None
-    constraints: Sequence[Constraint] = attr.field(factory=tuple, hash=False)
     mesh: jax.sharding.Mesh | None = None
 
     def _init(
@@ -344,13 +354,16 @@ class MirrorDescent(Estimator):
         known_total: float,
         *,
         potentials: CliqueVector | None = None,
+        constraints=(),
     ) -> MirrorDescentState:
         """Initialize the optimization state."""
         if potentials is None:
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
             potentials = potentials.expand(loss_fn.cliques)
-        marginal_oracle = self._oracle(loss_fn.cliques, domain)
+        marginal_oracle = self._oracle(
+            loss_fn.cliques, domain, constraints=constraints
+        )
         # Theory suggests the initial learning rate should be inversely
         # proportional to L. We also divide by scaling factor to account for
         # the fact that gradients are scaled up by a factor of known_total.
@@ -368,9 +381,12 @@ class MirrorDescent(Estimator):
         state: MirrorDescentState,
         loss_fn: marginal_loss.MarginalLossFn,
         known_total: jax.Array | float,
+        constraints=(),
     ) -> MirrorDescentState:
         """Perform a single mirror descent step."""
-        marginal_oracle = self._oracle(loss_fn.cliques, state.potentials.domain)
+        marginal_oracle = self._oracle(
+            loss_fn.cliques, state.potentials.domain, constraints=constraints
+        )
         mu = marginal_oracle(state.potentials, known_total)
         loss, dL = jax.value_and_grad(loss_fn)(mu)
         theta2 = state.potentials - state.alpha * dL
@@ -399,9 +415,12 @@ class MirrorDescent(Estimator):
         self,
         state: MirrorDescentState,
         known_total: float,
+        constraints=(),
     ) -> MarkovRandomField:
         marginal_oracle = self._oracle(
-            state.potentials.cliques, state.potentials.domain
+            state.potentials.cliques,
+            state.potentials.domain,
+            constraints=constraints,
         )
         marginals = marginal_oracle(state.potentials, known_total)
         return MarkovRandomField(
@@ -426,7 +445,6 @@ class DualAveraging(Estimator):
     """
 
     marginal_oracle: marginal_oracles.MarginalOracle | None = None
-    constraints: Sequence[Constraint] = attr.field(factory=tuple, hash=False)
     mesh: jax.sharding.Mesh | None = None
 
     def _init(
@@ -436,13 +454,16 @@ class DualAveraging(Estimator):
         known_total: float,
         *,
         potentials: CliqueVector | None = None,
+        constraints=(),
     ) -> DualAveragingState:
         """Initialize the optimization state."""
         if potentials is None:
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
             potentials = potentials.expand(loss_fn.cliques)
-        marginal_oracle = self._oracle(loss_fn.cliques, domain)
+        marginal_oracle = self._oracle(
+            loss_fn.cliques, domain, constraints=constraints
+        )
 
         D = np.sqrt(
             domain.size() * math.log(domain.size())
@@ -461,9 +482,12 @@ class DualAveraging(Estimator):
         state: DualAveragingState,
         loss_fn: marginal_loss.MarginalLossFn,
         known_total: jax.Array | float,
+        constraints=(),
     ) -> DualAveragingState:
         """Perform a single dual averaging step."""
-        marginal_oracle = self._oracle(loss_fn.cliques, state.w.domain)
+        marginal_oracle = self._oracle(
+            loss_fn.cliques, state.w.domain, constraints=constraints
+        )
         t = state.t
         c = 2.0 / (t + 1)
         beta = state.gamma * (t + 1) ** 1.5 / 2
@@ -482,11 +506,11 @@ class DualAveraging(Estimator):
         self,
         state: DualAveragingState,
         known_total: float,
+        constraints=(),
     ) -> MarkovRandomField:
         loss = marginal_loss.mle_loss_fn(state.w)
-        return LBFGS(
-            marginal_oracle=self.marginal_oracle,
-        ).estimate(state.w.domain, loss, known_total=known_total)
+        est = LBFGS(marginal_oracle=self.marginal_oracle)
+        return est.estimate(state.w.domain, loss, known_total, constraints)
 
 
 @attr.dataclass(frozen=True)
@@ -507,7 +531,6 @@ class InteriorGradient(Estimator):
     """
 
     marginal_oracle: marginal_oracles.MarginalOracle | None = None
-    constraints: Sequence[Constraint] = attr.field(factory=tuple, hash=False)
     mesh: jax.sharding.Mesh | None = None
 
     def _init(
@@ -517,13 +540,16 @@ class InteriorGradient(Estimator):
         known_total: float,
         *,
         potentials: CliqueVector | None = None,
+        constraints=(),
     ) -> InteriorGradientState:
         """Initialize the optimization state."""
         if potentials is None:
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
             potentials = potentials.expand(loss_fn.cliques)
-        marginal_oracle = self._oracle(loss_fn.cliques, domain)
+        marginal_oracle = self._oracle(
+            loss_fn.cliques, domain, constraints=constraints
+        )
 
         inv_lipschitz = 1.0 / (loss_fn.lipschitz or 1.0)
         x = y = z = marginal_oracle(potentials, known_total)
@@ -537,9 +563,12 @@ class InteriorGradient(Estimator):
         state: InteriorGradientState,
         loss_fn: marginal_loss.MarginalLossFn,
         known_total: jax.Array | float,
+        constraints=(),
     ) -> InteriorGradientState:
         """Perform a single interior gradient step."""
-        marginal_oracle = self._oracle(loss_fn.cliques, state.potentials.domain)
+        marginal_oracle = self._oracle(
+            loss_fn.cliques, state.potentials.domain, constraints=constraints
+        )
         l = state.inv_lipschitz
         a = (((state.c * l) ** 2 + 4 * state.c * l) ** 0.5 - l * state.c) / 2
         y = (1 - a) * state.x + a * state.z
@@ -556,11 +585,11 @@ class InteriorGradient(Estimator):
         self,
         state: InteriorGradientState,
         known_total: float,
+        constraints=(),
     ) -> MarkovRandomField:
         loss = marginal_loss.mle_loss_fn(state.x)
-        return LBFGS(
-            marginal_oracle=self.marginal_oracle,
-        ).estimate(state.x.domain, loss, known_total=known_total)
+        est = LBFGS(marginal_oracle=self.marginal_oracle)
+        return est.estimate(state.x.domain, loss, known_total, constraints)
 
 
 @attr.dataclass(frozen=True)
@@ -581,9 +610,10 @@ class LBFGS(Estimator):
     """
 
     marginal_oracle: marginal_oracles.MarginalOracle | None = None
-    constraints: Sequence[Constraint] = attr.field(factory=tuple, hash=False)
 
-    def _init(self, domain, loss_fn, known_total, *, potentials=None):
+    def _init(
+        self, domain, loss_fn, known_total, *, potentials=None, constraints=()
+    ):
         if potentials is None:
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
@@ -595,8 +625,10 @@ class LBFGS(Estimator):
         opt_state = optimizer.init(potentials)
         return LBFGSState(potentials, opt_state)
 
-    def _step(self, state, loss_fn, known_total):
-        marginal_oracle = self._oracle(loss_fn.cliques, state.potentials.domain)
+    def _step(self, state, loss_fn, known_total, constraints=()):
+        marginal_oracle = self._oracle(
+            loss_fn.cliques, state.potentials.domain, constraints=constraints
+        )
         optimizer = optax.lbfgs(
             memory_size=1,
             linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
@@ -623,9 +655,11 @@ class LBFGS(Estimator):
         )
         return marginal_oracle(state.potentials, known_total)
 
-    def _finalize(self, state, known_total):
+    def _finalize(self, state, known_total, constraints=()):
         marginal_oracle = self._oracle(
-            state.potentials.cliques, state.potentials.domain
+            state.potentials.cliques,
+            state.potentials.domain,
+            constraints=constraints,
         )
         marginals = marginal_oracle(state.potentials, known_total)
         return MarkovRandomField(
@@ -670,18 +704,21 @@ class UniversalAcceleratedMethod(Estimator):
     # cliques, making the quadratic upper bound too loose.  Once fixed,
     # linesearch can be re-enabled as the default.
     marginal_oracle: marginal_oracles.MarginalOracle | None = None
-    constraints: Sequence[Constraint] = attr.field(factory=tuple, hash=False)
     max_iter_search: int = 30
     target_acc: float = 0.0
     norm: int = 2
     linesearch: bool = False
 
-    def _init(self, domain, loss_fn, known_total, *, potentials=None):
+    def _init(
+        self, domain, loss_fn, known_total, *, potentials=None, constraints=()
+    ):
         if potentials is None:
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
             potentials = potentials.expand(loss_fn.cliques)
-        marginal_oracle = self._oracle(loss_fn.cliques, domain)
+        marginal_oracle = self._oracle(
+            loss_fn.cliques, domain, constraints=constraints
+        )
         # Project onto unit simplex (total=1) for numerical stability.
         x = z = marginal_oracle(potentials, 1.0)
         # f_scaled(p) = loss_fn(N*p) has Lipschitz-continuous gradient with
@@ -700,8 +737,10 @@ class UniversalAcceleratedMethod(Estimator):
             iter_search=jnp.asarray(0),
         )
 
-    def _step(self, state, loss_fn, known_total):
-        marginal_oracle = self._oracle(loss_fn.cliques, state.x.domain)
+    def _step(self, state, loss_fn, known_total, constraints=()):
+        marginal_oracle = self._oracle(
+            loss_fn.cliques, state.x.domain, constraints=constraints
+        )
 
         # Project onto unit simplex (total=1).
         def dual_proj(u):
@@ -787,10 +826,9 @@ class UniversalAcceleratedMethod(Estimator):
         # Scale back to N-simplex for user-facing callbacks.
         return state.x * known_total
 
-    def _finalize(self, state, known_total):
+    def _finalize(self, state, known_total, constraints=()):
         # Scale back to N-simplex and recover potentials via MLE.
         marginals = state.x * known_total
         loss = marginal_loss.mle_loss_fn(marginals)
-        return LBFGS(
-            marginal_oracle=self.marginal_oracle,
-        ).estimate(marginals.domain, loss, known_total=known_total)
+        est = LBFGS(marginal_oracle=self.marginal_oracle)
+        return est.estimate(marginals.domain, loss, known_total, constraints)
