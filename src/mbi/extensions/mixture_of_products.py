@@ -170,7 +170,7 @@ class MixtureOfProductsEstimator(Estimator):
         opt_state = self.optimizer.init(model)
         return MixtureOfProductsState(model, opt_state)
 
-    def _step(self, state, loss_fn, known_total):
+    def _step(self, state, loss_fn, known_total, constraints=()):
         """Run one gradient step."""
 
         def model_loss(m):
@@ -185,5 +185,5 @@ class MixtureOfProductsEstimator(Estimator):
         model = optax.apply_updates(state.model, updates)
         return MixtureOfProductsState(model, opt_state)
 
-    def _finalize(self, state, known_total):
+    def _finalize(self, state, known_total, constraints=()):
         return state.model

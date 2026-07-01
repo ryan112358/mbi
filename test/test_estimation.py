@@ -200,8 +200,8 @@ class TestEstimation(unittest.TestCase):
             measurements.append(marginal_loss.LinearMeasurement(x, cl, 1.0))
         loss_fn = marginal_loss.from_linear_measurements(measurements, domain)
 
-        est = estimator_cls(constraints=[c])
-        model = est.estimate(domain, loss_fn, known_total=1.0, iters=100)
+        est = estimator_cls()
+        model = est.estimate(domain, loss_fn, known_total=1.0, iters=100, constraints=[c])
 
         # Marginals should only contain the input cliques.
         self.assertEqual(set(model.cliques), set(cliques))
