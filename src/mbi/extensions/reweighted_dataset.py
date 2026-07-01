@@ -65,7 +65,7 @@ class ReweightedDatasetEstimator(Estimator):
         opt_state = self.optimizer.init(log_weights)
         return ReweightedDatasetState(log_weights, opt_state)
 
-    def _step(self, state, loss_fn, known_total):
+    def _step(self, state, loss_fn, known_total, constraints=()):
         """Run one gradient step."""
         domain = self.seed_data.domain
         jax_data = self._jax_data
@@ -88,6 +88,6 @@ class ReweightedDatasetEstimator(Estimator):
         weights = jax.nn.softmax(state.log_weights) * known_total
         return JaxDataset(self._jax_data, self.seed_data.domain, weights)
 
-    def _finalize(self, state, known_total):
+    def _finalize(self, state, known_total, constraints=()):
         weights = jax.nn.softmax(state.log_weights) * known_total
         return JaxDataset(self._jax_data, self.seed_data.domain, weights)
