@@ -149,13 +149,15 @@ class Estimator(ABC):
             )
 
         state = self._init(domain, loss_fn, known_total, **kwargs)
+        # De-alias so that donate_argnames in _multi_step is safe.
+        state = jax.tree.map(jnp.copy, state)
         for _ in range(math.ceil(iters / CALLBACK_EVERY)):
             state = self._multi_step(state, loss_fn, known_total)
             if callback_fn is not None:
                 callback_fn(self._callback_value(state, known_total))
         return self._finalize(state, known_total)
 
-    @jax.jit(static_argnames=["self"])
+    @jax.jit(static_argnames=["self"], donate_argnames=["state"])
     def _multi_step(self, state, loss_fn, known_total):
         """Run ``CALLBACK_EVERY`` optimization steps as a fused scan."""
 

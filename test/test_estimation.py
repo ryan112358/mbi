@@ -144,3 +144,68 @@ class TestEstimation(unittest.TestCase):
         est = estimation.MirrorDescent()
         future = est.precompile(_DOMAIN, extra_cliques=[("a", "b"), ("b", "c")])
         future.result()  # Should not raise.
+
+    def test_precompile_cache_hit(self):
+        """precompile() warms the cache so estimate() doesn't recompile."""
+        import jax
+
+        cliques = [("a", "b"), ("b", "c")]
+        measurements = fake_measurements(cliques)
+        loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
+        est = estimation.MirrorDescent()
+        future = est.precompile(_DOMAIN, measurements)
+        future.result()
+
+        compiled_count = 0
+        original_lower = jax.stages.Lowered.compile
+
+        def counting_compile(self_lowered, *args, **kwargs):
+            nonlocal compiled_count
+            compiled_count += 1
+            return original_lower(self_lowered, *args, **kwargs)
+
+        jax.stages.Lowered.compile = counting_compile
+        try:
+            est.estimate(_DOMAIN, loss_fn, known_total=100.0, iters=10)
+        finally:
+            jax.stages.Lowered.compile = original_lower
+        self.assertEqual(
+            compiled_count, 0, "Expected cache hit after precompile"
+        )
+
+    @parameterized.expand([
+        (est,)
+        for est in [
+            estimation.MirrorDescent,
+            estimation.DualAveraging,
+            estimation.InteriorGradient,
+            estimation.LBFGS,
+            estimation.UniversalAcceleratedMethod,
+        ]
+    ])
+    def test_estimator_with_constraints(self, estimator_cls):
+        """Estimator with constraints produces valid marginals."""
+        from mbi import Constraint
+
+        domain = Domain(["x", "xp", "y"], [4, 2, 3])
+        mapping = np.array([0, 0, 1, 1])
+        c = Constraint(domain=domain.project(("x", "xp")), mapping=mapping)
+
+        cliques = [("x", "y")]
+        P = Factor.random(domain.project(("x", "y")))
+        P = P / P.sum()
+        measurements = []
+        for cl in cliques:
+            x = P.project(cl).datavector()
+            measurements.append(marginal_loss.LinearMeasurement(x, cl, 1.0))
+        loss_fn = marginal_loss.from_linear_measurements(measurements, domain)
+
+        est = estimator_cls(constraints=[c])
+        model = est.estimate(domain, loss_fn, known_total=1.0, iters=100)
+
+        # Marginals should only contain the input cliques.
+        self.assertEqual(set(model.cliques), set(cliques))
+        # Total should be preserved.
+        np.testing.assert_allclose(
+            model.project(("x",)).datavector().sum(), 1.0, atol=1e-4
+        )
