@@ -20,7 +20,7 @@ import functools
 import math
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple
 
 import attr
@@ -66,7 +66,7 @@ class Estimator(ABC):
         * ``extensions.ReweightedDatasetEstimator``
     """
 
-    marginal_oracle: marginal_oracles.MarginalOracle | None
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None
 
     # ------------------------------------------------------------------
     # Abstract interface — subclasses must implement
@@ -88,7 +88,7 @@ class Estimator(ABC):
         state: Any,
         loss_fn: MarginalLossFn,
         known_total: float,
-        constraints: tuple[Constraint, ...] = (),
+        constraints: Sequence[Constraint] = (),
     ) -> Any:
         """Perform one optimization step (or one scan block)."""
 
@@ -102,7 +102,7 @@ class Estimator(ABC):
     # Overridable hooks
     # ------------------------------------------------------------------
 
-    def _callback_value(self, state: Any, known_total: float) -> Any:  # pylint: disable=unused-argument
+    def _callback_value(self, state: Any, known_total: float, constraints=()) -> Any:  # pylint: disable=unused-argument
         """Extract the value to pass to ``callback_fn``.
 
         Default: ``state[0]`` (first element of the state tuple).
@@ -125,12 +125,19 @@ class Estimator(ABC):
         domain: Domain,
         loss_fn: MarginalLossFn | list[LinearMeasurement],
         known_total: float | None = None,
-        constraints: tuple[Constraint, ...] = (),
+        constraints: Sequence[Constraint] = (),
         iters: int = 1000,
         callback_fn: Callable | None = None,
+        warm_start: Model | None = None,
         **kwargs: Any,
     ) -> Model:
-        """Estimate a Model from noisy marginal measurements."""
+        """Estimate a Model from noisy marginal measurements.
+
+        If ``warm_start`` is provided, the estimator initializes from a
+        previously estimated model instead of from scratch.  For potential-based
+        estimators the model's potentials are expanded to cover any new cliques;
+        for MixtureOfProducts the model is used directly.
+        """
         constraints = tuple(constraints)
         if isinstance(loss_fn, list):
             if known_total is None:
@@ -150,14 +157,21 @@ class Estimator(ABC):
             )
 
         state = self._init(
-            domain, loss_fn, known_total, constraints=constraints, **kwargs
+            domain,
+            loss_fn,
+            known_total,
+            constraints=constraints,
+            warm_start=warm_start,
+            **kwargs,
         )
         # De-alias so that donate_argnames in _multi_step is safe.
         state = jax.tree.map(jnp.copy, state)
         for _ in range(math.ceil(iters / CALLBACK_EVERY)):
             state = self._multi_step(state, loss_fn, known_total, constraints)
             if callback_fn is not None:
-                callback_fn(self._callback_value(state, known_total))
+                callback_fn(
+                    self._callback_value(state, known_total, constraints)
+                )
         return self._finalize(state, known_total, constraints=constraints)
 
     @jax.jit(static_argnames=["self"], donate_argnames=["state"])
@@ -175,7 +189,7 @@ class Estimator(ABC):
         measurements: list[LinearMeasurement] | None = None,
         *,
         extra_cliques: list[tuple[str, ...]] | None = None,
-        constraints: tuple[Constraint, ...] = (),
+        constraints: Sequence[Constraint] = (),
     ) -> concurrent.futures.Future:
         """Warm up the JIT cache for ``estimate`` asynchronously.
 
@@ -354,9 +368,12 @@ class MirrorDescent(Estimator):
         known_total: float,
         *,
         potentials: CliqueVector | None = None,
+        warm_start=None,
         constraints=(),
     ) -> MirrorDescentState:
         """Initialize the optimization state."""
+        if warm_start is not None and potentials is None:
+            potentials = warm_start.potentials
         if potentials is None:
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
@@ -454,9 +471,12 @@ class DualAveraging(Estimator):
         known_total: float,
         *,
         potentials: CliqueVector | None = None,
+        warm_start=None,
         constraints=(),
     ) -> DualAveragingState:
         """Initialize the optimization state."""
+        if warm_start is not None and potentials is None:
+            potentials = warm_start.potentials
         if potentials is None:
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
@@ -508,6 +528,10 @@ class DualAveraging(Estimator):
         known_total: float,
         constraints=(),
     ) -> MarkovRandomField:
+        # Recover potentials from the weighted-average marginals via MLE.
+        # NOTE: warm_start from DA (and IG/UAM) uses these recovered
+        # potentials, not the internal averaging state — so it seeds a
+        # reasonable initial guess rather than exactly continuing.
         loss = marginal_loss.mle_loss_fn(state.w)
         est = LBFGS(marginal_oracle=self.marginal_oracle)
         return est.estimate(state.w.domain, loss, known_total, constraints)
@@ -540,9 +564,12 @@ class InteriorGradient(Estimator):
         known_total: float,
         *,
         potentials: CliqueVector | None = None,
+        warm_start=None,
         constraints=(),
     ) -> InteriorGradientState:
         """Initialize the optimization state."""
+        if warm_start is not None and potentials is None:
+            potentials = warm_start.potentials
         if potentials is None:
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
@@ -612,8 +639,17 @@ class LBFGS(Estimator):
     marginal_oracle: marginal_oracles.MarginalOracle | None = None
 
     def _init(
-        self, domain, loss_fn, known_total, *, potentials=None, constraints=()
+        self,
+        domain,
+        loss_fn,
+        known_total,
+        *,
+        potentials=None,
+        warm_start=None,
+        constraints=(),
     ):
+        if warm_start is not None and potentials is None:
+            potentials = warm_start.potentials
         if potentials is None:
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
@@ -649,9 +685,15 @@ class LBFGS(Estimator):
         potentials = optax.apply_updates(state.potentials, updates)
         return LBFGSState(potentials, opt_state)
 
-    def _callback_value(self, state, known_total):
+    def _callback_value(self, state, known_total, constraints=()):
+        # Unlike MD/DA/IG, LBFGSState stores only potentials (not marginals)
+        # to avoid an extra oracle call on every step.  Marginals are
+        # recomputed here on-demand since callbacks fire only every
+        # CALLBACK_EVERY steps.
         marginal_oracle = self._oracle(
-            state.potentials.cliques, state.potentials.domain
+            state.potentials.cliques,
+            state.potentials.domain,
+            constraints=constraints,
         )
         return marginal_oracle(state.potentials, known_total)
 
@@ -710,8 +752,17 @@ class UniversalAcceleratedMethod(Estimator):
     linesearch: bool = False
 
     def _init(
-        self, domain, loss_fn, known_total, *, potentials=None, constraints=()
+        self,
+        domain,
+        loss_fn,
+        known_total,
+        *,
+        potentials=None,
+        warm_start=None,
+        constraints=(),
     ):
+        if warm_start is not None and potentials is None:
+            potentials = warm_start.potentials
         if potentials is None:
             potentials = CliqueVector.zeros(domain, loss_fn.cliques)
         else:
@@ -822,7 +873,7 @@ class UniversalAcceleratedMethod(Estimator):
         carry = jax.lax.while_loop(cond_fun, body_fun, state)
         return carry._replace(accept=jnp.asarray(False))
 
-    def _callback_value(self, state, known_total):
+    def _callback_value(self, state, known_total, constraints=()):
         # Scale back to N-simplex for user-facing callbacks.
         return state.x * known_total
 

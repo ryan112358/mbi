@@ -23,7 +23,7 @@ import itertools
 import math
 import string
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Protocol
 
 import jax
@@ -63,7 +63,7 @@ class MarginalOracle(Protocol):
         potentials: CliqueVector,
         total: float = 1.0,
         *,
-        constraints: tuple[Constraint, ...] = (),
+        constraints: Sequence[Constraint] = (),
     ) -> CliqueVector:
         """Compute marginals from potentials.
 
@@ -198,7 +198,7 @@ def einsum_fused(
 
 def _fold_constraints(
     potentials: CliqueVector,
-    constraints: tuple[Constraint, ...],
+    constraints: Sequence[Constraint],
 ) -> tuple[CliqueVector, tuple[tuple[str, ...], ...]]:
     """Fold constraints into potentials as -inf/0 log-space factors.
 
@@ -229,7 +229,7 @@ def message_passing_hugin(
     total: float = 1.0,
     jtree: nx.Graph | None = None,
     *,
-    constraints: tuple[Constraint, ...] = (),
+    constraints: Sequence[Constraint] = (),
     return_messages: bool = False,
 ) -> CliqueVector | tuple[CliqueVector, dict]:
     """HUGIN message passing with belief subtraction.
@@ -289,7 +289,7 @@ def message_passing_shafer_shenoy(
     total: float = 1.0,
     jtree: nx.Graph | None = None,
     *,
-    constraints: tuple[Constraint, ...] = (),
+    constraints: Sequence[Constraint] = (),
     return_messages: bool = False,
 ) -> CliqueVector | tuple[CliqueVector, dict]:
     """Shafer-Shenoy message passing with neighbor collection.
@@ -353,7 +353,7 @@ def message_passing_implicit(
     total: float = 1.0,
     jtree: nx.Graph | None = None,
     *,
-    constraints: tuple[Constraint, ...] = (),
+    constraints: Sequence[Constraint] = (),
     contraction: Callable = einsum_materialized,
     return_messages: bool = False,
 ) -> CliqueVector | tuple[CliqueVector, dict]:
@@ -513,7 +513,7 @@ def brute_force_marginals(
     potentials: CliqueVector,
     total: float = 1,
     *,
-    constraints: tuple[Constraint, ...] = (),
+    constraints: Sequence[Constraint] = (),
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials by materializing the full joint distribution.
 
@@ -537,7 +537,7 @@ def einsum_marginals(
     total: float = 1,
     einsum_fn: Callable = jnp.einsum,
     *,
-    constraints: tuple[Constraint, ...] = (),
+    constraints: Sequence[Constraint] = (),
 ) -> CliqueVector:
     """Compute marginals from (log-space) potentials by using einsum.
 
@@ -585,7 +585,7 @@ def variable_elimination(
     total: float = 1,
     evidence: dict[str, int] | None = None,
     *,
-    constraints: tuple[Constraint, ...] = (),
+    constraints: Sequence[Constraint] = (),
 ) -> Factor:
     """Compute an out-of-model/unsupported marginal from the potentials.
 
@@ -670,7 +670,7 @@ def bulk_variable_elimination(
     marginal_queries: list[tuple[str, ...]],
     total: float = 1.0,
     *,
-    constraints: tuple[Constraint, ...] = (),
+    constraints: Sequence[Constraint] = (),
 ) -> CliqueVector:
     """Compute the marginals of the graphical model with the given potentials.
 
@@ -716,7 +716,7 @@ def calculate_many_marginals(
     total: float = 1.0,
     belief_propagation_oracle: MarginalOracle = message_passing_stable,
     *,
-    constraints: tuple[Constraint, ...] = (),
+    constraints: Sequence[Constraint] = (),
 ) -> CliqueVector:
     """Calculate marginals for all projections using belief propagation.
 
@@ -812,7 +812,7 @@ def kron_query(
     total: float = 1,
     suffix: str = "_answer",
     *,
-    constraints: tuple[Constraint, ...] = (),
+    constraints: Sequence[Constraint] = (),
 ) -> Factor:
     """Compute a Kronecker-product query.
 

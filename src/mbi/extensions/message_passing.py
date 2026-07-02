@@ -19,7 +19,7 @@ Usage::
 from __future__ import annotations
 
 import collections
-import collections.abc
+from collections.abc import Callable, Sequence
 
 
 import jax
@@ -339,7 +339,7 @@ def shafer_shenoy(
     potentials: CliqueVector,
     total: float = 1,
     jtree: nx.Graph | None = None,
-    constraints: tuple[Constraint, ...] = (),
+    constraints: Sequence[Constraint] = (),
 ) -> CliqueVector:
     """Compute marginals using Shafer-Shenoy with constraint-aware shortcuts.
 
@@ -505,10 +505,8 @@ def implicit(
     total: float = 1,
     jtree: nx.Graph | None = None,
     *,
-    constraints: tuple[Constraint, ...] = (),
-    contraction: collections.abc.Callable = (
-        marginal_oracles.einsum_materialized
-    ),
+    constraints: Sequence[Constraint] = (),
+    contraction: Callable = marginal_oracles.einsum_materialized,
 ) -> CliqueVector:
     """Hybrid message passing: implicit for standard cliques, SS for constraints.
 

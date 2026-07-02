@@ -162,11 +162,13 @@ class MixtureOfProductsEstimator(Estimator):
                 self, "optimizer", optax.adam(self.learning_rate)
             )
 
-    def _init(self, domain, loss_fn, known_total, **kwargs):
+    def _init(self, domain, loss_fn, known_total, *, warm_start=None, **kwargs):
         """Initialize model and optimizer state."""
         model = MixtureOfProducts.random(
             domain, known_total, self.num_components, self.seed
         )
+        if warm_start is not None:
+            model = warm_start
         opt_state = self.optimizer.init(model)
         return MixtureOfProductsState(model, opt_state)
 

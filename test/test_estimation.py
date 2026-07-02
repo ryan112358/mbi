@@ -174,14 +174,11 @@ class TestEstimation(unittest.TestCase):
         )
 
     @parameterized.expand([
-        (est,)
-        for est in [
-            estimation.MirrorDescent,
-            estimation.DualAveraging,
-            estimation.InteriorGradient,
-            estimation.LBFGS,
-            estimation.UniversalAcceleratedMethod,
-        ]
+        estimation.MirrorDescent,
+        estimation.DualAveraging,
+        estimation.InteriorGradient,
+        estimation.LBFGS,
+        estimation.UniversalAcceleratedMethod,
     ])
     def test_estimator_with_constraints(self, estimator_cls):
         """Estimator with constraints produces valid marginals."""
@@ -211,3 +208,86 @@ class TestEstimation(unittest.TestCase):
         np.testing.assert_allclose(
             model.project(("x",)).datavector().sum(), 1.0, atol=1e-4
         )
+
+    @parameterized.expand([
+        estimation.MirrorDescent,
+        estimation.DualAveraging,
+        estimation.InteriorGradient,
+        estimation.LBFGS,
+        estimation.UniversalAcceleratedMethod,
+    ])
+    def test_warm_start_expanding_cliques(self, estimator_cls):
+        """Warm-starting with new cliques produces a valid model."""
+        cliques1 = [("a", "b")]
+        measurements1 = fake_measurements(cliques1)
+
+        est = estimator_cls()
+        model1 = est.estimate(_DOMAIN, measurements1, known_total=1.0, iters=50)
+
+        # Round 2 adds a new clique.
+        cliques2 = [("a", "b"), ("b", "c")]
+        measurements2 = fake_measurements(cliques2)
+        model2 = est.estimate(
+            _DOMAIN,
+            measurements2,
+            known_total=1.0,
+            iters=50,
+            warm_start=model1,
+        )
+
+        np.testing.assert_allclose(
+            model2.project(("a",)).datavector().sum(), 1.0, atol=1e-4
+        )
+        # Model 2 should have the expanded clique set.
+        self.assertTrue(
+            set(cliques2).issubset(
+                {_DOMAIN.canonical(c) for c in model2.cliques}
+            )
+        )
+
+    def test_warm_start_legacy_potentials(self):
+        """Legacy potentials= kwarg still works for backwards compatibility."""
+        cliques = [("a", "b"), ("b", "c")]
+        measurements = fake_measurements(cliques)
+        loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
+
+        est = estimation.MirrorDescent()
+        model1 = est.estimate(_DOMAIN, loss_fn, known_total=1.0, iters=50)
+
+        # Warm-start via legacy potentials= kwarg.
+        model2 = est.estimate(
+            _DOMAIN,
+            loss_fn,
+            known_total=1.0,
+            iters=50,
+            potentials=model1.potentials,
+        )
+
+        np.testing.assert_allclose(
+            model2.project(("a",)).datavector().sum(), 1.0, atol=1e-4
+        )
+
+    def test_warm_start_mixture_of_products(self):
+        """MixtureOfProducts warm-start reuses the model directly."""
+        from mbi.extensions.mixture_of_products import (
+            MixtureOfProductsEstimator,
+        )
+
+        cliques = [("a", "b"), ("b", "c")]
+        measurements = fake_measurements(cliques)
+        loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
+
+        est = MixtureOfProductsEstimator(num_components=5)
+        model1 = est.estimate(_DOMAIN, loss_fn, known_total=1.0, iters=50)
+        loss1 = loss_fn(model1)
+
+        # Warm-starting should improve on the cold-start loss.
+        model2 = est.estimate(
+            _DOMAIN,
+            loss_fn,
+            known_total=1.0,
+            iters=50,
+            warm_start=model1,
+        )
+        loss2 = loss_fn(model2)
+        self.assertLessEqual(float(loss2), float(loss1) + 1e-6)
