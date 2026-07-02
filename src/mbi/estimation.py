@@ -66,7 +66,7 @@ class Estimator(ABC):
         * ``extensions.ReweightedDatasetEstimator``
     """
 
-    marginal_oracle: marginal_oracles.MarginalOracle | None
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None
 
     # ------------------------------------------------------------------
     # Abstract interface — subclasses must implement
