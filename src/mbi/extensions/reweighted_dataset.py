@@ -59,7 +59,7 @@ class ReweightedDatasetEstimator(Estimator):
         }
         object.__setattr__(self, "_jax_data", jax_data)
 
-    def _init(self, domain, loss_fn, known_total, **kwargs):
+    def _init(self, domain, loss_fn, known_total, *, warm_start=None, **kwargs):
         """Initialize log-weights and optimizer state."""
         log_weights = jnp.zeros(self.seed_data.records)
         opt_state = self.optimizer.init(log_weights)
@@ -84,7 +84,7 @@ class ReweightedDatasetEstimator(Estimator):
         log_weights = optax.apply_updates(state.log_weights, updates)
         return ReweightedDatasetState(log_weights, opt_state)
 
-    def _callback_value(self, state, known_total):
+    def _callback_value(self, state, known_total, constraints=()):
         weights = jax.nn.softmax(state.log_weights) * known_total
         return JaxDataset(self._jax_data, self.seed_data.domain, weights)
 
