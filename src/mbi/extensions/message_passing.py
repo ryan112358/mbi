@@ -776,3 +776,40 @@ def _postprocess_log(result, constraint, post_op, original_target):
     if post_op == 'expand':
         return result
     raise ValueError(f'Unknown post_op: {post_op}')
+
+
+def default_oracle(
+    cliques: tuple[tuple[str, ...], ...] | None = None,
+    domain: Domain | None = None,
+    backend: str | None = None,
+) -> marginal_oracles.MarginalOracle:
+    """Select the best constraint-aware oracle for the given setting.
+
+    When constraints are present, this oracle uses the extensions
+    implementations which route messages through deterministic constraints
+    efficiently.  When no constraints are passed at call time, behavior is
+    identical to the core ``marginal_oracles.default_oracle``.
+
+    The selection heuristic mirrors the core oracle:
+
+    - **CPU**: ``shafer_shenoy`` (XLA compiler less effective on CPU).
+    - **GPU/TPU, large cliques (>= 1M)**: ``implicit``.
+    - **GPU/TPU, small cliques**: ``shafer_shenoy``.
+    """
+    if backend is None:
+        backend = jax.default_backend()
+
+    # CPU: always SS (XLA compiler less effective on CPU).
+    if backend == 'cpu':
+        return shafer_shenoy
+
+    # GPU/TPU with large cliques: implicit.
+    if cliques is not None and domain is not None:
+        jtree = junction_tree.make_junction_tree(domain, cliques)[0]
+        max_cliques = junction_tree.maximal_cliques(jtree)
+        max_size = max(domain.project(cl).size() for cl in max_cliques)
+        if max_size >= 1_000_000:
+            return implicit
+
+    # GPU/TPU with small cliques.
+    return shafer_shenoy
