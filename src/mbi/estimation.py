@@ -156,6 +156,17 @@ class Estimator(ABC):
                 total=known_total,
             )
 
+        if "potentials" in kwargs:
+            import warnings
+
+            warnings.warn(
+                "Passing potentials= directly is deprecated. Use"
+                " warm_start=model instead, where model is a previously"
+                " estimated Model.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         state = self._init(
             domain,
             loss_fn,
