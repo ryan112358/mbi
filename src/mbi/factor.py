@@ -129,64 +129,28 @@ class Factor:
         result = self.logsumexp(marginalized) if log else self.sum(marginalized)
         return result.transpose(attrs)
 
-    def slice(
-        self, evidence: dict[str, int | np.ndarray | jax.Array]
-    ) -> "Factor":
-        """Slices the factor by fixing specific attribute values.
-
-        If at least one attribute has numpy-valued evidence, the returned factor will
-        have a new leading dimension called '_mbi_evidence' corresponding to the
-        number of evidence points.
+    def slice(self, evidence: dict[str, int]) -> "Factor":
+        """Slice the factor by fixing attributes to scalar values.
 
         Args:
-            evidence: A dictionary mapping attribute names to the values they should be fixed to.
+            evidence: Mapping from attribute names to observed integer values.
 
         Returns:
-            A new Factor with the specified attributes fixed and removed from the domain.
+            A new Factor with the evidence attributes removed.
         """
         slices = [slice(None)] * len(self.domain)
         relevant = [e for e in evidence if e in self.domain.attrs]
-
-        adv_indices = []
-        has_vector = False
-        ev_size = None
-
         for attr in relevant:
-            axis = self.domain.axes((attr,))[0]
             val = evidence[attr]
-            slices[axis] = val
-            adv_indices.append(axis)
-
-            is_arr = hasattr(val, "ndim") and val.ndim > 0
-            if is_arr:
-                has_vector = True
-                if ev_size is None:
-                    ev_size = val.shape[0]
-                elif ev_size != val.shape[0]:
-                    raise ValueError("All vector evidence must have same size.")
-
+            if hasattr(val, "ndim") and val.ndim > 0:
+                raise ValueError(
+                    "Array-valued evidence is not supported (got"
+                    f" {type(val).__name__} for '{attr}'). Pass scalar"
+                    " int values and vmap over the batch dimension."
+                )
+            slices[self.domain.axes((attr,))[0]] = val
         values = self.values[tuple(slices)]
         domain = self.domain.marginalize(relevant)
-
-        if has_vector:
-            adv_indices.sort()
-            # If advanced indices are contiguous, numpy puts the new dimension at the start of the block
-            is_contiguous = (adv_indices[-1] - adv_indices[0] + 1) == len(
-                adv_indices
-            )
-            target_axis = adv_indices[0] if is_contiguous else 0
-
-            # We want the evidence dimension to be at axis 0
-            if target_axis != 0:
-                values = jnp.moveaxis(values, target_axis, 0)
-
-            new_labels = None
-            if self.domain.labels is not None:
-                new_labels = (tuple(range(ev_size)),)
-
-            new = Domain(["_mbi_evidence"], [ev_size], labels=new_labels)
-            domain = new.merge(domain)
-
         return Factor(domain, values)
 
     def supports(self, attrs: str | Sequence[str]) -> bool:
