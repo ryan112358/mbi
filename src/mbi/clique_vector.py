@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import functools
 import operator
+import warnings
 from collections.abc import Sequence
 
-import attr
+import dataclasses
 import chex
 import jax
 import jax.numpy as jnp
@@ -23,12 +24,8 @@ from .domain import Domain
 from .factor import Factor, Projectable
 
 
-@functools.partial(
-    jax.tree_util.register_dataclass,
-    meta_fields=["domain", "cliques"],
-    data_fields=["arrays"],
-)
-@attr.dataclass
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass
 class CliqueVector:
     """Manages a collection of factors, each associated with a clique.
 
@@ -41,52 +38,63 @@ class CliqueVector:
         domain (Domain): The overall domain that encompasses all cliques.
         cliques (Sequence[Clique]): A tuple of cliques (tuples of attribute names)
             for which factors are stored.
-        arrays (dict[Clique, Factor]): A dictionary mapping each clique in
+        tables (dict[Clique, Factor]): A dictionary mapping each clique in
             `cliques` to its corresponding `Factor` object.
     """
 
-    domain: Domain
-    cliques: Sequence[Clique] = attr.field(converter=tuple)
-    arrays: dict[Clique, Factor]
+    domain: Domain = dataclasses.field(metadata={"static": True})
+    cliques: Sequence[Clique] = dataclasses.field(metadata={"static": True})
+    tables: dict[Clique, Factor]
 
-    def __attrs_post_init__(self):
-        if set(self.cliques) != set(self.arrays):
-            raise ValueError("Cliques must be equal to keys of array.")
+    def __post_init__(self):
+        self.cliques = tuple(self.cliques)
+        if set(self.cliques) != set(self.tables):
+            raise ValueError("Cliques must be equal to keys of tables.")
         if len(self.cliques) != len(set(self.cliques)):
             raise ValueError("Cliques must be unique.")
+
+    @property
+    def arrays(self) -> dict[Clique, Factor]:
+        """Deprecated: use ``tables`` instead."""
+        warnings.warn(
+            "CliqueVector.arrays is deprecated, use .tables instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.tables
 
     @classmethod
     def zeros(cls, domain: Domain, cliques: Sequence[Clique]) -> CliqueVector:
         """Creates a CliqueVector initialized with zero factors for each clique."""
-        arrays = {cl: Factor.zeros(domain.project(cl)) for cl in cliques}
-        return cls(domain, cliques, arrays)
+        tables = {cl: Factor.zeros(domain.project(cl)) for cl in cliques}
+        return cls(domain, cliques, tables)
 
     @classmethod
     def ones(cls, domain: Domain, cliques: Sequence[Clique]) -> CliqueVector:
         """Creates a CliqueVector initialized with one factors for each clique."""
-        arrays = {cl: Factor.ones(domain.project(cl)) for cl in cliques}
-        return cls(domain, cliques, arrays)
+        tables = {cl: Factor.ones(domain.project(cl)) for cl in cliques}
+        return cls(domain, cliques, tables)
 
     @classmethod
     def random(cls, domain: Domain, cliques: Sequence[Clique]) -> CliqueVector:
         """Creates a CliqueVector initialized with random factors for each clique."""
-        arrays = {cl: Factor.random(domain.project(cl)) for cl in cliques}
-        return cls(domain, cliques, arrays)
+        tables = {cl: Factor.random(domain.project(cl)) for cl in cliques}
+        return cls(domain, cliques, tables)
 
     @classmethod
     def abstract(
         cls, domain: Domain, cliques: Sequence[Clique]
     ) -> CliqueVector:
-        arrays = {cl: Factor.abstract(domain.project(cl)) for cl in cliques}
-        return cls(domain, cliques, arrays)
+        tables = {cl: Factor.abstract(domain.project(cl)) for cl in cliques}
+        return cls(domain, cliques, tables)
 
     @classmethod
     def from_projectable(
         cls, data: Projectable, cliques: Sequence[Clique]
     ) -> CliqueVector:
         """Creates a CliqueVector by projecting a data source onto the specified cliques."""
-        arrays = {cl: data.project(cl) for cl in cliques}
-        return cls(data.domain, cliques, arrays)
+        tables = {cl: data.project(cl) for cl in cliques}
+        return cls(data.domain, cliques, tables)
 
     @functools.cached_property
     def active_domain(self) -> Domain:
@@ -109,7 +117,7 @@ class CliqueVector:
 
     def project(self, clique: Clique, log: bool = False) -> Factor:
         clique = tuple(clique)
-        if clique in self.arrays:
+        if clique in self.tables:
             return self[clique]
         if self.supports(clique):
             return self[self.parent(clique)].project(clique, log=log)
@@ -131,21 +139,21 @@ class CliqueVector:
         mapping = reverse_clique_mapping(
             cliques, self.cliques, domain=self.domain
         )
-        arrays = {}
+        tables = {}
         for cl in cliques:
             dom = self.domain.project(cl)
             if len(mapping[cl]) == 0:
-                arrays[cl] = Factor.zeros(dom)
+                tables[cl] = Factor.zeros(dom)
             else:
-                arrays[cl] = sum(self[cl2] for cl2 in mapping[cl]).expand(dom)
-        return CliqueVector(self.domain, cliques, arrays)
+                tables[cl] = sum(self[cl2] for cl2 in mapping[cl]).expand(dom)
+        return CliqueVector(self.domain, cliques, tables)
 
     def contract(
         self, cliques: Sequence[Clique], log: bool = False
     ) -> CliqueVector:
         """Computes a new CliqueVector by projecting this one onto a smaller set of cliques."""
-        arrays = {cl: self.project(cl, log=log) for cl in cliques}
-        return CliqueVector(self.domain, cliques, arrays)
+        tables = {cl: self.project(cl, log=log) for cl in cliques}
+        return CliqueVector(self.domain, cliques, tables)
 
     def normalize(self, total: float = 1, log: bool = True) -> CliqueVector:
         """Normalizes each factor within the CliqueVector."""
@@ -198,12 +206,12 @@ class CliqueVector:
 
     def __getitem__(self, clique: Clique) -> Factor:
         """Retrieves the factor associated with the given clique."""
-        return self.arrays[clique]
+        return self.tables[clique]
 
     def __setitem__(self, clique: Clique, value: Factor):
         """Sets the factor for a given clique, replacing the existing one if present."""
         if clique in self.cliques:
-            self.arrays[clique] = value
+            self.tables[clique] = value
         else:
             raise ValueError(f"Clique {clique} not in CliqueVector.")
 
@@ -220,7 +228,7 @@ class CliqueVector:
             A new CliqueVector identical to self with sharding constraints applied to
             the underlying factors.
         """
-        arrays = {
-            cl: self.arrays[cl].apply_sharding(mesh) for cl in self.cliques
+        tables = {
+            cl: self.tables[cl].apply_sharding(mesh) for cl in self.cliques
         }
-        return CliqueVector(self.domain, self.cliques, arrays)
+        return CliqueVector(self.domain, self.cliques, tables)
