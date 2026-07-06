@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 
-import attr
+import dataclasses
 import chex
 import jax
 import jax.numpy as jnp
@@ -32,12 +32,8 @@ def _weighted_datavector(weights: np.ndarray, x: Factor) -> jax.Array:
     return x.datavector() * weights
 
 
-@functools.partial(
-    jax.tree_util.register_dataclass,
-    meta_fields=["clique", "stddev", "query"],
-    data_fields=["noisy_measurement"],
-)
-@attr.dataclass(frozen=True)
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
 class LinearMeasurement:
     """A class for representing a private linear measurement of a marginal.
 
@@ -50,9 +46,14 @@ class LinearMeasurement:
     """
 
     noisy_measurement: jax.Array
-    clique: Clique = attr.field(converter=tuple)
-    stddev: float = 1.0
-    query: Callable[[Factor], jax.Array] = Factor.datavector
+    clique: Clique = jax.tree.static()
+    stddev: float = jax.tree.static(default=1.0)
+    query: Callable[[Factor], jax.Array] = jax.tree.static(
+        default=Factor.datavector
+    )
+
+    def __post_init__(self):
+        object.__setattr__(self, "clique", tuple(self.clique))
 
     def compress(
         self, mapping: dict[str, np.ndarray], domain: Domain
@@ -105,12 +106,8 @@ class LinearMeasurement:
         )
 
 
-@functools.partial(
-    jax.tree_util.register_dataclass,
-    data_fields=["data"],
-    meta_fields=["cliques", "loss_fn", "lipschitz"],
-)
-@attr.dataclass(frozen=True)
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
 class MarginalLossFn:
     """A loss function over the concatenated vector of marginals.
 
@@ -129,10 +126,13 @@ class MarginalLossFn:
         lipschitz: Optional Lipschitz constant of the gradient.
     """
 
-    cliques: Sequence[Clique] = attr.field(converter=tuple)
-    loss_fn: Callable[[CliqueVector, Any], chex.Numeric]
+    cliques: Sequence[Clique] = jax.tree.static()
+    loss_fn: Callable[[CliqueVector, Any], chex.Numeric] = jax.tree.static()
     data: Any = ()
-    lipschitz: float | None = None
+    lipschitz: float | None = jax.tree.static(default=None)
+
+    def __post_init__(self):
+        object.__setattr__(self, "cliques", tuple(self.cliques))
 
     def __call__(self, marginals: CliqueVector) -> chex.Numeric:
         return self.loss_fn(marginals, self.data)

@@ -16,7 +16,6 @@ import math
 import warnings
 from collections.abc import Sequence
 
-import attr
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -334,12 +333,8 @@ class Dataset:
         return Dataset(new_data, new_domain, self.weights)
 
 
-@functools.partial(
-    jax.tree_util.register_dataclass,
-    meta_fields=["domain"],
-    data_fields=["data", "weights"],
-)
-@attr.dataclass(frozen=True)
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
 class JaxDataset:
     """Represents a discrete dataset backed by JAX Arrays.
 
@@ -354,7 +349,7 @@ class JaxDataset:
     """
 
     data: dict[str, jax.Array]
-    domain: Domain
+    domain: Domain = jax.tree.static()
     weights: jax.Array | None = None
 
     @staticmethod

@@ -562,7 +562,7 @@ def brute_force_marginals(
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
-    P = sum(potentials.arrays.values()).normalize(total, log=True).exp()
+    P = sum(potentials.tables.values()).normalize(total, log=True).exp()
     marginals = {cl: P.project(cl) for cl in input_cliques}
     return CliqueVector(potentials.domain, input_cliques, marginals)
 
@@ -594,7 +594,7 @@ def einsum_marginals(
     if len(potentials.cliques) == 0:
         return CliqueVector(potentials.domain, [], {})
 
-    inputs = list(potentials.arrays.values())
+    inputs = list(potentials.tables.values())
     return CliqueVector(
         potentials.domain,
         potentials.cliques,
@@ -643,7 +643,7 @@ def variable_elimination(
         raise ValueError("Evidence attributes cannot be in the query clique.")
 
     k = len(potentials.cliques)
-    psi = dict(zip(range(k), potentials.arrays.values()))
+    psi = dict(zip(range(k), potentials.tables.values()))
 
     if evidence:
         for i in list(psi.keys()):
