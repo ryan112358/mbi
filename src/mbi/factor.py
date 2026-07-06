@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import functools
+import dataclasses
 from collections.abc import Callable, Sequence
 from typing import Literal
-
-import attr
 import chex
 import jax
 import jax.numpy as jnp
@@ -15,12 +13,8 @@ import numpy as np
 from .domain import Domain
 
 
-@functools.partial(
-    jax.tree_util.register_dataclass,
-    meta_fields=["domain"],
-    data_fields=["values"],
-)
-@attr.dataclass(frozen=True)
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)  # pytype: disable=invalid-function-definition
 class Factor:
     """Represents a factor defined over a discrete domain.
 
@@ -48,12 +42,8 @@ class Factor:
         Domain(X: 2, Y: 3)
     """
 
-    domain: Domain
+    domain: Domain = jax.tree.static()
     values: jax.Array
-
-    def __post_init__(self):
-        if self.values.shape != self.domain.shape:
-            raise ValueError("values must be same shape as domain.")
 
     # Constructors
     @classmethod
