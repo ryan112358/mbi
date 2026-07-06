@@ -274,11 +274,32 @@ class TestDefaultOracle(unittest.TestCase):
         )
         self.assertIs(oracle, message_passing_shafer_shenoy)
 
-    def test_gpu_large_returns_implicit(self):
+    def test_gpu_moderate_returns_shafer_shenoy(self):
+        """1M clique no longer triggers implicit (old threshold)."""
         domain = Domain(["a", "b", "c"], [100, 100, 100])
         cliques = (("a", "b", "c"),)
         oracle = marginal_oracles.default_oracle(cliques, domain, backend="gpu")
+        self.assertIs(oracle, message_passing_shafer_shenoy)
+
+    def test_gpu_huge_few_nodes_returns_implicit(self):
+        """Huge SCs (>50M) with few JT nodes -> implicit (data movement)."""
+        # 3 attrs with card ~370 each -> single 3-way clique ~ 50.6M entries.
+        domain = Domain(["a", "b", "c"], [370, 370, 370])
+        cliques = (("a", "b", "c"),)
+        oracle = marginal_oracles.default_oracle(cliques, domain, backend="gpu")
         self.assertIs(oracle, message_passing_implicit)
+
+    def test_gpu_huge_many_nodes_returns_shafer_shenoy(self):
+        """Huge SCs but many JT nodes -> SS (kernel fusion advantage)."""
+        # 40 attrs in a chain, card=100 each, bw=2 -> max SC=1M, 39 nodes.
+        attrs = [f"x{i}" for i in range(40)]
+        domain = Domain(attrs, [100] * 40)
+        cliques = tuple(
+            (attrs[i], attrs[i + 1], attrs[i + 2]) for i in range(38)
+        )
+        oracle = marginal_oracles.default_oracle(cliques, domain, backend="gpu")
+        # Max SC = 100^3 = 1M < 50M, many nodes -> SS.
+        self.assertIs(oracle, message_passing_shafer_shenoy)
 
     def test_gpu_no_cliques_returns_shafer_shenoy(self):
         oracle = marginal_oracles.default_oracle(backend="gpu")

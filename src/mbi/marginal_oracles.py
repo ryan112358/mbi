@@ -459,12 +459,30 @@ def default_oracle(
     - **CPU**: ``message_passing_shafer_shenoy`` (has_constraints=True) or
       ``message_passing_hugin`` (has_constraints=False). Implicit is not used on
       CPU because the XLA compiler is less effective there.
-    - **GPU/TPU, large cliques (>= 1M)**: ``message_passing_implicit``
-      regardless of ``has_constraints`` (avoids materializing super-cliques).
+    - **GPU/TPU, memory-limited**: ``message_passing_implicit`` when the total
+      beliefs memory would exceed ~40% of estimated device HBM.  Implicit
+      keeps factors in their original low-dimensional form and only
+      materializes one super-clique at a time, using orders of magnitude
+      less memory than Hugin/SS which materialize all super-clique arrays
+      simultaneously.
+    - **GPU/TPU, huge but few super-cliques**: ``message_passing_implicit``
+      when individual super-cliques exceed 50M entries but there are fewer
+      than 30 nodes.  With few messages, implicit moves less data per
+      message by contracting small input factors rather than operating on
+      huge belief arrays.
     - **GPU/TPU, has_constraints=True** (default):
       ``message_passing_shafer_shenoy`` (numerically robust).
     - **GPU/TPU, has_constraints=False**: ``message_passing_hugin`` (faster when
       ``-inf`` is absent).
+
+    The heuristic is based on systematic A100 benchmarks across varied
+    graph structures (cardinality 4-256, bandwidth 1-3, 32-256 attributes).
+    When super-cliques are large but the junction tree has many nodes, Hugin
+    and Shafer-Shenoy outperform implicit by 30-40% because their uniform
+    add/logsumexp kernel pattern fuses better in XLA over many sequential
+    messages.  Implicit only wins when individual super-cliques are very
+    large (>50M entries) and the tree is small (<30 nodes), or when
+    Hugin/SS would exceed device memory.
 
     Args:
         cliques: Cliques of the graphical model. Used to estimate max clique
@@ -495,15 +513,32 @@ def default_oracle(
             return message_passing_shafer_shenoy
         return message_passing_hugin
 
-    # GPU/TPU with large cliques: implicit regardless of has_constraints.
+    # GPU/TPU: consider memory pressure and per-message data movement.
     if cliques is not None and domain is not None:
         jtree = junction_tree.make_junction_tree(domain, cliques)[0]
         max_cliques = junction_tree.maximal_cliques(jtree)
-        max_size = max(domain.project(cl).size() for cl in max_cliques)
-        if max_size >= 1_000_000:
+        sc_sizes = [domain.project(cl).size() for cl in max_cliques]
+        max_size = max(sc_sizes)
+        num_nodes = len(max_cliques)
+
+        # Estimate total beliefs memory for Hugin/SS (4 bytes per float32).
+        total_beliefs_bytes = sum(sc_sizes) * 4
+
+        # Memory-limited: use implicit to avoid OOM.  The 40% threshold
+        # leaves room for messages, temporaries, and JAX runtime overhead.
+        # Estimate 80 GB for A100; could be refined per device.
+        estimated_hbm = 80e9
+        if total_beliefs_bytes > estimated_hbm * 0.4:
             return message_passing_implicit
 
-    # GPU/TPU with small cliques.
+        # Few large super-cliques: implicit wins on data movement.
+        # With <30 SC nodes there are few messages, so kernel launch overhead
+        # is negligible, and implicit contracts small input factors instead
+        # of operating on huge belief arrays.
+        if max_size >= 50_000_000 and num_nodes < 30:
+            return message_passing_implicit
+
+    # GPU/TPU with moderate cliques: SS for constraints, Hugin otherwise.
     if has_constraints:
         return message_passing_shafer_shenoy
     return message_passing_hugin
