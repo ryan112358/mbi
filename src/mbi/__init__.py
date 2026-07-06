@@ -40,9 +40,11 @@ from .constraint import Constraint
 from .dataset import Dataset
 from .domain import Domain
 from .factor import Factor
-from .marginal_loss import LinearMeasurement, MarginalLossFn
+from .marginal_loss import DatavectorQuery, LinearMeasurement, MarginalLossFn
+from .marginal_loss import NormalizedQuery, SlicedQuery, WeightedQuery
 from .marginal_oracles import MarginalOracle
 from .markov_random_field import MarkovRandomField
+from ._serialization import save, load
 
 Clique = tuple[str, ...]
 
@@ -63,6 +65,11 @@ __all__ = [
     "ModelSummary",
     "summarize",
     "set_log_fn",
+    "NormalizedQuery",
+    "SlicedQuery",
+    "WeightedQuery",
+    "save",
+    "load",
     "estimation",
     "extensions",
     "callbacks",

@@ -35,7 +35,7 @@ from .clique_vector import CliqueVector
 from .constraint import Constraint
 from .domain import Domain
 from .factor import Factor
-from .marginal_loss import LinearMeasurement, MarginalLossFn
+from .marginal_loss import DatavectorQuery, LinearMeasurement, MarginalLossFn
 from .markov_random_field import MarkovRandomField
 
 # Shared thread pool for background JIT compilation.
@@ -244,7 +244,7 @@ def minimum_variance_unbiased_total(
         y = M.noisy_measurement
         try:
             # TODO: generalize to support any linear measurement that supports total query
-            if M.query == Factor.datavector:  # query = Identity
+            if isinstance(M.query, DatavectorQuery):  # query = Identity
                 estimates.append(y.sum())
                 variances.append(M.stddev**2 * y.size)
         except Exception:  # pylint: disable=broad-exception-caught
