@@ -7,6 +7,7 @@ import concurrent.futures
 import dataclasses
 import functools
 import logging
+import time
 from typing import Any
 
 import jax
@@ -129,17 +130,21 @@ def synthetic_data(
     domain = model.domain
     plan = _build_plan(domain, model.cliques)
 
+    # Empirically necessary for large models (574-col, ~60 cliques): without
+    # this, XLA compilation is orders of magnitude slower. Exact mechanism TBD.
+    potentials = jax.tree.map(jnp.asarray, model.potentials)
+
     # Clique ordering in model.potentials must match the cliques passed to
     # precompile() for the JIT cache to hit (cliques are pytree metadata).
     _, messages = marginal_oracles.message_passing_implicit(
-        model.potentials,
+        potentials,
         1.0,
         jtree=plan.jtree,
         return_messages=True,
     )
     pot_map, msg_map = _build_lookups(
         plan,
-        model.potentials,
+        potentials,
         messages,
         domain,
     )
@@ -153,6 +158,7 @@ def synthetic_data(
 
         inputs = _gather_inputs(cp, domain, pot_map, msg_map)
         parent_arrays = tuple(data[p] for p in cp.parents)
+        t0 = time.monotonic()
         data[col] = _generate_column(
             col_rng,
             inputs,
@@ -161,6 +167,17 @@ def synthetic_data(
             parent_sizes=cp.parent_sizes,
             total=rows,
         )
+        elapsed = time.monotonic() - t0
+
+        if step == 0 and elapsed > 2.0:
+            logging.warning(
+                'First _generate_column call took %.1fs (expected <0.5s '
+                'with a warm JIT cache). This likely means precompile() '
+                'was not called, has not finished, or the model potentials '
+                'have a different array type than expected (e.g. np.ndarray '
+                'vs jax.Array). Subsequent columns will also recompile.',
+                elapsed,
+            )
 
         # Offload to host immediately — frees GPU memory for future columns.
         # Async overlap or lazy eviction could save ~20ms/col, but that's <1%
