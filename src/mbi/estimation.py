@@ -23,7 +23,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple
 
-import attr
+import dataclasses
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -350,7 +350,7 @@ class _AcceleratedStepSearchState(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
-@attr.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class MirrorDescent(Estimator):
     """Mirror descent estimator for graphical models.
 
@@ -458,7 +458,7 @@ class MirrorDescent(Estimator):
         )
 
 
-@attr.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class DualAveraging(Estimator):
     """Regularized Dual Averaging estimator for graphical models.
 
@@ -548,7 +548,7 @@ class DualAveraging(Estimator):
         return est.estimate(state.w.domain, loss, known_total, constraints)
 
 
-@attr.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class InteriorGradient(Estimator):
     """Interior Gradient estimator for graphical models.
 
@@ -630,7 +630,7 @@ class InteriorGradient(Estimator):
         return est.estimate(state.x.domain, loss, known_total, constraints)
 
 
-@attr.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class LBFGS(Estimator):
     """L-BFGS estimator for graphical models.
 
@@ -722,7 +722,7 @@ class LBFGS(Estimator):
         )
 
 
-@attr.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class UniversalAcceleratedMethod(Estimator):
     """Universal Accelerated Mirror Descent estimator.
 

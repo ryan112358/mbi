@@ -18,7 +18,7 @@ import functools
 import itertools
 from typing import Any, NamedTuple, Protocol, TypeAlias
 
-import attr
+import dataclasses
 import jax
 import jax.numpy as jnp
 import networkx as nx
@@ -257,7 +257,7 @@ class ApproxMirrorDescentState(NamedTuple):
     messages: Any
 
 
-@attr.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class ApproxMirrorDescent:
     """Mirror descent estimator using approximate marginal inference.
 

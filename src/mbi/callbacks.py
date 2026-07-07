@@ -5,7 +5,7 @@ various metrics during iterative algorithms, such as those used in estimating
 marginals. It logs loss values and other relevant statistics.
 """
 
-import attr
+import dataclasses
 import jax
 
 from . import marginal_loss
@@ -37,11 +37,11 @@ def _pad(string: str, length: int):
     return " " * left_pad + string + " " * right_pad
 
 
-@attr.dataclass
+@dataclasses.dataclass
 class Callback:
     loss_fns: dict[str, marginal_loss.MarginalLossFn]
     _step: int = 0
-    _logs: list = attr.field(factory=list)
+    _logs: list = dataclasses.field(default_factory=list)
 
     def __call__(self, marginals: CliqueVector) -> None:
         if self._step == 0:

@@ -21,7 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-import attr
+import dataclasses
 
 
 from ..estimation import Estimator
@@ -135,7 +135,7 @@ class MixtureOfProductsState(NamedTuple):
     opt_state: optax.OptState
 
 
-@attr.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class MixtureOfProductsEstimator(Estimator):
     """Estimates a distribution as a mixture of product distributions.
 
@@ -156,7 +156,7 @@ class MixtureOfProductsEstimator(Estimator):
     optimizer: optax.GradientTransformation | None = None
     seed: int = 0
 
-    def __attrs_post_init__(self):
+    def __post_init__(self):
         if self.optimizer is None:
             object.__setattr__(
                 self, "optimizer", optax.adam(self.learning_rate)
