@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import csv
 import dataclasses
-import functools
 import json
 import math
 import warnings

@@ -133,7 +133,7 @@ class TestMarginalOracles(unittest.TestCase):
         marginals = oracle(zeros)
         self.assertEqual(marginals.domain, _DOMAIN)
         self.assertEqual(marginals.cliques, tuple(cliques))
-        self.assertEqual(set(zeros.arrays.keys()), set(marginals.arrays.keys()))
+        self.assertEqual(set(zeros.tables.keys()), set(marginals.tables.keys()))
         for cl in cliques:
             self.assertEqual(marginals[cl].domain.attrs, cl)
 
@@ -217,12 +217,12 @@ class TestMarginalOracles(unittest.TestCase):
         potentials = CliqueVector(
             potentials.domain,
             potentials.cliques + (("A", "C"),),
-            {**potentials.arrays, ("A", "C"): con},
+            {**potentials.tables, ("A", "C"): con},
         )
 
         marginals = oracle(potentials)
 
-        for cl, factor in marginals.arrays.items():
+        for cl, factor in marginals.tables.items():
             self.assertFalse(
                 jnp.isnan(factor.values).any(), f"NaNs found in clique {cl}"
             )
@@ -364,7 +364,7 @@ _FOLDING_ORACLES = [
 def _fold_baseline(potentials, total, constraints):
     """Brute-force baseline with constraints folded as -inf potentials."""
     cliques = list(potentials.cliques)
-    arrays = dict(potentials.arrays)
+    arrays = dict(potentials.tables)
     for c in constraints:
         cl = potentials.domain.canonical(c.clique)
         pot = c.potential.transpose(cl)
