@@ -44,7 +44,7 @@ class TestApproximateOracles(unittest.TestCase):
         marginals, _ = oracle(zeros)
         self.assertEqual(marginals.domain, _DOMAIN)
         self.assertEqual(marginals.cliques, tuple(cliques))
-        self.assertEqual(set(zeros.arrays.keys()), set(marginals.arrays.keys()))
+        self.assertEqual(set(zeros.tables.keys()), set(marginals.tables.keys()))
         for cl in cliques:
             self.assertEqual(marginals[cl].domain.attrs, cl)
 
