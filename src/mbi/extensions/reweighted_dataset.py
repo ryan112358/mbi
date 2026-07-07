@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-import attr
+import dataclasses
 import jax
 import jax.numpy as jnp
 import optax
@@ -28,7 +28,7 @@ class ReweightedDatasetState(NamedTuple):
     opt_state: optax.OptState
 
 
-@attr.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class ReweightedDatasetEstimator(Estimator):
     """Estimates a distribution by reweighting seed records.
 
@@ -42,11 +42,11 @@ class ReweightedDatasetEstimator(Estimator):
         optimizer: An optax optimizer.  Defaults to ``optax.adam``.
     """
 
-    seed_data: Dataset = attr.field()
+    seed_data: Dataset
     learning_rate: float = 0.1
     optimizer: optax.GradientTransformation | None = None
 
-    def __attrs_post_init__(self):
+    def __post_init__(self):
         if self.optimizer is None:
             object.__setattr__(
                 self, "optimizer", optax.adam(self.learning_rate)
