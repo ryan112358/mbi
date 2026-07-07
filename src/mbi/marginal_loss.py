@@ -9,16 +9,14 @@ or noisy data. Utilities for clique manipulation and feasibility checks are also
 included.
 """
 
-import functools
+import dataclasses
 from collections.abc import Callable, Sequence
 from typing import Any
 
-import numpy as np
-
-import dataclasses
 import chex
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 
 from .clique_utils import Clique, maximal_subset
@@ -28,8 +26,63 @@ from .factor import Factor
 
 
 def _weighted_datavector(weights: np.ndarray, x: Factor) -> jax.Array:
-    """Datavector scaled by pre-baked weights (pickle-safe)."""
+    """Datavector scaled by pre-baked weights (pickle-safe).
+
+    .. deprecated::
+        Use :class:`WeightedQuery` instead for serialization support.
+    """
     return x.datavector() * weights
+
+
+# ---------------------------------------------------------------------------
+# Serializable query types
+# ---------------------------------------------------------------------------
+# These callable dataclasses can be used as the ``query`` field of
+# :class:`LinearMeasurement`.  Because they are structured data (not opaque
+# closures), ``save_pytree`` can round-trip them via pickle.
+
+
+@dataclasses.dataclass(frozen=True)
+class DatavectorQuery:
+    """Identity query: ``f.datavector()``."""
+
+    def __call__(self, f: Factor) -> jax.Array:
+        return f.datavector()
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class WeightedQuery:
+    """Datavector scaled by fixed weights: ``f.datavector() * weights``."""
+
+    weights: np.ndarray
+
+    def __call__(self, f: Factor) -> jax.Array:
+        return f.datavector() * self.weights
+
+    # Identity-based hash/eq so JAX static tracing works (ndarray isn't hashable).
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+
+@dataclasses.dataclass(frozen=True)
+class NormalizedQuery:
+    """L1-normalized datavector: ``f.normalize(1).datavector()``."""
+
+    def __call__(self, f: Factor) -> jax.Array:
+        return f.normalize(1.0).datavector()
+
+
+@dataclasses.dataclass(frozen=True)
+class SlicedQuery:
+    """Datavector with leading elements removed: ``f.datavector()[start:]``."""
+
+    start: int = 1
+
+    def __call__(self, f: Factor) -> jax.Array:
+        return f.datavector()[self.start :]
 
 
 @jax.tree_util.register_dataclass
@@ -49,7 +102,7 @@ class LinearMeasurement:
     clique: Clique = jax.tree.static()
     stddev: float = jax.tree.static(default=1.0)
     query: Callable[[Factor], jax.Array] = jax.tree.static(
-        default=Factor.datavector
+        default=DatavectorQuery()
     )
 
     def __post_init__(self):
@@ -73,7 +126,7 @@ class LinearMeasurement:
         if not any(a in mapping for a in self.clique):
             return self
 
-        y = np.asarray(self.noisy_measurement)
+        y = np.asarray(self.noisy_measurement).flatten()
 
         # Build per-attribute index arrays (mapping or identity).
         indices, compressed_sizes = [], []
@@ -102,7 +155,7 @@ class LinearMeasurement:
             y_compressed * inv_coefs,
             self.clique,
             self.stddev,
-            query=functools.partial(_weighted_datavector, inv_coefs),
+            query=WeightedQuery(inv_coefs),
         )
 
 
