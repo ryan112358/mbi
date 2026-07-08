@@ -68,10 +68,10 @@ class Factor:
     # Reshaping operations
     def transpose(self, attrs: Sequence[str]) -> Factor:
         """Rearranges the factor's axes according to the new attribute order."""
-        if set(attrs) != set(self.domain.attrs):
+        if set(attrs) != set(self.domain.attributes):
             raise ValueError("attrs must be same as domain attributes")
         newdom = self.domain.project(attrs)
-        ax = newdom.axes(self.domain.attrs)
+        ax = newdom.axes(self.domain.attributes)
         values = jnp.moveaxis(self.values, range(len(ax)), ax)
         return Factor(newdom, values)
 
@@ -81,7 +81,7 @@ class Factor:
             raise ValueError("Expanded domain must contain domain.")
         dims = len(domain) - len(self.domain)
         values = self.values.reshape(self.domain.shape + tuple([1] * dims))
-        ax = domain.axes(self.domain.attrs)
+        ax = domain.axes(self.domain.attributes)
         values = jnp.moveaxis(values, range(len(ax)), ax)
         values = jnp.broadcast_to(values, domain.shape)
         return Factor(domain, values)
@@ -91,7 +91,7 @@ class Factor:
         self, fn: Callable, attrs: Sequence[str] | None = None
     ) -> Factor:
         """Helper for aggregating values along specified attribute axes."""
-        attrs = self.domain.attrs if attrs is None else attrs
+        attrs = self.domain.attributes if attrs is None else attrs
         axes = self.domain.axes(attrs)
         values = fn(self.values, axis=axes)
         newdom = self.domain.marginalize(attrs)
@@ -115,7 +115,7 @@ class Factor:
         """Computes the marginal distribution by summing/logsumexp'ing out other attributes."""
         if isinstance(attrs, str):
             attrs = (attrs,)
-        marginalized = self.domain.marginalize(attrs).attrs
+        marginalized = self.domain.marginalize(attrs).attributes
         result = self.logsumexp(marginalized) if log else self.sum(marginalized)
         return result.transpose(attrs)
 
@@ -129,7 +129,7 @@ class Factor:
             A new Factor with the evidence attributes removed.
         """
         slices = [slice(None)] * len(self.domain)
-        relevant = [e for e in evidence if e in self.domain.attrs]
+        relevant = [e for e in evidence if e in self.domain.attributes]
         for attr in relevant:
             val = evidence[attr]
             if hasattr(val, "ndim") and val.ndim > 0:

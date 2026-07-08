@@ -106,7 +106,7 @@ _CLIQUE_SETS = [
 
 _ALL_CLIQUES = list(
     itertools.chain.from_iterable(
-        itertools.combinations(_DOMAIN.attrs, r) for r in range(5)
+        itertools.combinations(_DOMAIN.attributes, r) for r in range(5)
     )
 )
 
@@ -135,7 +135,7 @@ class TestMarginalOracles(unittest.TestCase):
         self.assertEqual(marginals.cliques, tuple(cliques))
         self.assertEqual(set(zeros.tables.keys()), set(marginals.tables.keys()))
         for cl in cliques:
-            self.assertEqual(marginals[cl].domain.attrs, cl)
+            self.assertEqual(marginals[cl].domain.attributes, cl)
 
     @parameterized.expand(itertools.product(_ORACLES, _CLIQUE_SETS, [1, 100]))
     def test_uniform(self, oracle, cliques, total=1):

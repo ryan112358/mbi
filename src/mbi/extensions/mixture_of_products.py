@@ -91,7 +91,7 @@ class MixtureOfProducts:
         """Any subset of domain attributes is supported."""
         if isinstance(attrs, str):
             attrs = (attrs,)
-        return all(a in self.domain.attrs for a in attrs)
+        return all(a in self.domain.attributes for a in attrs)
 
     def synthetic_data(self, rows=None) -> Dataset:
         """Generate synthetic data via randomized rounding."""
@@ -103,7 +103,7 @@ class MixtureOfProducts:
         blocks = []
         for k in range(self.num_components):
             comp_data = {}
-            for col in self.domain.attrs:
+            for col in self.domain.attributes:
                 counts = np.asarray(products[col][k])
                 counts = counts * subtotal / counts.sum()
                 frac, integ = np.modf(counts)
@@ -117,14 +117,18 @@ class MixtureOfProducts:
                 rng.shuffle(vals)
                 comp_data[col] = vals
             blocks.append(
-                np.stack([comp_data[col] for col in self.domain.attrs], axis=1)
+                np.stack(
+                    [comp_data[col] for col in self.domain.attributes], axis=1
+                )
             )
 
         full_data = np.concatenate(blocks, axis=0)
         rng.shuffle(full_data)
         full_data = full_data[:total]
 
-        data = {col: full_data[:, i] for i, col in enumerate(self.domain.attrs)}
+        data = {
+            col: full_data[:, i] for i, col in enumerate(self.domain.attributes)
+        }
         return Dataset(data, self.domain)
 
 

@@ -26,7 +26,7 @@ def _make_dataset(domain, n, seed=0, weights=None):
                 np.min_scalar_type(domain[a] - 1)
             )
         )
-        for a in domain.attrs
+        for a in domain.attributes
     }
     return Dataset(data, domain, weights=weights)
 
@@ -56,21 +56,21 @@ class TestPrecomputeMarginals(unittest.TestCase):
         """All attributes have the same domain size."""
         domain = _make_domain([8, 8, 8, 8])
         dataset = _make_dataset(domain, 1000)
-        cliques = list(itertools.combinations(domain.attrs, 2))
+        cliques = list(itertools.combinations(domain.attributes, 2))
         self._assert_marginals_match(dataset, cliques)
 
     def test_pairwise_heterogeneous(self):
         """Attributes have different domain sizes triggering bucketing."""
         domain = _make_domain([2, 5, 16, 64])
         dataset = _make_dataset(domain, 5000)
-        cliques = list(itertools.combinations(domain.attrs, 2))
+        cliques = list(itertools.combinations(domain.attributes, 2))
         self._assert_marginals_match(dataset, cliques)
 
     def test_three_way_marginals(self):
         """Cliques of size 3."""
         domain = _make_domain([4, 8, 3, 6])
         dataset = _make_dataset(domain, 2000)
-        cliques = list(itertools.combinations(domain.attrs, 3))
+        cliques = list(itertools.combinations(domain.attributes, 3))
         self._assert_marginals_match(dataset, cliques)
 
     def test_mixed_clique_sizes(self):
@@ -99,10 +99,10 @@ class TestPrecomputeMarginals(unittest.TestCase):
         domain = _make_domain([4, 8, 16])
         np_dataset = _make_dataset(domain, 2000)
         jax_data = {
-            a: jnp.asarray(np_dataset.to_dict()[a]) for a in domain.attrs
+            a: jnp.asarray(np_dataset.to_dict()[a]) for a in domain.attributes
         }
         jax_dataset = JaxDataset(jax_data, domain)
-        cliques = list(itertools.combinations(domain.attrs, 2))
+        cliques = list(itertools.combinations(domain.attributes, 2))
         result = precompute_marginals(jax_dataset, cliques)
         for cl in cliques:
             expected = _reference_marginal(np_dataset, cl)
@@ -119,7 +119,7 @@ class TestPrecomputeMarginals(unittest.TestCase):
         dataset = _make_dataset(domain, 1000)
         cl = ('a2', 'a0')
         result = precompute_marginals(dataset, [cl])
-        self.assertEqual(result[cl].domain.attrs, ('a2', 'a0'))
+        self.assertEqual(result[cl].domain.attributes, ('a2', 'a0'))
         expected = _reference_marginal(dataset, cl)
         np.testing.assert_array_almost_equal(
             np.asarray(result[cl].datavector(flatten=True)),
@@ -144,7 +144,7 @@ class TestPrecomputeMarginals(unittest.TestCase):
             ]
             domain = _make_domain(sizes)
             dataset = _make_dataset(domain, 500, seed=trial)
-            cliques = list(itertools.combinations(domain.attrs, 2))
+            cliques = list(itertools.combinations(domain.attributes, 2))
             self._assert_marginals_match(dataset, cliques)
 
     def test_weighted_dataset(self):

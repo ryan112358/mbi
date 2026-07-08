@@ -46,7 +46,7 @@ class TestApproximateOracles(unittest.TestCase):
         self.assertEqual(marginals.cliques, tuple(cliques))
         self.assertEqual(set(zeros.tables.keys()), set(marginals.tables.keys()))
         for cl in cliques:
-            self.assertEqual(marginals[cl].domain.attrs, cl)
+            self.assertEqual(marginals[cl].domain.attributes, cl)
 
     @parameterized.expand(itertools.product(_CLIQUE_SETS))
     def test_mirror_descent(self, cliques):

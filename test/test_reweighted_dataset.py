@@ -29,7 +29,9 @@ _CLIQUE_SETS = [
 
 def _make_seed_data(domain, n=5000):
     """Create a random Dataset over the domain."""
-    data = {col: np.random.randint(0, domain[col], n) for col in domain.attrs}
+    data = {
+        col: np.random.randint(0, domain[col], n) for col in domain.attributes
+    }
     return Dataset(data, domain)
 
 
@@ -53,7 +55,7 @@ class TestJaxDatasetBasics(unittest.TestCase):
         self.dataset = Dataset(data, self.domain)
         weights = jax.nn.softmax(jnp.zeros(5)) * 100.0
         self.model = JaxDataset(
-            {col: jnp.array(data[col]) for col in self.domain.attrs},
+            {col: jnp.array(data[col]) for col in self.domain.attributes},
             self.domain,
             weights,
         )
@@ -109,7 +111,7 @@ class TestJaxDatasetBasics(unittest.TestCase):
     def test_synthetic_data_values_in_range(self):
         data = self.model.synthetic_data(rows=200)
         data_dict = data.to_dict()
-        for col in self.model.domain.attrs:
+        for col in self.model.domain.attributes:
             col_data = data_dict[col]
             self.assertTrue(np.all(col_data >= 0))
             self.assertTrue(np.all(col_data < self.model.domain[col]))
