@@ -8,6 +8,7 @@ various operations like projection, marginalization, and merging of domains.
 
 import functools
 import math
+import warnings
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -221,7 +222,16 @@ class Domain:
 
     @property
     def attrs(self) -> tuple[str, ...]:
-        """Alias for the `attributes` tuple."""
+        """Alias for the `attributes` tuple.
+
+        .. deprecated::
+            Use :attr:`attributes` instead.
+        """
+        warnings.warn(
+            "Domain.attrs is deprecated. Use Domain.attributes instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.attributes
 
     def supports(self, attrs: str | Sequence[str]) -> bool:

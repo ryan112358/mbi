@@ -35,7 +35,7 @@ def _validate_column_meta(data: np.ndarray, attr: str):
 
 
 def _validate_data(data: dict[str, np.ndarray], domain: Domain):
-    if set(data.keys()) != set(domain.attrs):
+    if set(data.keys()) != set(domain.attributes):
         raise ValueError("Keys in data dictionary must match domain attributes")
     n = None
     for col in data:
@@ -133,7 +133,7 @@ class Dataset:
         """
         data = {
             attr: np.random.randint(low=0, high=n, size=N)
-            for attr, n in zip(domain.attrs, domain.shape)
+            for attr, n in zip(domain.attributes, domain.shape)
         }
         return Dataset(data, domain)
 
@@ -168,10 +168,10 @@ class Dataset:
             header = next(reader)
             header_map = {name: i for i, name in enumerate(header)}
 
-            if not set(domain_obj.attrs) <= set(header):
+            if not set(domain_obj.attributes) <= set(header):
                 raise ValueError("data must contain domain attributes")
 
-            indices = [header_map[attr] for attr in domain_obj.attrs]
+            indices = [header_map[attr] for attr in domain_obj.attributes]
             rows = []
             for row in reader:
                 try:
@@ -181,7 +181,7 @@ class Dataset:
                 rows.append(mapped_row)
 
         arr = np.array(rows)
-        data = {attr: arr[:, i] for i, attr in enumerate(domain_obj.attrs)}
+        data = {attr: arr[:, i] for i, attr in enumerate(domain_obj.attributes)}
         return Dataset(data, domain_obj)
 
     def project(
@@ -192,7 +192,7 @@ class Dataset:
             cols = [cols]
 
         domain = self.domain.project(cols)
-        data = {col: self.data[col] for col in domain.attrs}
+        data = {col: self.data[col] for col in domain.attributes}
         sub = Dataset(data, domain, self.weights)
         return Factor(sub.domain, jnp.asarray(sub.datavector(flatten=False)))
 
@@ -217,7 +217,7 @@ class Dataset:
         if len(dims) == 0:
             result = self.weights.sum()
             return np.array([result]) if flatten else result
-        multi_index = tuple(self.data[a] for a in self.domain.attrs)
+        multi_index = tuple(self.data[a] for a in self.domain.attributes)
         linear_indices = np.ravel_multi_index(multi_index, dims, order="C")
         counts = np.bincount(
             linear_indices, minlength=math.prod(dims), weights=self.weights
@@ -360,7 +360,7 @@ class JaxDataset:
             records: The number of individuals.
         """
         data = {}
-        for attr, n in zip(domain.attrs, domain.shape):
+        for attr, n in zip(domain.attributes, domain.shape):
             data[attr] = jnp.array(
                 np.random.randint(low=0, high=n, size=records)
             )
@@ -386,7 +386,7 @@ class JaxDataset:
 
         length = math.prod(dims)
         dtype = np.min_scalar_type(length - 1)
-        multi_index = [self.data[a] for a in domain.attrs]
+        multi_index = [self.data[a] for a in domain.attributes]
         multi_index[0] = multi_index[0].astype(dtype)
         linear_indices = jnp.ravel_multi_index(
             tuple(multi_index), dims, mode="wrap", order="C"
@@ -450,6 +450,6 @@ class JaxDataset:
         row_indices = row_indices[:total]
         data = {
             col: np.asarray(self.data[col])[row_indices]
-            for col in self.domain.attrs
+            for col in self.domain.attributes
         }
         return Dataset(data, self.domain)

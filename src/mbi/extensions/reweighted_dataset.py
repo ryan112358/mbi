@@ -55,7 +55,7 @@ class ReweightedDatasetEstimator(Estimator):
         data_dict = self.seed_data.to_dict()
         jax_data = {
             col: jnp.asarray(data_dict[col])
-            for col in self.seed_data.domain.attrs
+            for col in self.seed_data.domain.attributes
         }
         object.__setattr__(self, "_jax_data", jax_data)
 

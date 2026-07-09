@@ -92,7 +92,7 @@ class TestMixtureOfProductsClass(unittest.TestCase):
     def test_synthetic_data_values_in_range(self):
         data = self.model.synthetic_data(rows=200)
         data_dict = data.to_dict()
-        for col in self.model.domain.attrs:
+        for col in self.model.domain.attributes:
             col_data = data_dict[col]
             self.assertTrue(np.all(col_data >= 0))
             self.assertTrue(np.all(col_data < self.model.domain[col]))

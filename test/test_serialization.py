@@ -88,7 +88,7 @@ class TestMarkovRandomField:
         )
         loaded = _roundtrip(mrf)
 
-        for attr in mrf.domain.attrs:
+        for attr in mrf.domain.attributes:
             np.testing.assert_allclose(
                 np.asarray(loaded.project((attr,)).values),
                 np.asarray(mrf.project((attr,)).values),

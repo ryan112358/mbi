@@ -59,12 +59,12 @@ class TestDatasetDeterministic(unittest.TestCase):
         expected_A = np.array([3, 1])
         proj_A = self.dataset.project('A')
         np.testing.assert_array_equal(proj_A.datavector(), expected_A)
-        self.assertEqual(proj_A.domain.attrs, ('A',))
+        self.assertEqual(proj_A.domain.attributes, ('A',))
 
         expected_B = np.array([2, 1, 1])
         proj_B = self.dataset.project('B')
         np.testing.assert_array_equal(proj_B.datavector(), expected_B)
-        self.assertEqual(proj_B.domain.attrs, ('B',))
+        self.assertEqual(proj_B.domain.attributes, ('B',))
 
     def test_datavector_weighted(self):
         expected = np.array([2.0, 2.0, 0, 0, 0, 0.5])
@@ -206,7 +206,7 @@ class TestJaxDataset(unittest.TestCase):
     def test_project(self):
         # Project on "a"
         proj = self.dataset.project(['a'])
-        self.assertEqual(proj.domain.attrs, ('a',))
+        self.assertEqual(proj.domain.attributes, ('a',))
         # Factor uses flattened datavector
         self.assertEqual(proj.datavector().size, 3)
         np.testing.assert_array_equal(proj.datavector(), np.array([1, 1, 1]))

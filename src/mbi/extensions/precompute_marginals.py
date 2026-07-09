@@ -58,7 +58,7 @@ def _prepare_columns(dataset):
                 np.min_scalar_type(_next_pow2(domain[a]) - 1)
             )
         )
-        for a in domain.attrs
+        for a in domain.attributes
     }
     weights = (
         jnp.asarray(dataset.weights) if dataset.weights is not None else None
@@ -73,8 +73,8 @@ def _group_cliques_by_shape(cliques, domain):
     ``sorted_shapes`` is ordered by descending group size and
     ``shape_groups`` maps each padded shape to its list of work items.
     """
-    actual_sizes = {a: domain[a] for a in domain.attrs}
-    padded_sizes = {a: _next_pow2(domain[a]) for a in domain.attrs}
+    actual_sizes = {a: domain[a] for a in domain.attributes}
+    padded_sizes = {a: _next_pow2(domain[a]) for a in domain.attributes}
 
     work_items = []
     for cl in cliques:
@@ -175,8 +175,10 @@ def precompute_marginals(
 
             # Transpose back to the original attribute order if needed.
             proj_domain = domain.project(cl)
-            if transpose and tuple(sorted_attrs) != proj_domain.attrs:
-                perm = tuple(sorted_attrs.index(a) for a in proj_domain.attrs)
+            if transpose and tuple(sorted_attrs) != proj_domain.attributes:
+                perm = tuple(
+                    sorted_attrs.index(a) for a in proj_domain.attributes
+                )
                 marginal = jnp.transpose(marginal, perm)
 
             arrays[cl] = Factor(proj_domain, marginal)
