@@ -16,6 +16,7 @@ from typing import Any
 import chex
 import jax
 import jax.numpy as jnp
+from jax.typing import ArrayLike
 import numpy as np
 import optax
 
@@ -98,10 +99,10 @@ class LinearMeasurement:
         a vector with the same shape and interpretation as `noisy_measurement`.
     """
 
-    noisy_measurement: jax.Array
+    noisy_measurement: ArrayLike
     clique: Clique = jax.tree.static()
     stddev: float = jax.tree.static(default=1.0)
-    query: Callable[[Factor], jax.Array] = jax.tree.static(
+    query: Callable[[Factor], ArrayLike] = jax.tree.static(
         default=DatavectorQuery()
     )
 
