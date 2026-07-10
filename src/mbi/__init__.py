@@ -35,6 +35,7 @@ from ._model_summary import ModelSummary, summarize
 from ._api import Model, Projectable
 from .estimation import Estimator
 from .extensions import message_passing
+from .clique_utils import Clique
 from .clique_vector import CliqueVector
 from .constraint import Constraint
 from .dataset import Dataset
@@ -45,8 +46,6 @@ from .marginal_loss import NormalizedQuery, SlicedQuery, WeightedQuery
 from .marginal_oracles import MarginalOracle
 from .markov_random_field import MarkovRandomField
 from ._serialization import save, load
-
-Clique = tuple[str, ...]
 
 __all__ = [
     "Constraint",

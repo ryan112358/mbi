@@ -31,7 +31,7 @@ import jax.numpy as jnp
 import networkx as nx
 
 from . import junction_tree
-from .clique_utils import clique_mapping
+from .clique_utils import Clique, clique_mapping
 from .clique_vector import CliqueVector
 from .constraint import Constraint
 from .domain import Domain
@@ -611,9 +611,6 @@ def einsum_marginals(
     )
 
 
-Clique = tuple[str, ...]
-
-
 def variable_elimination(
     potentials: CliqueVector,
     clique: Clique,
@@ -753,9 +750,7 @@ def calculate_many_marginals(
     conditional = {}
     for Ci in max_cliques:
         for Cj in neighbors[Ci]:
-            Cj: tuple[
-                str, ...
-            ]  # networkx does not seem to have the right type annotation.
+            Cj: Clique  # networkx lacks a precise type annotation.
             Sij = tuple(set(Cj) & set(Ci))
             Z = marginals.project(Cj)
             Z_sep = Z.project(Sij)

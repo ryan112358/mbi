@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import functools
 import itertools
-from typing import Any, NamedTuple, Protocol, TypeAlias
+from typing import Any, NamedTuple, Protocol
 
 import dataclasses
 import jax
@@ -26,12 +26,11 @@ from scipy.cluster.hierarchy import DisjointSet
 
 from . import estimation
 from . import marginal_loss
+from .clique_utils import Clique
 from .clique_vector import CliqueVector
 from .domain import Domain
 from .factor import Factor
 from .marginal_loss import LinearMeasurement
-
-Clique: TypeAlias = tuple[str, ...]
 
 # pylint: disable
 
