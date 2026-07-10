@@ -3,7 +3,7 @@
 This module provides helper functions for common operations on cliques,
 such as finding maximal subsets and creating mappings between cliques and
 their maximal counterparts. Cliques are typically represented as tuples of
-attribute names (strings).
+attribute names, which may be strings or integers.
 """
 
 import itertools
@@ -12,7 +12,9 @@ from typing import TypeAlias
 
 from .domain import Domain
 
-Clique: TypeAlias = tuple[str, ...]
+# Attribute names are usually strings, but integers are also supported (e.g. for
+# referring to columns by position). Only hashability and equality are required.
+Clique: TypeAlias = tuple[str | int, ...]
 
 
 def powerset(iterable: Iterable) -> Iterator[tuple]:

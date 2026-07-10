@@ -10,14 +10,12 @@ computing greedy elimination orders, and estimating model size.
 import itertools
 from collections import OrderedDict
 from collections.abc import Collection, Sequence
-from typing import TypeAlias
 
 import networkx as nx
 import numpy as np
 
+from .clique_utils import Clique
 from .domain import Domain
-
-Clique: TypeAlias = tuple[str, ...]
 
 
 def maximal_cliques(junction_tree: nx.Graph) -> list[Clique]:
