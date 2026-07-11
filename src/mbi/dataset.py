@@ -20,11 +20,11 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from .domain import Domain
+from .domain import Attribute, Domain
 from .factor import Factor
 
 
-def _validate_column_meta(data: np.ndarray, attr: str):
+def _validate_column_meta(data: np.ndarray, attr: Attribute):
     """Validate shape and dtype of a single column (no value checks)."""
     if data.ndim != 1:
         raise ValueError(f"Column '{attr}' must be 1D, got shape {data.shape}")
@@ -34,7 +34,7 @@ def _validate_column_meta(data: np.ndarray, attr: str):
         )
 
 
-def _validate_data(data: dict[str, np.ndarray], domain: Domain):
+def _validate_data(data: dict[Attribute, np.ndarray], domain: Domain):
     if set(data.keys()) != set(domain.attributes):
         raise ValueError("Keys in data dictionary must match domain attributes")
     n = None
@@ -88,7 +88,7 @@ class Dataset:
         weights: Optional per-row weights (defaults to all ones).
     """
 
-    data: dict[str, ArrayLike]
+    data: dict[Attribute, ArrayLike]
     domain: Domain
     weights: ArrayLike | None = dataclasses.field(default=None)
 
@@ -120,7 +120,7 @@ class Dataset:
                 f"data length ({n})"
             )
 
-    def to_dict(self) -> dict[str, np.ndarray]:
+    def to_dict(self) -> dict[Attribute, np.ndarray]:
         return self.data
 
     @staticmethod
@@ -184,9 +184,7 @@ class Dataset:
         data = {attr: arr[:, i] for i, attr in enumerate(domain_obj.attributes)}
         return Dataset(data, domain_obj)
 
-    def project(
-        self, cols: int | str | Sequence[str] | Sequence[int]
-    ) -> Factor:
+    def project(self, cols: Attribute | Sequence[Attribute]) -> Factor:
         """Project dataset onto a subset of columns."""
         if isinstance(cols, (str, int)):
             cols = [cols]
@@ -196,10 +194,10 @@ class Dataset:
         sub = Dataset(data, domain, self.weights)
         return Factor(sub.domain, jnp.asarray(sub.datavector(flatten=False)))
 
-    def supports(self, cols: str | Sequence[str]) -> bool:
+    def supports(self, cols: Attribute | Sequence[Attribute]) -> bool:
         return self.domain.supports(cols)
 
-    def drop(self, cols: Sequence[str]) -> Factor:
+    def drop(self, cols: Sequence[Attribute]) -> Factor:
         """Returns a Factor with the specified columns marginalized out."""
         proj = [c for c in self.domain if c not in cols]
         return self.project(proj)
@@ -347,7 +345,7 @@ class JaxDataset:
             assumed to have a weight of 1.
     """
 
-    data: dict[str, jax.Array]
+    data: dict[Attribute, jax.Array]
     domain: Domain = jax.tree.static()
     weights: jax.Array | None = None
 
@@ -367,7 +365,7 @@ class JaxDataset:
 
         return JaxDataset(data, domain)
 
-    def project(self, cols: str | Sequence[str]) -> Factor:
+    def project(self, cols: Attribute | Sequence[Attribute]) -> Factor:
         """Project dataset onto a subset of columns."""
         if isinstance(cols, (str, int)):
             cols = [cols]
