@@ -148,11 +148,10 @@ class MarkovRandomField:
                     return_counts=True,
                 )
 
+                perm = np.argsort(inverse, kind="stable")
                 if method == "sample":
                     u = np.random.rand(total)
                 else:
-                    perm = np.argsort(inverse, kind="stable")
-
                     group_starts = np.zeros(len(counts), dtype=int)
                     np.cumsum(counts[:-1], out=group_starts[1:])
 
@@ -182,9 +181,6 @@ class MarkovRandomField:
                     total, dtype=np.min_scalar_type(self.domain[col])
                 )
                 domain_size = self.domain[col]
-
-                if method == "sample":
-                    perm = np.argsort(inverse, kind="stable")
 
                 u_sorted = u[perm]
 
