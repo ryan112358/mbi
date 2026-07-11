@@ -10,9 +10,14 @@ import functools
 import math
 import warnings
 from collections.abc import Iterator, Sequence
-from typing import Any
+from typing import Any, TypeAlias
 
 import attr
+
+# Attribute names are usually strings, but integers are also supported (e.g. for
+# referring to columns by position). Only hashability and equality are required.
+# This mirrors the element type of ``mbi.Clique``.
+Attribute: TypeAlias = str | int
 
 
 @attr.dataclass(frozen=True)
@@ -46,7 +51,7 @@ class Domain:
       Domain(a: 2, b: 3)
   """
 
-  attributes: tuple[str, ...] = attr.field(converter=tuple)
+  attributes: tuple[Attribute, ...] = attr.field(converter=tuple)
   shape: tuple[int, ...] = attr.field(
       converter=lambda sh: tuple(int(n) for n in sh)
   )
@@ -73,19 +78,19 @@ class Domain:
           )
 
   @functools.cached_property
-  def config(self) -> dict[str, int]:
+  def config(self) -> dict[Attribute, int]:
     """Returns a dictionary of { attr : size } values."""
     return dict(zip(self.attributes, self.shape))
 
   @functools.cached_property
-  def labels_config(self) -> dict[str, tuple[Any, ...]] | None:
+  def labels_config(self) -> dict[Attribute, tuple[Any, ...]] | None:
     """Returns a dictionary of { attr : labels } values."""
     if self.labels is None:
       return None
     return dict(zip(self.attributes, self.labels))
 
   @staticmethod
-  def fromdict(config: dict[str, int]) -> "Domain":
+  def fromdict(config: dict[Attribute, int]) -> "Domain":
     """Construct a Domain object from a dictionary of { attr : size } values.
 
     Example Usage:
@@ -99,7 +104,7 @@ class Domain:
     """
     return Domain(config.keys(), config.values())
 
-  def project(self, attributes: str | Sequence[str]) -> "Domain":
+  def project(self, attributes: Attribute | Sequence[Attribute]) -> "Domain":
     """Project the domain onto a subset of attributes.
 
     Args:
@@ -107,7 +112,7 @@ class Domain:
     Returns:
       the projected Domain object
     """
-    if isinstance(attributes, str):
+    if isinstance(attributes, (str, int)):
       attributes = [attributes]
     if not set(attributes) <= set(self.attributes):
       raise ValueError(f"Cannot project {self} onto {attributes}.")
@@ -117,7 +122,7 @@ class Domain:
       labels = tuple(self.labels_config[a] for a in attributes)
     return Domain(attributes, shape, labels=labels)
 
-  def marginalize(self, attrs: Sequence[str]) -> "Domain":
+  def marginalize(self, attrs: Sequence[Attribute]) -> "Domain":
     """Marginalize out some attributes from the domain (opposite of project).
 
     Example Usage:
@@ -138,11 +143,11 @@ class Domain:
     """Checks if this domain contains all attributes present in another domain."""
     return set(other.attributes) <= set(self.attributes)
 
-  def canonical(self, attrs: Sequence[str]) -> tuple[str, ...]:
+  def canonical(self, attrs: Sequence[Attribute]) -> tuple[Attribute, ...]:
     """Returns attributes common to the domain and input, maintaining the domain's order."""
     return tuple(a for a in self.attributes if a in attrs)
 
-  def invert(self, attrs: Sequence[str]) -> list[str]:
+  def invert(self, attrs: Sequence[Attribute]) -> list[Attribute]:
     """Returns attributes present in the domain but not in the provided list."""
     return [a for a in self.attributes if a not in attrs]
 
@@ -162,7 +167,7 @@ class Domain:
     """
     return self.project([a for a in self.attributes if a in other.attributes])
 
-  def axes(self, attrs: Sequence[str]) -> tuple[int, ...]:
+  def axes(self, attrs: Sequence[Attribute]) -> tuple[int, ...]:
     """Return the axes tuple for the given attributes.
 
     Args:
@@ -196,7 +201,7 @@ class Domain:
         labels=new_labels,
     )
 
-  def size(self, attributes: Sequence[str] | None = None) -> int:
+  def size(self, attributes: Sequence[Attribute] | None = None) -> int:
     """Return the total size of the domain.
 
     Example:
@@ -230,19 +235,19 @@ class Domain:
     )
     return self.attributes
 
-  def supports(self, attrs: str | Sequence[str]) -> bool:
-    if isinstance(attrs, str):
+  def supports(self, attrs: Attribute | Sequence[Attribute]) -> bool:
+    if isinstance(attrs, (str, int)):
       attrs = [attrs]
     return set(attrs) <= set(self.attributes)
 
-  def __contains__(self, name: str) -> bool:
+  def __contains__(self, name: Attribute) -> bool:
     """Check if the given attribute is in the domain."""
     return name in self.attributes
 
-  def __getitem__(self, a: str) -> int:
+  def __getitem__(self, a: Attribute) -> int:
     return self.config[a]
 
-  def __iter__(self) -> Iterator[str]:
+  def __iter__(self) -> Iterator[Attribute]:
     return self.attributes.__iter__()
 
   def __len__(self) -> int:

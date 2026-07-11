@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .domain import Domain
+from .domain import Attribute, Domain
 
 
 @jax.tree_util.register_dataclass
@@ -66,7 +66,7 @@ class Factor:
     return cls(domain, jax.ShapeDtypeStruct(domain.shape, jnp.float32))
 
   # Reshaping operations
-  def transpose(self, attrs: Sequence[str]) -> Factor:
+  def transpose(self, attrs: Sequence[Attribute]) -> Factor:
     """Rearranges the factor's axes according to the new attribute order."""
     if set(attrs) != set(self.domain.attributes):
       raise ValueError("attrs must be same as domain attributes")
@@ -88,7 +88,7 @@ class Factor:
 
   # Functions that aggregate along some subset of axes
   def _aggregate(
-      self, fn: Callable, attrs: Sequence[str] | None = None
+      self, fn: Callable, attrs: Sequence[Attribute] | None = None
   ) -> Factor:
     """Helper for aggregating values along specified attribute axes."""
     attrs = self.domain.attributes if attrs is None else attrs
@@ -97,27 +97,29 @@ class Factor:
     newdom = self.domain.marginalize(attrs)
     return Factor(newdom, values)
 
-  def max(self, attrs: Sequence[str] | None = None) -> Factor:
+  def max(self, attrs: Sequence[Attribute] | None = None) -> Factor:
     """Computes the maximum value along specified attribute axes."""
     return self._aggregate(jnp.max, attrs)
 
-  def sum(self, attrs: Sequence[str] | None = None) -> Factor:
+  def sum(self, attrs: Sequence[Attribute] | None = None) -> Factor:
     """Computes the sum along specified attribute axes."""
     return self._aggregate(jnp.sum, attrs)
 
-  def logsumexp(self, attrs: Sequence[str] | None = None) -> Factor:
+  def logsumexp(self, attrs: Sequence[Attribute] | None = None) -> Factor:
     """Computes the log-sum-exp along specified attribute axes."""
     return self._aggregate(jax.scipy.special.logsumexp, attrs)
 
-  def project(self, attrs: str | Sequence[str], log: bool = False) -> "Factor":
+  def project(
+      self, attrs: Attribute | Sequence[Attribute], log: bool = False
+  ) -> "Factor":
     """Computes the marginal distribution by summing/logsumexp'ing out other attributes."""
-    if isinstance(attrs, str):
+    if isinstance(attrs, (str, int)):
       attrs = (attrs,)
     marginalized = self.domain.marginalize(attrs).attributes
     result = self.logsumexp(marginalized) if log else self.sum(marginalized)
     return result.transpose(attrs)
 
-  def slice(self, evidence: dict[str, int]) -> "Factor":
+  def slice(self, evidence: dict[Attribute, int]) -> "Factor":
     """Slice the factor by fixing attributes to scalar values.
 
     Args:
@@ -141,7 +143,7 @@ class Factor:
     domain = self.domain.marginalize(relevant)
     return Factor(domain, values)
 
-  def supports(self, attrs: str | Sequence[str]) -> bool:
+  def supports(self, attrs: Attribute | Sequence[Attribute]) -> bool:
     return self.domain.supports(attrs)
 
   # Functions that operate element-wise
