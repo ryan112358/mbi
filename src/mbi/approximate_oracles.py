@@ -232,18 +232,19 @@ def convex_generalized_belief_propagation(
             for r in children[p]:
                 messages[p, r] = rho * messages[p, r] + (1.0 - rho) * new[p, r]
                 messages[r, p] = rho * messages[r, p] + (1.0 - rho) * new[r, p]
-        mu = {}
-        for r in cliques:
-            mu[r] = (
-                (
-                    pot[r]
-                    + sum(messages[c, r] for c in children[r])
-                    - sum(messages[r, p] for p in parents[r])
-                )
-                .normalize(total, log=True)
-                .exp()
-                .apply_sharding(mesh)
+
+    mu = {}
+    for r in cliques:
+        mu[r] = (
+            (
+                pot[r]
+                + sum(messages[c, r] for c in children[r])
+                - sum(messages[r, p] for p in parents[r])
             )
+            .normalize(total, log=True)
+            .exp()
+            .apply_sharding(mesh)
+        )
 
     return CliqueVector(domain, cliques, mu), messages
 

@@ -67,7 +67,7 @@ def _to_clique_vector(data, cliques):
         dom = data.domain.project(cl)
         vals = data.project(cl).datavector(flatten=False)
         arrays[cl] = Factor(dom, vals)
-    return CliqueVector(dom, cliques, arrays)
+    return CliqueVector(data.domain, cliques, arrays)
 
 
 def public_support(
