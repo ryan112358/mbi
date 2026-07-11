@@ -1,0 +1,10 @@
+# Pyrefly type-checker configuration.
+# See https://pyrefly.org/en/docs/configuration/
+#
+# We start on the "basic" preset, which matches the set of checks that the
+# project passed under pytype. Stricter presets ("default", "strict") surface
+# additional findings that are being addressed incrementally; see the
+# migration notes in the PR that introduced pyrefly.
+project-includes = ["src/mbi/**/*.py"]
+python-version = "3.11"
+preset = "basic"

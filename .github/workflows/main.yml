@@ -74,4 +74,4 @@ jobs:
 
       - name: Type checking
         run: |
-          pytype src/mbi/*.py
+          pyrefly check
