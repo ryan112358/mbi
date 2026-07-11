@@ -35,7 +35,7 @@ Repository = "https://github.com/ryan112358/mbi"
 [project.optional-dependencies]
 dev = [
     "pytest",
-    "pytype",
+    "pyrefly",
     "parameterized",
     "pyink",
     "pylint",
@@ -61,5 +61,6 @@ pyink-annotation-pragmas = [
     "pylint:",
     "type: ignore",
     "pytype:",
+    "pyrefly:",
     "mypy:",
 ]
