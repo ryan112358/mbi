@@ -29,7 +29,8 @@ jobs:
 
       - name: Check formatting with pyink
         run: |
-          pyink --check --diff src test mechanisms examples
+          pyink --check --diff src test
+          pyink --check --diff --pyink-indentation=4 mechanisms examples
 
       - name: Lint with flake8
         run: |
