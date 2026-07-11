@@ -18,37 +18,37 @@ Clique: TypeAlias = tuple[str | int, ...]
 
 
 def powerset(iterable: Iterable) -> Iterator[tuple]:
-    """Powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)."""
-    s = list(iterable)
-    return itertools.chain.from_iterable(
-        itertools.combinations(s, r) for r in range(len(s) + 1)
-    )
+  """Powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)."""
+  s = list(iterable)
+  return itertools.chain.from_iterable(
+      itertools.combinations(s, r) for r in range(len(s) + 1)
+  )
 
 
 def downward_closure(
     cliques: Sequence[Clique], include_empty: bool = False
 ) -> list[Clique]:
-    """Returns the downward closure of the given cliques.
+  """Returns the downward closure of the given cliques.
 
-    Given a collection of sets, the downward closure is the set of all sets that
-    are subsets of any of the given sets.
+  Given a collection of sets, the downward closure is the set of all sets that
+  are subsets of any of the given sets.
 
-    Example Usage:
-    >>> downward_closure([('a', 'b'), ('a', 'c')])
-    [('a',), ('b',), ('c',), ('a', 'b'), ('a', 'c')]
+  Example Usage:
+  >>> downward_closure([('a', 'b'), ('a', 'c')])
+  [('a',), ('b',), ('c',), ('a', 'b'), ('a', 'c')]
 
-    Args:
-      cliques: The cliques to compute the downward closure of.
+  Args:
+    cliques: The cliques to compute the downward closure of.
 
-    Returns:
-      The downward closure of the given cliques, without the empty tuple.
-    """
-    ans = set()
-    for proj in cliques:
-        ans.update(powerset(proj))
-    if not include_empty:
-        ans = ans - {()}
-    return list(sorted(ans, key=lambda x: (len(x), x)))
+  Returns:
+    The downward closure of the given cliques, without the empty tuple.
+  """
+  ans = set()
+  for proj in cliques:
+    ans.update(powerset(proj))
+  if not include_empty:
+    ans = ans - {()}
+  return list(sorted(ans, key=lambda x: (len(x), x)))
 
 
 def reverse_clique_mapping(
@@ -56,55 +56,55 @@ def reverse_clique_mapping(
     all_cliques: Sequence[Clique],
     domain: Domain | None = None,
 ) -> dict[Clique, list[Clique]]:
-    """Creates a mapping from maximal cliques to a list of cliques they contain.
+  """Creates a mapping from maximal cliques to a list of cliques they contain.
 
-    Args:
-      maximal_cliques: A list of maximal cliques.
-      all_cliques: A list of all cliques.
-      domain: Optional Domain object. If provided, links cliques to the
-              supporting maximal clique with the smallest domain size.
-              Otherwise, links to the one with fewest elements.
+  Args:
+    maximal_cliques: A list of maximal cliques.
+    all_cliques: A list of all cliques.
+    domain: Optional Domain object. If provided, links cliques to the
+            supporting maximal clique with the smallest domain size.
+            Otherwise, links to the one with fewest elements.
 
-    Returns:
-      A mapping from maximal cliques to cliques they contain.
-    """
-    mapping = {cl: [] for cl in maximal_cliques}
-    for cl in all_cliques:
-        candidates = [m for m in maximal_cliques if set(cl) <= set(m)]
-        if not candidates:
-            continue
+  Returns:
+    A mapping from maximal cliques to cliques they contain.
+  """
+  mapping = {cl: [] for cl in maximal_cliques}
+  for cl in all_cliques:
+    candidates = [m for m in maximal_cliques if set(cl) <= set(m)]
+    if not candidates:
+      continue
 
-        if domain is None:
-            best = min(candidates, key=len)
-        else:
-            best = min(candidates, key=lambda m: domain.size(m))
+    if domain is None:
+      best = min(candidates, key=len)
+    else:
+      best = min(candidates, key=lambda m: domain.size(m))
 
-        mapping[best].append(cl)
-    return mapping
+    mapping[best].append(cl)
+  return mapping
 
 
 def maximal_subset(cliques: Sequence[Clique]) -> list[Clique]:
-    """Given a list of cliques, finds a maximal subset of non-nested cliques.
+  """Given a list of cliques, finds a maximal subset of non-nested cliques.
 
-    A clique is considered nested in another if all its vertices are a subset
-    of the other's vertices.
+  A clique is considered nested in another if all its vertices are a subset
+  of the other's vertices.
 
-    Example Usage:
-    >>> maximal_subset([('A', 'B'), ('B',), ('C',), ('B', 'A')])
-    [('A', 'B'), ('C',)]
+  Example Usage:
+  >>> maximal_subset([('A', 'B'), ('B',), ('C',), ('B', 'A')])
+  [('A', 'B'), ('C',)]
 
-    Args:
-      cliques: A list of cliques.
+  Args:
+    cliques: A list of cliques.
 
-    Returns:
-      A new list containing a maximal subset of non-nested cliques.
-    """
-    cliques = sorted(cliques, key=len, reverse=True)
-    result = []
-    for cl in cliques:
-        if not any(set(cl) <= set(cl2) for cl2 in result):
-            result.append(cl)
-    return result
+  Returns:
+    A new list containing a maximal subset of non-nested cliques.
+  """
+  cliques = sorted(cliques, key=len, reverse=True)
+  result = []
+  for cl in cliques:
+    if not any(set(cl) <= set(cl2) for cl2 in result):
+      result.append(cl)
+  return result
 
 
 def clique_mapping(
@@ -112,36 +112,36 @@ def clique_mapping(
     all_cliques: Sequence[Clique],
     domain: Domain | None = None,
 ) -> dict[Clique, Clique]:
-    """Creates a mapping from cliques to their corresponding maximal clique.
+  """Creates a mapping from cliques to their corresponding maximal clique.
 
-    Example Usage:
-    >>> maximal_cliques = [('A', 'B'), ('B', 'C')]
-    >>> all_cliques = [('B', 'A'), ('B',), ('C',), ('B', 'C')]
-    >>> mapping = clique_mapping(maximal_cliques, all_cliques)
-    >>> print(mapping)
-    {('B', 'A'): ('A', 'B'), ('B',): ('A', 'B'), ('C',): ('B', 'C'), ('B', 'C'): ('B', 'C')}
+  Example Usage:
+  >>> maximal_cliques = [('A', 'B'), ('B', 'C')]
+  >>> all_cliques = [('B', 'A'), ('B',), ('C',), ('B', 'C')]
+  >>> mapping = clique_mapping(maximal_cliques, all_cliques)
+  >>> print(mapping)
+  {('B', 'A'): ('A', 'B'), ('B',): ('A', 'B'), ('C',): ('B', 'C'), ('B', 'C'): ('B', 'C')}
 
-    Args:
-      maximal_cliques: A list of maximal cliques.
-      all_cliques: A list of all cliques.
-      domain: Optional Domain object. If provided, links cliques to the
-              supporting maximal clique with the smallest domain size.
-              Otherwise, links to the one with fewest elements.
+  Args:
+    maximal_cliques: A list of maximal cliques.
+    all_cliques: A list of all cliques.
+    domain: Optional Domain object. If provided, links cliques to the
+            supporting maximal clique with the smallest domain size.
+            Otherwise, links to the one with fewest elements.
 
-    Returns:
-      A mapping from cliques to their maximal clique.
+  Returns:
+    A mapping from cliques to their maximal clique.
 
-    """
-    mapping = {}
-    for cl in all_cliques:
-        candidates = [m for m in maximal_cliques if set(cl) <= set(m)]
-        if not candidates:
-            continue
+  """
+  mapping = {}
+  for cl in all_cliques:
+    candidates = [m for m in maximal_cliques if set(cl) <= set(m)]
+    if not candidates:
+      continue
 
-        if domain is None:
-            best = min(candidates, key=len)
-        else:
-            best = min(candidates, key=lambda m: domain.size(m))
+    if domain is None:
+      best = min(candidates, key=len)
+    else:
+      best = min(candidates, key=lambda m: domain.size(m))
 
-        mapping[cl] = best
-    return mapping
+    mapping[cl] = best
+  return mapping

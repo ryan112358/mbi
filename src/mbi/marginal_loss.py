@@ -27,12 +27,12 @@ from .factor import Factor
 
 
 def _weighted_datavector(weights: np.ndarray, x: Factor) -> jax.Array:
-    """Datavector scaled by pre-baked weights (pickle-safe).
+  """Datavector scaled by pre-baked weights (pickle-safe).
 
-    .. deprecated::
-        Use :class:`WeightedQuery` instead for serialization support.
-    """
-    return x.datavector() * weights
+  .. deprecated::
+      Use :class:`WeightedQuery` instead for serialization support.
+  """
+  return x.datavector() * weights
 
 
 # ---------------------------------------------------------------------------
@@ -45,199 +45,199 @@ def _weighted_datavector(weights: np.ndarray, x: Factor) -> jax.Array:
 
 @dataclasses.dataclass(frozen=True)
 class DatavectorQuery:
-    """Identity query: ``f.datavector()``."""
+  """Identity query: ``f.datavector()``."""
 
-    def __call__(self, f: Factor) -> jax.Array:
-        return f.datavector()
+  def __call__(self, f: Factor) -> jax.Array:
+    return f.datavector()
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class WeightedQuery:
-    """Datavector scaled by fixed weights: ``f.datavector() * weights``."""
+  """Datavector scaled by fixed weights: ``f.datavector() * weights``."""
 
-    weights: np.ndarray
+  weights: np.ndarray
 
-    def __call__(self, f: Factor) -> jax.Array:
-        return f.datavector() * self.weights
+  def __call__(self, f: Factor) -> jax.Array:
+    return f.datavector() * self.weights
 
-    # Identity-based hash/eq so JAX static tracing works (ndarray isn't hashable).
-    def __hash__(self) -> int:
-        return id(self)
+  # Identity-based hash/eq so JAX static tracing works (ndarray isn't hashable).
+  def __hash__(self) -> int:
+    return id(self)
 
-    def __eq__(self, other: object) -> bool:
-        return self is other
+  def __eq__(self, other: object) -> bool:
+    return self is other
 
 
 @dataclasses.dataclass(frozen=True)
 class NormalizedQuery:
-    """L1-normalized datavector: ``f.normalize(1).datavector()``."""
+  """L1-normalized datavector: ``f.normalize(1).datavector()``."""
 
-    def __call__(self, f: Factor) -> jax.Array:
-        return f.normalize(1.0).datavector()
+  def __call__(self, f: Factor) -> jax.Array:
+    return f.normalize(1.0).datavector()
 
 
 @dataclasses.dataclass(frozen=True)
 class SlicedQuery:
-    """Datavector with leading elements removed: ``f.datavector()[start:]``."""
+  """Datavector with leading elements removed: ``f.datavector()[start:]``."""
 
-    start: int = 1
+  start: int = 1
 
-    def __call__(self, f: Factor) -> jax.Array:
-        return f.datavector()[self.start :]
+  def __call__(self, f: Factor) -> jax.Array:
+    return f.datavector()[self.start :]
 
 
 @jax.tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class LinearMeasurement:
-    """A class for representing a private linear measurement of a marginal.
+  """A class for representing a private linear measurement of a marginal.
 
-    Attributes:
-        noisy_measurement: The noisy measurement of the marginal.
-        clique: The clique (a tuple of attribute names) defining the marginal.
-        stddev: The standard deviation of the noise added to the measurement.
-        query: A linear function that, when applied to a Factor, extracts a
-        a vector with the same shape and interpretation as `noisy_measurement`.
+  Attributes:
+      noisy_measurement: The noisy measurement of the marginal.
+      clique: The clique (a tuple of attribute names) defining the marginal.
+      stddev: The standard deviation of the noise added to the measurement.
+      query: A linear function that, when applied to a Factor, extracts a
+      a vector with the same shape and interpretation as `noisy_measurement`.
+  """
+
+  noisy_measurement: ArrayLike
+  clique: Clique = jax.tree.static()
+  stddev: float = jax.tree.static(default=1.0)
+  query: Callable[[Factor], ArrayLike] = jax.tree.static(
+      default=DatavectorQuery()
+  )
+
+  def __post_init__(self):
+    object.__setattr__(self, "clique", tuple(self.clique))
+
+  def compress(
+      self, mapping: dict[str, np.ndarray], domain: Domain
+  ) -> "LinearMeasurement":
+    """Compress this measurement by merging domain values.
+
+    Args:
+        mapping: Maps attribute names to 1D integer arrays.
+            ``mapping[attr][i]`` gives the compressed value for
+            original value ``i``.
+        domain: The full dataset domain (needed to reshape the
+            measurement vector into the clique's shape).
+
+    Returns:
+        A new ``LinearMeasurement`` over the compressed domain.
     """
+    if not any(a in mapping for a in self.clique):
+      return self
 
-    noisy_measurement: ArrayLike
-    clique: Clique = jax.tree.static()
-    stddev: float = jax.tree.static(default=1.0)
-    query: Callable[[Factor], ArrayLike] = jax.tree.static(
-        default=DatavectorQuery()
+    y = np.asarray(self.noisy_measurement).flatten()
+
+    # Build per-attribute index arrays (mapping or identity).
+    indices, compressed_sizes = [], []
+    for a in self.clique:
+      if a in mapping:
+        m = np.asarray(mapping[a])
+        indices.append(m)
+        compressed_sizes.append(int(m.max()) + 1)
+      else:
+        indices.append(np.arange(domain[a]))
+        compressed_sizes.append(domain[a])
+
+    # Flat compressed index for every element of y.
+    grids = np.meshgrid(*indices, indexing="ij")
+    flat_idx = np.ravel_multi_index(
+        [g.ravel() for g in grids], compressed_sizes
     )
 
-    def __post_init__(self):
-        object.__setattr__(self, "clique", tuple(self.clique))
+    total = int(np.prod(compressed_sizes))
+    y_compressed = np.bincount(flat_idx, weights=y, minlength=total)
+    inv_coefs = 1.0 / np.sqrt(
+        np.bincount(flat_idx, minlength=total).astype(float)
+    )
 
-    def compress(
-        self, mapping: dict[str, np.ndarray], domain: Domain
-    ) -> "LinearMeasurement":
-        """Compress this measurement by merging domain values.
-
-        Args:
-            mapping: Maps attribute names to 1D integer arrays.
-                ``mapping[attr][i]`` gives the compressed value for
-                original value ``i``.
-            domain: The full dataset domain (needed to reshape the
-                measurement vector into the clique's shape).
-
-        Returns:
-            A new ``LinearMeasurement`` over the compressed domain.
-        """
-        if not any(a in mapping for a in self.clique):
-            return self
-
-        y = np.asarray(self.noisy_measurement).flatten()
-
-        # Build per-attribute index arrays (mapping or identity).
-        indices, compressed_sizes = [], []
-        for a in self.clique:
-            if a in mapping:
-                m = np.asarray(mapping[a])
-                indices.append(m)
-                compressed_sizes.append(int(m.max()) + 1)
-            else:
-                indices.append(np.arange(domain[a]))
-                compressed_sizes.append(domain[a])
-
-        # Flat compressed index for every element of y.
-        grids = np.meshgrid(*indices, indexing="ij")
-        flat_idx = np.ravel_multi_index(
-            [g.ravel() for g in grids], compressed_sizes
-        )
-
-        total = int(np.prod(compressed_sizes))
-        y_compressed = np.bincount(flat_idx, weights=y, minlength=total)
-        inv_coefs = 1.0 / np.sqrt(
-            np.bincount(flat_idx, minlength=total).astype(float)
-        )
-
-        return LinearMeasurement(
-            y_compressed * inv_coefs,
-            self.clique,
-            self.stddev,
-            query=WeightedQuery(inv_coefs),
-        )
+    return LinearMeasurement(
+        y_compressed * inv_coefs,
+        self.clique,
+        self.stddev,
+        query=WeightedQuery(inv_coefs),
+    )
 
 
 @jax.tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class MarginalLossFn:
-    """A loss function over the concatenated vector of marginals.
+  """A loss function over the concatenated vector of marginals.
 
-    Separates the computation (``loss_fn``, static) from the captured data
-    (``data``, dynamic JAX pytree leaves).  This allows ``MarginalLossFn``
-    to be passed through ``jax.jit`` as a regular traced argument rather
-    than a static one, so that different measurement values with the same
-    structure reuse the same compiled program.
+  Separates the computation (``loss_fn``, static) from the captured data
+  (``data``, dynamic JAX pytree leaves).  This allows ``MarginalLossFn``
+  to be passed through ``jax.jit`` as a regular traced argument rather
+  than a static one, so that different measurement values with the same
+  structure reuse the same compiled program.
 
-    Attributes:
-        cliques: Cliques defining the scope of the marginals.
-        loss_fn: A pure function ``(marginals, data) -> loss``.  This is
-            treated as static metadata for JIT compilation.
-        data: Arbitrary pytree of arrays captured by ``loss_fn``.  This is
-            traced through JIT and can change without recompilation.
-        lipschitz: Optional Lipschitz constant of the gradient.
-    """
+  Attributes:
+      cliques: Cliques defining the scope of the marginals.
+      loss_fn: A pure function ``(marginals, data) -> loss``.  This is
+          treated as static metadata for JIT compilation.
+      data: Arbitrary pytree of arrays captured by ``loss_fn``.  This is
+          traced through JIT and can change without recompilation.
+      lipschitz: Optional Lipschitz constant of the gradient.
+  """
 
-    cliques: Sequence[Clique] = jax.tree.static()
-    loss_fn: Callable[[CliqueVector, Any], chex.Numeric] = jax.tree.static()
-    data: Any = ()
-    lipschitz: float | None = jax.tree.static(default=None)
+  cliques: Sequence[Clique] = jax.tree.static()
+  loss_fn: Callable[[CliqueVector, Any], chex.Numeric] = jax.tree.static()
+  data: Any = ()
+  lipschitz: float | None = jax.tree.static(default=None)
 
-    def __post_init__(self):
-        object.__setattr__(self, "cliques", tuple(self.cliques))
+  def __post_init__(self):
+    object.__setattr__(self, "cliques", tuple(self.cliques))
 
-    def __call__(self, marginals: CliqueVector) -> chex.Numeric:
-        return self.loss_fn(marginals, self.data)
+  def __call__(self, marginals: CliqueVector) -> chex.Numeric:
+    return self.loss_fn(marginals, self.data)
 
 
 def _l2_loss(
     marginals: CliqueVector,
     measurements: tuple[LinearMeasurement, ...],
 ) -> chex.Numeric:
-    """Weighted L2 loss over linear measurements."""
-    loss = 0.0
-    for M in measurements:
-        mu = marginals.project(M.clique)
-        stddev = jnp.maximum(M.stddev, 1e-12)
-        diff = (M.query(mu) - M.noisy_measurement) / stddev
-        loss += 0.5 * jnp.vdot(diff, diff)
-    return loss
+  """Weighted L2 loss over linear measurements."""
+  loss = 0.0
+  for M in measurements:
+    mu = marginals.project(M.clique)
+    stddev = jnp.maximum(M.stddev, 1e-12)
+    diff = (M.query(mu) - M.noisy_measurement) / stddev
+    loss += 0.5 * jnp.vdot(diff, diff)
+  return loss
 
 
 def _l1_loss(
     marginals: CliqueVector,
     measurements: tuple[LinearMeasurement, ...],
 ) -> chex.Numeric:
-    """Weighted L1 loss over linear measurements."""
-    loss = 0.0
-    for M in measurements:
-        mu = marginals.project(M.clique)
-        stddev = jnp.maximum(M.stddev, 1e-12)
-        diff = (M.query(mu) - M.noisy_measurement) / stddev
-        loss += jnp.sum(jnp.abs(diff))
-    return loss
+  """Weighted L1 loss over linear measurements."""
+  loss = 0.0
+  for M in measurements:
+    mu = marginals.project(M.clique)
+    stddev = jnp.maximum(M.stddev, 1e-12)
+    diff = (M.query(mu) - M.noisy_measurement) / stddev
+    loss += jnp.sum(jnp.abs(diff))
+  return loss
 
 
 def _normalized_l2_loss(
     marginals: CliqueVector,
     measurements: tuple[LinearMeasurement, ...],
 ) -> chex.Numeric:
-    """Normalized L2 loss over linear measurements."""
-    loss = _l2_loss(marginals, measurements)
-    total = marginals.project(()).datavector(flatten=False)
-    return jnp.sqrt(loss / len(measurements) / total)
+  """Normalized L2 loss over linear measurements."""
+  loss = _l2_loss(marginals, measurements)
+  total = marginals.project(()).datavector(flatten=False)
+  return jnp.sqrt(loss / len(measurements) / total)
 
 
 def _normalized_l1_loss(
     marginals: CliqueVector,
     measurements: tuple[LinearMeasurement, ...],
 ) -> chex.Numeric:
-    """Normalized L1 loss over linear measurements."""
-    loss = _l1_loss(marginals, measurements)
-    total = marginals.project(()).datavector(flatten=False)
-    return loss / len(measurements) / total
+  """Normalized L1 loss over linear measurements."""
+  loss = _l1_loss(marginals, measurements)
+  total = marginals.project(()).datavector(flatten=False)
+  return loss / len(measurements) / total
 
 
 def calculate_l2_lipschitz(
@@ -245,32 +245,32 @@ def calculate_l2_lipschitz(
     cliques: list[Clique],
     loss_fn: Callable[[CliqueVector], chex.Numeric],
 ) -> float:
-    """Estimate the Lipschitz constant of L(x) = || f(x) - y ||_2^2 where f is a linear function.
+  """Estimate the Lipschitz constant of L(x) = || f(x) - y ||_2^2 where f is a linear function.
 
-    The Lipschitz constant can usually be obtained via the largest eigenvalue of the Hessian, which
-    for linear functions represented in matrix form is A^T A.  This function computes the same
-    value without materializing this n x n matrix by using power iteration and leveraging jax.jvp.
+  The Lipschitz constant can usually be obtained via the largest eigenvalue of the Hessian, which
+  for linear functions represented in matrix form is A^T A.  This function computes the same
+  value without materializing this n x n matrix by using power iteration and leveraging jax.jvp.
 
-    Args:
-        domain: The domain over which the loss_fn is defined.
-        loss_fn: The loss function, assumed to be of the form || f(x) - y ||_2^2 where f is linear.
+  Args:
+      domain: The domain over which the loss_fn is defined.
+      loss_fn: The loss function, assumed to be of the form || f(x) - y ||_2^2 where f is linear.
 
-    Returns:
-        An estimate of the Lipschitz constant of the grad(L).
-    """
-    x0 = CliqueVector.zeros(domain, cliques)
+  Returns:
+      An estimate of the Lipschitz constant of the grad(L).
+  """
+  x0 = CliqueVector.zeros(domain, cliques)
 
-    @jax.jit
-    def compute_Hv(v: CliqueVector) -> CliqueVector:
-        return jax.jvp(jax.grad(loss_fn), (x0,), (v,))[1]
+  @jax.jit
+  def compute_Hv(v: CliqueVector) -> CliqueVector:
+    return jax.jvp(jax.grad(loss_fn), (x0,), (v,))[1]
 
-    v = CliqueVector.ones(domain, cliques)
-    v = v / optax.tree.norm(v)
-    for _ in range(50):
-        Hv = compute_Hv(v)
-        estimate = optax.tree.norm(Hv)
-        v = Hv / (estimate + 1e-12)
-    return float(estimate)
+  v = CliqueVector.ones(domain, cliques)
+  v = v / optax.tree.norm(v)
+  for _ in range(50):
+    Hv = compute_Hv(v)
+    estimate = optax.tree.norm(Hv)
+    v = Hv / (estimate + 1e-12)
+  return float(estimate)
 
 
 def from_linear_measurements(
@@ -279,69 +279,69 @@ def from_linear_measurements(
     norm: str = "l2",
     normalize: bool = False,
 ) -> MarginalLossFn:
-    """Construct a MarginalLossFn from a list of LinearMeasurements.
+  """Construct a MarginalLossFn from a list of LinearMeasurements.
 
-    Args:
-        measurements: A list of LinearMeasurements.
-        norm: Either "l1" or "l2".
-        normalize: Flag determining if the loss function should be normalized
-            by the length of linear measurements and estimated total.
-        domain: The domain over which the measurements were made, necessary for calcualting the Lipschitz parameter.
+  Args:
+      measurements: A list of LinearMeasurements.
+      norm: Either "l1" or "l2".
+      normalize: Flag determining if the loss function should be normalized
+          by the length of linear measurements and estimated total.
+      domain: The domain over which the measurements were made, necessary for calcualting the Lipschitz parameter.
 
-    Returns:
-        The MarginalLossFn L(mu) = sum_{c} || Q_c mu_c - y_c || (possibly squared or normalized).
-    """
-    if norm not in ["l1", "l2"]:
-        raise ValueError(f"Unknown norm {norm}.")
-    cliques = [m.clique for m in measurements]
-    maximal_cliques = maximal_subset(cliques)
-    data = tuple(measurements)
+  Returns:
+      The MarginalLossFn L(mu) = sum_{c} || Q_c mu_c - y_c || (possibly squared or normalized).
+  """
+  if norm not in ["l1", "l2"]:
+    raise ValueError(f"Unknown norm {norm}.")
+  cliques = [m.clique for m in measurements]
+  maximal_cliques = maximal_subset(cliques)
+  data = tuple(measurements)
 
-    if normalize:
-        loss_fn = _normalized_l2_loss if norm == "l2" else _normalized_l1_loss
-    else:
-        loss_fn = _l2_loss if norm == "l2" else _l1_loss
+  if normalize:
+    loss_fn = _normalized_l2_loss if norm == "l2" else _normalized_l1_loss
+  else:
+    loss_fn = _l2_loss if norm == "l2" else _l1_loss
 
-    loss = MarginalLossFn(maximal_cliques, loss_fn, data)
+  loss = MarginalLossFn(maximal_cliques, loss_fn, data)
 
-    # Lipschitz requires concrete measurement values.
-    has_abstract = any(
-        isinstance(m.noisy_measurement, jax.ShapeDtypeStruct)
-        for m in measurements
-    )
-    if norm == "l2" and not normalize and not has_abstract:
-        lipschitz = calculate_l2_lipschitz(domain, maximal_cliques, loss)
-        return MarginalLossFn(maximal_cliques, loss_fn, data, lipschitz)
+  # Lipschitz requires concrete measurement values.
+  has_abstract = any(
+      isinstance(m.noisy_measurement, jax.ShapeDtypeStruct)
+      for m in measurements
+  )
+  if norm == "l2" and not normalize and not has_abstract:
+    lipschitz = calculate_l2_lipschitz(domain, maximal_cliques, loss)
+    return MarginalLossFn(maximal_cliques, loss_fn, data, lipschitz)
 
-    return loss
+  return loss
 
 
 def primal_feasibility(mu: CliqueVector) -> chex.Numeric:
-    """Calculates the average L1 distance between overlapping marginals in `mu` (consistency)."""
-    ans = 0
-    count = 0
-    for r in mu.cliques:
-        for s in mu.cliques:
-            if r == s:
-                break
-            d = tuple(set(r) & set(s))
-            if len(d) > 0:
-                x = mu[r].project(d).datavector()
-                y = mu[s].project(d).datavector()
-                denom = 0.5 * x.sum() + 0.5 * y.sum()
-                err = jnp.linalg.norm(x - y, 1) / denom
-                ans += err
-                count += 1
-    try:
-        return ans / count
-    except Exception:  # pylint: disable=broad-exception-caught
-        return 0
+  """Calculates the average L1 distance between overlapping marginals in `mu` (consistency)."""
+  ans = 0
+  count = 0
+  for r in mu.cliques:
+    for s in mu.cliques:
+      if r == s:
+        break
+      d = tuple(set(r) & set(s))
+      if len(d) > 0:
+        x = mu[r].project(d).datavector()
+        y = mu[s].project(d).datavector()
+        denom = 0.5 * x.sum() + 0.5 * y.sum()
+        err = jnp.linalg.norm(x - y, 1) / denom
+        ans += err
+        count += 1
+  try:
+    return ans / count
+  except Exception:  # pylint: disable=broad-exception-caught
+    return 0
 
 
 def mle_loss_fn(marginals: CliqueVector) -> "MarginalLossFn":
-    """MLE loss: ``-marginals.dot(mu.log())``."""
-    return MarginalLossFn(
-        cliques=marginals.cliques,
-        loss_fn=lambda mu, target: -target.dot(mu.log()),
-        data=marginals,
-    )
+  """MLE loss: ``-marginals.dot(mu.log())``."""
+  return MarginalLossFn(
+      cliques=marginals.cliques,
+      loss_fn=lambda mu, target: -target.dot(mu.log()),
+      data=marginals,
+  )

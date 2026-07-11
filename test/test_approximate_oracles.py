@@ -27,60 +27,60 @@ _CLIQUE_SETS = [
 
 
 def fake_measurements(cliques):
-    P = Factor.random(_DOMAIN)
-    P = P / P.sum()
-    measurements = []
-    for cl in cliques:
-        y = P.project(cl).datavector()
-        measurements.append(LinearMeasurement(y, cl))
-    return measurements
+  P = Factor.random(_DOMAIN)
+  P = P / P.sum()
+  measurements = []
+  for cl in cliques:
+    y = P.project(cl).datavector()
+    measurements.append(LinearMeasurement(y, cl))
+  return measurements
 
 
 class TestApproximateOracles(unittest.TestCase):
 
-    @parameterized.expand(itertools.product(_ORACLES, _CLIQUE_SETS))
-    def test_shapes(self, oracle, cliques):
-        zeros = CliqueVector.zeros(_DOMAIN, cliques)
-        marginals, _ = oracle(zeros)
-        self.assertEqual(marginals.domain, _DOMAIN)
-        self.assertEqual(marginals.cliques, tuple(cliques))
-        self.assertEqual(set(zeros.tables.keys()), set(marginals.tables.keys()))
-        for cl in cliques:
-            self.assertEqual(marginals[cl].domain.attributes, cl)
+  @parameterized.expand(itertools.product(_ORACLES, _CLIQUE_SETS))
+  def test_shapes(self, oracle, cliques):
+    zeros = CliqueVector.zeros(_DOMAIN, cliques)
+    marginals, _ = oracle(zeros)
+    self.assertEqual(marginals.domain, _DOMAIN)
+    self.assertEqual(marginals.cliques, tuple(cliques))
+    self.assertEqual(set(zeros.tables.keys()), set(marginals.tables.keys()))
+    for cl in cliques:
+      self.assertEqual(marginals[cl].domain.attributes, cl)
 
-    @parameterized.expand(itertools.product(_CLIQUE_SETS))
-    def test_mirror_descent(self, cliques):
-        # Here we check that the mirror descent algorithm converges to
-        # the true marginals even with an approximate marginal oracle.
-        measurements = fake_measurements(cliques)
+  @parameterized.expand(itertools.product(_CLIQUE_SETS))
+  def test_mirror_descent(self, cliques):
+    # Here we check that the mirror descent algorithm converges to
+    # the true marginals even with an approximate marginal oracle.
+    measurements = fake_measurements(cliques)
 
-        mu = approximate_oracles.mirror_descent(
-            _DOMAIN,
-            measurements,
-            known_total=1.0,
-            iters=250,
-            stepsize=1.0,
-        )
-        for M in measurements:
-            expected = M.noisy_measurement
-            actual = mu.project(M.clique).datavector()
-            np.testing.assert_allclose(actual, expected, atol=1e-2)
+    mu = approximate_oracles.mirror_descent(
+        _DOMAIN,
+        measurements,
+        known_total=1.0,
+        iters=250,
+        stepsize=1.0,
+    )
+    for M in measurements:
+      expected = M.noisy_measurement
+      actual = mu.project(M.clique).datavector()
+      np.testing.assert_allclose(actual, expected, atol=1e-2)
 
-    def test_precompile(self):
-        """precompile() with concrete measurements should not raise."""
-        cliques = [("a", "b"), ("b", "c")]
-        measurements = fake_measurements(cliques)
-        est = approximate_oracles.ApproxMirrorDescent(stepsize=1.0)
-        est.precompile(_DOMAIN, measurements)
+  def test_precompile(self):
+    """precompile() with concrete measurements should not raise."""
+    cliques = [("a", "b"), ("b", "c")]
+    measurements = fake_measurements(cliques)
+    est = approximate_oracles.ApproxMirrorDescent(stepsize=1.0)
+    est.precompile(_DOMAIN, measurements)
 
-    def test_precompile_with_extra_cliques(self):
-        """precompile() with both measurements and extra_cliques."""
-        cliques = [("a", "b"), ("b", "c")]
-        measurements = fake_measurements(cliques)
-        est = approximate_oracles.ApproxMirrorDescent(stepsize=1.0)
-        est.precompile(_DOMAIN, measurements, extra_cliques=[("c", "d")])
+  def test_precompile_with_extra_cliques(self):
+    """precompile() with both measurements and extra_cliques."""
+    cliques = [("a", "b"), ("b", "c")]
+    measurements = fake_measurements(cliques)
+    est = approximate_oracles.ApproxMirrorDescent(stepsize=1.0)
+    est.precompile(_DOMAIN, measurements, extra_cliques=[("c", "d")])
 
-    def test_precompile_extra_cliques_only(self):
-        """precompile() with only extra_cliques (no concrete measurements)."""
-        est = approximate_oracles.ApproxMirrorDescent(stepsize=1.0)
-        est.precompile(_DOMAIN, extra_cliques=[("a", "b"), ("b", "c")])
+  def test_precompile_extra_cliques_only(self):
+    """precompile() with only extra_cliques (no concrete measurements)."""
+    est = approximate_oracles.ApproxMirrorDescent(stepsize=1.0)
+    est.precompile(_DOMAIN, extra_cliques=[("a", "b"), ("b", "c")])

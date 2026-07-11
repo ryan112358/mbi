@@ -28,26 +28,26 @@ np.random.seed(0)
 def _variable_elimination_oracle(
     potentials: CliqueVector, total: float = 1
 ) -> CliqueVector:
-    domain, cliques = potentials.domain, potentials.cliques
-    mu = {
-        cl: marginal_oracles.variable_elimination(potentials, cl, total)
-        for cl in cliques
-    }
-    return CliqueVector(domain, cliques, mu)
+  domain, cliques = potentials.domain, potentials.cliques
+  mu = {
+      cl: marginal_oracles.variable_elimination(potentials, cl, total)
+      for cl in cliques
+  }
+  return CliqueVector(domain, cliques, mu)
 
 
 def _calculate_many_oracle(potentials: CliqueVector, total: float = 1):
-    return marginal_oracles.calculate_many_marginals(
-        potentials, potentials.cliques, total
-    )
+  return marginal_oracles.calculate_many_marginals(
+      potentials, potentials.cliques, total
+  )
 
 
 def _bulk_variable_elimination_oracle(
     potentials: CliqueVector, total: float = 1
 ):
-    return marginal_oracles.bulk_variable_elimination(
-        potentials, potentials.cliques, total
-    )
+  return marginal_oracles.bulk_variable_elimination(
+      potentials, potentials.cliques, total
+  )
 
 
 _implicit_materialized = functools.partial(
@@ -127,197 +127,191 @@ _SCHEDULES = [
 
 class TestMarginalOracles(unittest.TestCase):
 
-    @parameterized.expand(itertools.product(_ORACLES, _CLIQUE_SETS))
-    def test_shapes(self, oracle, cliques):
-        zeros = CliqueVector.zeros(_DOMAIN, cliques)
-        marginals = oracle(zeros)
-        self.assertEqual(marginals.domain, _DOMAIN)
-        self.assertEqual(marginals.cliques, tuple(cliques))
-        self.assertEqual(set(zeros.tables.keys()), set(marginals.tables.keys()))
-        for cl in cliques:
-            self.assertEqual(marginals[cl].domain.attributes, cl)
+  @parameterized.expand(itertools.product(_ORACLES, _CLIQUE_SETS))
+  def test_shapes(self, oracle, cliques):
+    zeros = CliqueVector.zeros(_DOMAIN, cliques)
+    marginals = oracle(zeros)
+    self.assertEqual(marginals.domain, _DOMAIN)
+    self.assertEqual(marginals.cliques, tuple(cliques))
+    self.assertEqual(set(zeros.tables.keys()), set(marginals.tables.keys()))
+    for cl in cliques:
+      self.assertEqual(marginals[cl].domain.attributes, cl)
 
-    @parameterized.expand(itertools.product(_ORACLES, _CLIQUE_SETS, [1, 100]))
-    def test_uniform(self, oracle, cliques, total=1):
-        zeros = CliqueVector.zeros(_DOMAIN, cliques)
-        marginals = oracle(zeros, total)
-        for cl in cliques:
-            expected = total / _DOMAIN.size(cl)
-            np.testing.assert_allclose(
-                marginals[cl].datavector(), expected, rtol=1e-5
-            )
+  @parameterized.expand(itertools.product(_ORACLES, _CLIQUE_SETS, [1, 100]))
+  def test_uniform(self, oracle, cliques, total=1):
+    zeros = CliqueVector.zeros(_DOMAIN, cliques)
+    marginals = oracle(zeros, total)
+    for cl in cliques:
+      expected = total / _DOMAIN.size(cl)
+      np.testing.assert_allclose(
+          marginals[cl].datavector(), expected, rtol=1e-5
+      )
 
-    @parameterized.expand(itertools.product(_ORACLES, _CLIQUE_SETS))
-    def test_matches_brute_force(self, oracle, cliques, total=10):
-        theta = CliqueVector.random(_DOMAIN, cliques)
-        mu1 = oracle(theta, total)
-        mu2 = marginal_oracles.brute_force_marginals(theta, total)
-        for cl in cliques:
-            np.testing.assert_allclose(
-                mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
-            )
+  @parameterized.expand(itertools.product(_ORACLES, _CLIQUE_SETS))
+  def test_matches_brute_force(self, oracle, cliques, total=10):
+    theta = CliqueVector.random(_DOMAIN, cliques)
+    mu1 = oracle(theta, total)
+    mu2 = marginal_oracles.brute_force_marginals(theta, total)
+    for cl in cliques:
+      np.testing.assert_allclose(
+          mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
+      )
 
-    @parameterized.expand(itertools.product(_CLIQUE_SETS, _ALL_CLIQUES))
-    def test_variable_elimination(self, model_cliques, query_clique):
-        theta = CliqueVector.random(_DOMAIN, model_cliques)
-        ans = marginal_oracles.variable_elimination(theta, query_clique)
-        self.assertEqual(ans.domain.attributes, query_clique)
+  @parameterized.expand(itertools.product(_CLIQUE_SETS, _ALL_CLIQUES))
+  def test_variable_elimination(self, model_cliques, query_clique):
+    theta = CliqueVector.random(_DOMAIN, model_cliques)
+    ans = marginal_oracles.variable_elimination(theta, query_clique)
+    self.assertEqual(ans.domain.attributes, query_clique)
 
-    @parameterized.expand(itertools.product(_CLIQUE_SETS, _ALL_CLIQUES))
-    def test_variable_elimination_evidence(self, model_cliques, query_clique):
-        theta = CliqueVector.random(_DOMAIN, model_cliques)
-        evidence_attr = _DOMAIN.attributes[0]
-        evidence_val = 0
-        evidence = {evidence_attr: evidence_val}
+  @parameterized.expand(itertools.product(_CLIQUE_SETS, _ALL_CLIQUES))
+  def test_variable_elimination_evidence(self, model_cliques, query_clique):
+    theta = CliqueVector.random(_DOMAIN, model_cliques)
+    evidence_attr = _DOMAIN.attributes[0]
+    evidence_val = 0
+    evidence = {evidence_attr: evidence_val}
 
-        if evidence_attr in query_clique:
-            with self.assertRaises(ValueError):
-                marginal_oracles.variable_elimination(
-                    theta, query_clique, evidence=evidence
-                )
-            return
-
-        target_clique_full = tuple(set(query_clique) | set(evidence.keys()))
-
-        ans1 = marginal_oracles.variable_elimination(
+    if evidence_attr in query_clique:
+      with self.assertRaises(ValueError):
+        marginal_oracles.variable_elimination(
             theta, query_clique, evidence=evidence
         )
+      return
 
-        ans2_full = marginal_oracles.variable_elimination(
-            theta, target_clique_full
-        )
-        ans2 = ans2_full.slice(evidence)
+    target_clique_full = tuple(set(query_clique) | set(evidence.keys()))
 
-        ans1 = ans1.normalize()
-        ans2 = ans2.normalize()
+    ans1 = marginal_oracles.variable_elimination(
+        theta, query_clique, evidence=evidence
+    )
 
-        ans2 = ans2.transpose(ans1.domain.attributes)
+    ans2_full = marginal_oracles.variable_elimination(theta, target_clique_full)
+    ans2 = ans2_full.slice(evidence)
 
-        np.testing.assert_allclose(ans1.values, ans2.values, atol=1e-5)
-        self.assertEqual(ans1.domain, ans2.domain)
+    ans1 = ans1.normalize()
+    ans2 = ans2.normalize()
 
-    @parameterized.expand(_STABLE_ORACLES)
-    def test_nan_potentials(self, oracle):
-        """Test that -inf potentials are handled correctly without NaNs."""
-        cliques = [
-            ("A", "B", "C"),
-            ("A",),
-            ("D",),
-            ("D", "A"),
-            ("D", "A", "C"),
-            ("A", "B"),
-        ]
+    ans2 = ans2.transpose(ans1.domain.attributes)
 
-        dom = Domain(["A", "B", "C", "D"], [2, 2, 2, 2])
-        potentials = CliqueVector.zeros(dom, cliques)
+    np.testing.assert_allclose(ans1.values, ans2.values, atol=1e-5)
+    self.assertEqual(ans1.domain, ans2.domain)
 
-        con = Factor(
-            dom.project(["A", "C"]), jnp.array([[0, -np.inf], [-np.inf, 0]])
-        )
-        potentials = CliqueVector(
-            potentials.domain,
-            potentials.cliques + (("A", "C"),),
-            {**potentials.tables, ("A", "C"): con},
-        )
+  @parameterized.expand(_STABLE_ORACLES)
+  def test_nan_potentials(self, oracle):
+    """Test that -inf potentials are handled correctly without NaNs."""
+    cliques = [
+        ("A", "B", "C"),
+        ("A",),
+        ("D",),
+        ("D", "A"),
+        ("D", "A", "C"),
+        ("A", "B"),
+    ]
 
-        marginals = oracle(potentials)
+    dom = Domain(["A", "B", "C", "D"], [2, 2, 2, 2])
+    potentials = CliqueVector.zeros(dom, cliques)
 
-        for cl, factor in marginals.tables.items():
-            self.assertFalse(
-                jnp.isnan(factor.values).any(), f"NaNs found in clique {cl}"
-            )
-            # With normalize(total=1), we expect sums to be 1.0 (or very close)
-            # The domain is A,C correlated perfectly (A=C). A=0,C=1 and A=1,C=0 are impossible.
-            # This is a valid graphical model configuration.
-            self.assertTrue(
-                jnp.allclose(factor.sum().values, 1.0),
-                f"Marginal for {cl} does not sum to 1",
-            )
+    con = Factor(
+        dom.project(["A", "C"]), jnp.array([[0, -np.inf], [-np.inf, 0]])
+    )
+    potentials = CliqueVector(
+        potentials.domain,
+        potentials.cliques + (("A", "C"),),
+        {**potentials.tables, ("A", "C"): con},
+    )
 
-    # --- Tests for the composable API ---
+    marginals = oracle(potentials)
 
-    @parameterized.expand(itertools.product(_SCHEDULES, _CLIQUE_SETS))
-    def test_schedule_matches_brute_force(self, oracle, cliques, total=10):
-        """Every schedule produces identical marginals to brute force."""
-        theta = CliqueVector.random(_DOMAIN, cliques)
-        mu1 = oracle(theta, total)
-        mu2 = marginal_oracles.brute_force_marginals(theta, total)
-        for cl in cliques:
-            np.testing.assert_allclose(
-                mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
-            )
+    for cl, factor in marginals.tables.items():
+      self.assertFalse(
+          jnp.isnan(factor.values).any(), f"NaNs found in clique {cl}"
+      )
+      # With normalize(total=1), we expect sums to be 1.0 (or very close)
+      # The domain is A,C correlated perfectly (A=C). A=0,C=1 and A=1,C=0 are impossible.
+      # This is a valid graphical model configuration.
+      self.assertTrue(
+          jnp.allclose(factor.sum().values, 1.0),
+          f"Marginal for {cl} does not sum to 1",
+      )
 
-    @parameterized.expand(itertools.product(_CONTRACTIONS, _CLIQUE_SETS))
-    def test_contraction_matches_brute_force(
-        self, contraction, cliques, total=10
-    ):
-        """Every contraction function produces identical marginals to brute force."""
-        theta = CliqueVector.random(_DOMAIN, cliques)
-        mu1 = message_passing_implicit(theta, total, contraction=contraction)
-        mu2 = marginal_oracles.brute_force_marginals(theta, total)
-        for cl in cliques:
-            np.testing.assert_allclose(
-                mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
-            )
+  # --- Tests for the composable API ---
+
+  @parameterized.expand(itertools.product(_SCHEDULES, _CLIQUE_SETS))
+  def test_schedule_matches_brute_force(self, oracle, cliques, total=10):
+    """Every schedule produces identical marginals to brute force."""
+    theta = CliqueVector.random(_DOMAIN, cliques)
+    mu1 = oracle(theta, total)
+    mu2 = marginal_oracles.brute_force_marginals(theta, total)
+    for cl in cliques:
+      np.testing.assert_allclose(
+          mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
+      )
+
+  @parameterized.expand(itertools.product(_CONTRACTIONS, _CLIQUE_SETS))
+  def test_contraction_matches_brute_force(
+      self, contraction, cliques, total=10
+  ):
+    """Every contraction function produces identical marginals to brute force."""
+    theta = CliqueVector.random(_DOMAIN, cliques)
+    mu1 = message_passing_implicit(theta, total, contraction=contraction)
+    mu2 = marginal_oracles.brute_force_marginals(theta, total)
+    for cl in cliques:
+      np.testing.assert_allclose(
+          mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
+      )
 
 
 class TestDefaultOracle(unittest.TestCase):
 
-    def test_cpu_returns_shafer_shenoy(self):
-        oracle = marginal_oracles.default_oracle(backend="cpu")
-        self.assertIs(oracle, message_passing_shafer_shenoy)
+  def test_cpu_returns_shafer_shenoy(self):
+    oracle = marginal_oracles.default_oracle(backend="cpu")
+    self.assertIs(oracle, message_passing_shafer_shenoy)
 
-    def test_gpu_small_returns_shafer_shenoy(self):
-        cliques = (("a", "b"), ("b", "c"), ("c", "d"))
-        oracle = marginal_oracles.default_oracle(
-            cliques, _DOMAIN, backend="gpu"
-        )
-        self.assertIs(oracle, message_passing_shafer_shenoy)
+  def test_gpu_small_returns_shafer_shenoy(self):
+    cliques = (("a", "b"), ("b", "c"), ("c", "d"))
+    oracle = marginal_oracles.default_oracle(cliques, _DOMAIN, backend="gpu")
+    self.assertIs(oracle, message_passing_shafer_shenoy)
 
-    def test_gpu_moderate_returns_shafer_shenoy(self):
-        """1M clique no longer triggers implicit (old threshold)."""
-        domain = Domain(["a", "b", "c"], [100, 100, 100])
-        cliques = (("a", "b", "c"),)
-        oracle = marginal_oracles.default_oracle(cliques, domain, backend="gpu")
-        self.assertIs(oracle, message_passing_shafer_shenoy)
+  def test_gpu_moderate_returns_shafer_shenoy(self):
+    """1M clique no longer triggers implicit (old threshold)."""
+    domain = Domain(["a", "b", "c"], [100, 100, 100])
+    cliques = (("a", "b", "c"),)
+    oracle = marginal_oracles.default_oracle(cliques, domain, backend="gpu")
+    self.assertIs(oracle, message_passing_shafer_shenoy)
 
-    def test_gpu_huge_few_nodes_returns_implicit(self):
-        """Huge SCs (>50M) with few JT nodes -> implicit (data movement)."""
-        # 3 attrs with card ~370 each -> single 3-way clique ~ 50.6M entries.
-        domain = Domain(["a", "b", "c"], [370, 370, 370])
-        cliques = (("a", "b", "c"),)
-        oracle = marginal_oracles.default_oracle(cliques, domain, backend="gpu")
-        self.assertIs(oracle, message_passing_implicit)
+  def test_gpu_huge_few_nodes_returns_implicit(self):
+    """Huge SCs (>50M) with few JT nodes -> implicit (data movement)."""
+    # 3 attrs with card ~370 each -> single 3-way clique ~ 50.6M entries.
+    domain = Domain(["a", "b", "c"], [370, 370, 370])
+    cliques = (("a", "b", "c"),)
+    oracle = marginal_oracles.default_oracle(cliques, domain, backend="gpu")
+    self.assertIs(oracle, message_passing_implicit)
 
-    def test_gpu_huge_many_nodes_returns_shafer_shenoy(self):
-        """Huge SCs but many JT nodes -> SS (kernel fusion advantage)."""
-        # 40 attrs in a chain, card=100 each, bw=2 -> max SC=1M, 39 nodes.
-        attrs = [f"x{i}" for i in range(40)]
-        domain = Domain(attrs, [100] * 40)
-        cliques = tuple(
-            (attrs[i], attrs[i + 1], attrs[i + 2]) for i in range(38)
-        )
-        oracle = marginal_oracles.default_oracle(cliques, domain, backend="gpu")
-        # Max SC = 100^3 = 1M < 50M, many nodes -> SS.
-        self.assertIs(oracle, message_passing_shafer_shenoy)
+  def test_gpu_huge_many_nodes_returns_shafer_shenoy(self):
+    """Huge SCs but many JT nodes -> SS (kernel fusion advantage)."""
+    # 40 attrs in a chain, card=100 each, bw=2 -> max SC=1M, 39 nodes.
+    attrs = [f"x{i}" for i in range(40)]
+    domain = Domain(attrs, [100] * 40)
+    cliques = tuple((attrs[i], attrs[i + 1], attrs[i + 2]) for i in range(38))
+    oracle = marginal_oracles.default_oracle(cliques, domain, backend="gpu")
+    # Max SC = 100^3 = 1M < 50M, many nodes -> SS.
+    self.assertIs(oracle, message_passing_shafer_shenoy)
 
-    def test_gpu_no_cliques_returns_shafer_shenoy(self):
-        oracle = marginal_oracles.default_oracle(backend="gpu")
-        self.assertIs(oracle, message_passing_shafer_shenoy)
+  def test_gpu_no_cliques_returns_shafer_shenoy(self):
+    oracle = marginal_oracles.default_oracle(backend="gpu")
+    self.assertIs(oracle, message_passing_shafer_shenoy)
 
-    @parameterized.expand([(cs,) for cs in _CLIQUE_SETS])
-    def test_correctness(self, cliques):
-        """default_oracle produces correct marginals."""
-        if not cliques:
-            return
-        oracle = marginal_oracles.default_oracle(cliques, _DOMAIN)
-        theta = CliqueVector.random(_DOMAIN, cliques)
-        mu1 = oracle(theta, 1.0)
-        mu2 = marginal_oracles.brute_force_marginals(theta, 1.0)
-        for cl in cliques:
-            np.testing.assert_allclose(
-                mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
-            )
+  @parameterized.expand([(cs,) for cs in _CLIQUE_SETS])
+  def test_correctness(self, cliques):
+    """default_oracle produces correct marginals."""
+    if not cliques:
+      return
+    oracle = marginal_oracles.default_oracle(cliques, _DOMAIN)
+    theta = CliqueVector.random(_DOMAIN, cliques)
+    mu1 = oracle(theta, 1.0)
+    mu2 = marginal_oracles.brute_force_marginals(theta, 1.0)
+    for cl in cliques:
+      np.testing.assert_allclose(
+          mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
+      )
 
 
 # --- Constraint-aware oracle tests ---
@@ -362,111 +356,109 @@ _FOLDING_ORACLES = [
 
 
 def _fold_baseline(potentials, total, constraints):
-    """Brute-force baseline with constraints folded as -inf potentials."""
-    cliques = list(potentials.cliques)
-    arrays = dict(potentials.tables)
-    for c in constraints:
-        cl = potentials.domain.canonical(c.clique)
-        pot = c.potential.transpose(cl)
-        if cl in arrays:
-            arrays[cl] = arrays[cl] + pot
-        else:
-            arrays[cl] = pot
-            cliques.append(cl)
-    folded = CliqueVector(potentials.domain, cliques, arrays)
-    return marginal_oracles.brute_force_marginals(folded, total)
+  """Brute-force baseline with constraints folded as -inf potentials."""
+  cliques = list(potentials.cliques)
+  arrays = dict(potentials.tables)
+  for c in constraints:
+    cl = potentials.domain.canonical(c.clique)
+    pot = c.potential.transpose(cl)
+    if cl in arrays:
+      arrays[cl] = arrays[cl] + pot
+    else:
+      arrays[cl] = pot
+      cliques.append(cl)
+  folded = CliqueVector(potentials.domain, cliques, arrays)
+  return marginal_oracles.brute_force_marginals(folded, total)
 
 
 class TestConstrainedOracles(unittest.TestCase):
 
-    @parameterized.expand(
-        itertools.product(
-            _CONSTRAINED_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
-        )
-    )
-    def test_matches_brute_force(self, oracle, cliques, constraints):
-        """Constrained oracle matches brute-force with folded -inf baseline."""
-        theta = CliqueVector.random(_CDOMAIN, cliques)
-        mu = oracle(theta, 10.0, constraints=constraints)
-        baseline = _fold_baseline(theta, 10.0, constraints)
-        for cl in cliques:
-            np.testing.assert_allclose(
-                mu[cl].datavector(),
-                baseline[cl].datavector(),
-                atol=1e-4,
-                err_msg=f"{oracle}, {cl}",
-            )
+  @parameterized.expand(
+      itertools.product(
+          _CONSTRAINED_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
+      )
+  )
+  def test_matches_brute_force(self, oracle, cliques, constraints):
+    """Constrained oracle matches brute-force with folded -inf baseline."""
+    theta = CliqueVector.random(_CDOMAIN, cliques)
+    mu = oracle(theta, 10.0, constraints=constraints)
+    baseline = _fold_baseline(theta, 10.0, constraints)
+    for cl in cliques:
+      np.testing.assert_allclose(
+          mu[cl].datavector(),
+          baseline[cl].datavector(),
+          atol=1e-4,
+          err_msg=f"{oracle}, {cl}",
+      )
 
-    @parameterized.expand(
-        itertools.product(
-            _CONSTRAINED_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
-        )
-    )
-    def test_sums_to_total(self, oracle, cliques, constraints):
-        """Constrained marginals sum to the requested total."""
-        theta = CliqueVector.random(_CDOMAIN, cliques)
-        mu = oracle(theta, 10.0, constraints=constraints)
-        for cl in cliques:
-            np.testing.assert_allclose(
-                mu[cl].datavector().sum(), 10.0, atol=1e-4
-            )
+  @parameterized.expand(
+      itertools.product(
+          _CONSTRAINED_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
+      )
+  )
+  def test_sums_to_total(self, oracle, cliques, constraints):
+    """Constrained marginals sum to the requested total."""
+    theta = CliqueVector.random(_CDOMAIN, cliques)
+    mu = oracle(theta, 10.0, constraints=constraints)
+    for cl in cliques:
+      np.testing.assert_allclose(mu[cl].datavector().sum(), 10.0, atol=1e-4)
 
-    @parameterized.expand(
-        itertools.product(
-            _CONSTRAINED_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
-        )
-    )
-    def test_no_nans(self, oracle, cliques, constraints):
-        """Constrained marginals contain no NaNs."""
-        theta = CliqueVector.random(_CDOMAIN, cliques)
-        mu = oracle(theta, 10.0, constraints=constraints)
-        for cl in cliques:
-            self.assertFalse(jnp.isnan(mu[cl].values).any(), f"NaN in {cl}")
+  @parameterized.expand(
+      itertools.product(
+          _CONSTRAINED_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
+      )
+  )
+  def test_no_nans(self, oracle, cliques, constraints):
+    """Constrained marginals contain no NaNs."""
+    theta = CliqueVector.random(_CDOMAIN, cliques)
+    mu = oracle(theta, 10.0, constraints=constraints)
+    for cl in cliques:
+      self.assertFalse(jnp.isnan(mu[cl].values).any(), f"NaN in {cl}")
 
-    @parameterized.expand(
-        itertools.product(
-            _FOLDING_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
-        )
-    )
-    def test_folding_matches_brute_force(self, oracle, cliques, constraints):
-        """Core oracles with folded constraints match brute-force baseline."""
-        theta = CliqueVector.random(_CDOMAIN, cliques)
-        mu = oracle(theta, 10.0, constraints=constraints)
-        baseline = _fold_baseline(theta, 10.0, constraints)
-        for cl in cliques:
-            np.testing.assert_allclose(
-                mu[cl].datavector(),
-                baseline[cl].datavector(),
-                atol=1e-4,
-                err_msg=f"{oracle}, {cl}",
-            )
+  @parameterized.expand(
+      itertools.product(
+          _FOLDING_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
+      )
+  )
+  def test_folding_matches_brute_force(self, oracle, cliques, constraints):
+    """Core oracles with folded constraints match brute-force baseline."""
+    theta = CliqueVector.random(_CDOMAIN, cliques)
+    mu = oracle(theta, 10.0, constraints=constraints)
+    baseline = _fold_baseline(theta, 10.0, constraints)
+    for cl in cliques:
+      np.testing.assert_allclose(
+          mu[cl].datavector(),
+          baseline[cl].datavector(),
+          atol=1e-4,
+          err_msg=f"{oracle}, {cl}",
+      )
 
-    @parameterized.expand(
-        itertools.product(
-            _CONSTRAINED_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
-        )
-    )
-    def test_constraints_satisfied(self, oracle, cliques, constraints):
-        """Invalid entries in the constraint marginal are zero."""
-        theta = CliqueVector.random(_CDOMAIN, cliques)
-        mu = oracle(theta, 10.0, constraints=constraints)
-        for c in constraints:
-            fine, coarse = c.domain.attributes
-            # Build the expected mask from the constraint.
-            expected_zero = np.ones(c.domain.shape, dtype=bool)
-            for a in range(c.domain.shape[0]):
-                expected_zero[a, c.mapping[a]] = False
-            # Check every user clique that contains fine or coarse.
-            for cl in cliques:
-                vals = mu[cl].datavector()
-                if fine in cl and coarse in cl:
-                    # Joint over both: invalid cells must be zero.
-                    joint = mu[cl].project((fine, coarse))
-                    np.testing.assert_allclose(
-                        joint.values[expected_zero],
-                        0.0,
-                        atol=1e-5,
-                        err_msg=f"constraint violated in clique {cl}",
-                    )
-                # All marginals should be non-negative.
-                self.assertTrue((vals >= -1e-6).all(), f"negative in {cl}")
+  @parameterized.expand(
+      itertools.product(
+          _CONSTRAINED_ORACLES, _CONSTRAINED_CLIQUE_SETS, _CONSTRAINT_CONFIGS
+      )
+  )
+  def test_constraints_satisfied(self, oracle, cliques, constraints):
+    """Invalid entries in the constraint marginal are zero."""
+    theta = CliqueVector.random(_CDOMAIN, cliques)
+    mu = oracle(theta, 10.0, constraints=constraints)
+    for c in constraints:
+      fine, coarse = c.domain.attributes
+      # Build the expected mask from the constraint.
+      expected_zero = np.ones(c.domain.shape, dtype=bool)
+      for a in range(c.domain.shape[0]):
+        expected_zero[a, c.mapping[a]] = False
+      # Check every user clique that contains fine or coarse.
+      for cl in cliques:
+        vals = mu[cl].datavector()
+        if fine in cl and coarse in cl:
+          # Joint over both: invalid cells must be zero.
+          joint = mu[cl].project((fine, coarse))
+          np.testing.assert_allclose(
+              joint.values[expected_zero],
+              0.0,
+              atol=1e-5,
+              err_msg=f"constraint violated in clique {cl}",
+          )
+        # All marginals should be non-negative.
+        self.assertTrue((vals >= -1e-6).all(), f"negative in {cl}")
