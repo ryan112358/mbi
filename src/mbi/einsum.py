@@ -137,7 +137,7 @@ def _get_subarrays(
 
 
 def _infer_shapes(
-    input_axes_names: list[str], arrays: tuple[jax.Array]
+    input_axes_names: list[str], arrays: tuple[jax.Array, ...]
 ) -> dict[str, int]:
   """Infer the shapes of the arrays given the input axes names."""
   ans = {}

@@ -201,7 +201,7 @@ def _l2_loss(
   for M in measurements:
     mu = marginals.project(M.clique)
     stddev = jnp.maximum(M.stddev, 1e-12)
-    diff = (M.query(mu) - M.noisy_measurement) / stddev
+    diff = (jnp.asarray(M.query(mu)) - jnp.asarray(M.noisy_measurement)) / stddev
     loss += 0.5 * jnp.vdot(diff, diff)
   return loss
 
@@ -215,7 +215,7 @@ def _l1_loss(
   for M in measurements:
     mu = marginals.project(M.clique)
     stddev = jnp.maximum(M.stddev, 1e-12)
-    diff = (M.query(mu) - M.noisy_measurement) / stddev
+    diff = (jnp.asarray(M.query(mu)) - jnp.asarray(M.noisy_measurement)) / stddev
     loss += jnp.sum(jnp.abs(diff))
   return loss
 

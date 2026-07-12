@@ -368,7 +368,9 @@ def shafer_shenoy(
       if domain.canonical(c.clique) not in cliques
   ]
   if jtree is None:
-    jtree = junction_tree.make_junction_tree(domain, cliques + tuple(extra))[0]
+    jtree = junction_tree.make_junction_tree(
+        domain, tuple(cliques) + tuple(extra)
+    )[0]
   message_order = junction_tree.message_passing_order(jtree)
   max_cliques = junction_tree.maximal_cliques(jtree)
   pure_constraint, embedded = _classify_cliques(max_cliques, det_constraints)

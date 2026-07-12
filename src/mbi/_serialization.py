@@ -35,7 +35,7 @@ def save(obj: Any, file: str | os.PathLike | io.IOBase) -> None:
   arrays = {f"leaf_{i}": np.asarray(leaf) for i, leaf in enumerate(leaves)}
   arrays["_treedef"] = np.frombuffer(pickle.dumps(treedef), dtype=np.uint8)
   buf = io.BytesIO()
-  np.savez_compressed(buf, **arrays)
+  np.savez_compressed(buf, **arrays)  # pyrefly: ignore[bad-argument-type]
   data = buf.getvalue()
   if isinstance(file, (str, os.PathLike)):
     with open(file, "wb") as f:

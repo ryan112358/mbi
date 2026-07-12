@@ -451,7 +451,7 @@ message_passing_stable = message_passing_hugin
 
 
 def default_oracle(
-    cliques: tuple[tuple[str, ...], ...] | None = None,
+    cliques: Sequence[Clique] | None = None,
     domain: Domain | None = None,
     backend: str | None = None,
     has_constraints: bool = True,

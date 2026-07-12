@@ -6,6 +6,9 @@ marginals. It logs loss values and other relevant statistics.
 """
 
 import dataclasses
+from collections.abc import Callable
+
+import chex
 import jax
 
 from . import marginal_loss
@@ -39,7 +42,7 @@ def _pad(string: str, length: int):
 
 @dataclasses.dataclass
 class Callback:
-  loss_fns: dict[str, marginal_loss.MarginalLossFn]
+  loss_fns: dict[str, Callable[..., chex.Numeric]]
   _step: int = 0
   _logs: list = dataclasses.field(default_factory=list)
 
@@ -97,7 +100,9 @@ def default(
         ground_truth, domain, norm="l1", normalize=True
     )
 
-  loss_fns = {key: jax.jit(val.__call__) for key, val in loss_fns.items()}
-  loss_fns["Primal Feas"] = jax.jit(marginal_loss.primal_feasibility)
+  jitted: dict[str, Callable[..., chex.Numeric]] = {
+      key: jax.jit(val.__call__) for key, val in loss_fns.items()
+  }
+  jitted["Primal Feas"] = jax.jit(marginal_loss.primal_feasibility)
 
-  return Callback(loss_fns)
+  return Callback(jitted)
