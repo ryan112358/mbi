@@ -40,9 +40,7 @@ def message_passing_order(
   graph = nx.DiGraph()
   graph.add_nodes_from(messages)
   graph.add_edges_from(edges)
-  return cast(
-      list[tuple[Clique, Clique]], list(nx.topological_sort(graph))
-  )
+  return cast(list[tuple[Clique, Clique]], list(nx.topological_sort(graph)))
 
 
 def _make_graph(domain: Domain, cliques: Collection[Clique]) -> nx.Graph:
