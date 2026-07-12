@@ -12,3 +12,6 @@ __pycache__/
 # IDE and OS specific files
 .vscode/
 .ipynb_checkpoints/ 
+
+# Stray test output
+test_out.txt
