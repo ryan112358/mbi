@@ -63,7 +63,12 @@ class Factor:
 
   @classmethod
   def abstract(cls, domain: Domain) -> Factor:
-    return cls(domain, jax.ShapeDtypeStruct(domain.shape, jnp.float32))
+    # ShapeDtypeStruct is used for abstract shape/dtype evaluation (e.g. under
+    # jax.eval_shape); it deliberately stands in for a concrete Array here.
+    return cls(
+        domain,
+        jax.ShapeDtypeStruct(domain.shape, jnp.float32),  # pyrefly: ignore[bad-argument-type]
+    )
 
   # Reshaping operations
   def transpose(self, attrs: Sequence[Attribute]) -> Factor:
@@ -128,7 +133,7 @@ class Factor:
     Returns:
         A new Factor with the evidence attributes removed.
     """
-    slices = [slice(None)] * len(self.domain)
+    slices: list[slice | int | jax.Array] = [slice(None)] * len(self.domain)
     relevant = [e for e in evidence if e in self.domain.attributes]
     for attr in relevant:
       val = evidence[attr]
@@ -173,7 +178,8 @@ class Factor:
   # Binary operations between two factors
   def _binaryop(self, fn: Callable, other: Factor | chex.Numeric) -> Factor:
     """Helper for applying binary operations between this factor and another factor or scalar."""
-    if not isinstance(other, Factor) and jnp.ndim(other) == 0:
+    if not isinstance(other, Factor):
+      assert jnp.ndim(other) == 0
       other = Factor(Domain([], []), jnp.asarray(other))
     newdom = self.domain.merge(other.domain)
     factor1 = self.expand(newdom)
@@ -267,7 +273,7 @@ class Factor:
     """
     if mesh is None:
       return self
-    pspec = [None] * len(self.domain)
+    pspec: list[Attribute | None] = [None] * len(self.domain)
     for i, ax in enumerate(self.domain):
       if ax in mesh.axis_names:
         pspec[i] = ax
