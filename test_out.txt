@@ -1,0 +1,85 @@
+........................................................................ [  5%]
+........................................................................ [ 10%]
+........................................................................ [ 16%]
+........................................................................ [ 21%]
+........................................................................ [ 27%]
+........................................................................ [ 32%]
+........................................................................ [ 38%]
+........................................................................ [ 43%]
+........................................................................ [ 49%]
+........................................................................ [ 54%]
+........................................................................ [ 60%]
+........................................................................ [ 65%]
+........................................................................ [ 70%]
+........................................................................ [ 76%]
+........................................................................ [ 81%]
+........................................................................ [ 87%]
+........................................................................ [ 92%]
+........................................................................ [ 98%]
+.......................                                                  [100%]
+=============================== warnings summary ===============================
+src/mbi/__init__.py:14
+  /tmp/mbi-pr/src/mbi/__init__.py:14: UserWarning: JAX is running in float32 mode. For large datasets (N > 100K), this can cause estimation algorithms to stall or diverge due to insufficient floating-point precision. Enable float64 with: jax.config.update("jax_enable_x64", True)
+    warnings.warn(
+
+test/test_einsum.py::TestScanEinsum::test_multiple_sequential_axes
+test/test_einsum.py::TestScanEinsum::test_no_sequential
+test/test_einsum.py::TestScanEinsum::test_output_only_formula
+test/test_einsum.py::TestScanEinsum::test_sequential_axis_not_in_all_arrays
+test/test_einsum.py::TestScanEinsum::test_single_sequential_in_output
+test/test_einsum.py::TestScanEinsum::test_single_sequential_summed_out
+  /usr/local/google/home/mckennar/.local/lib/python3.13/site-packages/jax/_src/numpy/lax_numpy.py:5913: UserWarning: Explicitly requested dtype float64 requested in arange is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+    return _arange(start, stop=stop, step=step, dtype=dtype,
+
+test/test_einsum.py::TestScanEinsum::test_multiple_sequential_axes
+  /tmp/mbi-pr/test/test_einsum.py:316: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+    T1 = jnp.array(np.random.rand(2, 3, 4), dtype=jnp.float64)  # aij
+
+test/test_einsum.py::TestScanEinsum::test_multiple_sequential_axes
+  /tmp/mbi-pr/test/test_einsum.py:317: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+    T2 = jnp.array(np.random.rand(2, 4, 5), dtype=jnp.float64)  # bjk
+
+test/test_einsum.py::TestScanEinsum::test_multiple_sequential_axes
+  /tmp/mbi-pr/test/test_einsum.py:318: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+    T3 = jnp.array(np.random.rand(2, 5, 3), dtype=jnp.float64)  # ckl
+
+test/test_einsum.py::TestScanEinsum::test_readme_example
+  /tmp/mbi-pr/test/test_einsum.py:375: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+    A = jnp.array(np.random.rand(2, 3, 4), dtype=jnp.float64)  # bij
+
+test/test_einsum.py::TestScanEinsum::test_readme_example
+  /tmp/mbi-pr/test/test_einsum.py:376: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+    B = jnp.array(np.random.rand(2, 4, 5), dtype=jnp.float64)  # bjk
+
+test/test_einsum.py::TestScanEinsum::test_readme_example
+  /tmp/mbi-pr/test/test_einsum.py:377: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+    C = jnp.array(np.random.rand(2, 5, 6), dtype=jnp.float64)  # bkl
+
+test/test_estimation.py::TestEstimation::test_multiplicative_weights_0
+test/test_estimation.py::TestEstimation::test_multiplicative_weights_1
+test/test_estimation.py::TestEstimation::test_multiplicative_weights_2
+test/test_estimation.py::TestEstimation::test_multiplicative_weights_3
+test/test_estimation.py::TestEstimation::test_multiplicative_weights_4
+test/test_estimation.py::TestEstimation::test_multiplicative_weights_5
+  /tmp/mbi-pr/test/test_estimation.py:77: DeprecationWarning: Passing potentials= directly is deprecated. Use warm_start=model instead, where model is a previously estimated Model.
+    model = estimation.MirrorDescent().estimate(
+
+test/test_estimation.py::TestEstimation::test_warm_start_legacy_potentials
+  /tmp/mbi-pr/test/test_estimation.py:250: DeprecationWarning: Passing potentials= directly is deprecated. Use warm_start=model instead, where model is a previously estimated Model.
+    model2 = est.estimate(
+
+test/test_marginal_oracles.py::TestConstrainedOracles::test_folding_matches_brute_force_12
+test/test_marginal_oracles.py::TestConstrainedOracles::test_folding_matches_brute_force_14
+test/test_marginal_oracles.py::TestConstrainedOracles::test_folding_matches_brute_force_16
+test/test_marginal_oracles.py::TestConstrainedOracles::test_folding_matches_brute_force_18
+test/test_marginal_oracles.py::TestConstrainedOracles::test_folding_matches_brute_force_20
+test/test_marginal_oracles.py::TestConstrainedOracles::test_folding_matches_brute_force_22
+  /usr/local/google/home/mckennar/.local/lib/python3.13/site-packages/jax/_src/interpreters/partial_eval.py:2312: UserWarning: HUGIN uses belief subtraction which is unstable with -inf potentials introduced by constraints. Consider using message_passing_shafer_shenoy instead.
+    ans_pytree = fun(*args, **kwargs)
+
+test/test_markov_random_field.py::TestMarkovRandomField::test_synthetic_data_round_accuracy_adult
+  /tmp/mbi-pr/test/test_markov_random_field.py:123: DeprecationWarning: Dataset.load is deprecated. Load your data, convert columns to a dict of numpy arrays, and instantiate Dataset directly.
+    data = Dataset.load("data/adult.csv", "data/adult-domain.json")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1319 passed, 27 warnings in 336.12s (0:05:36)

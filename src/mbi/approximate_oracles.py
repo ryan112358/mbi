@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import functools
 import itertools
+from collections.abc import Sequence
 from typing import Any, NamedTuple, Protocol
 
 import dataclasses
@@ -70,9 +71,9 @@ class StatefulMarginalOracle(Protocol):
     pass
 
 
-def build_graph(domain: Domain, cliques: list[tuple[str, ...]]) -> tuple[
+def build_graph(domain: Domain, cliques: Sequence[Clique]) -> tuple[
     set[Clique],
-    list[tuple[str, ...]],
+    list[Clique],
     dict[tuple[Clique, Clique], Factor],
     list[tuple[Clique, Clique]],
     dict[Clique, list[Clique]],
@@ -105,8 +106,8 @@ def build_graph(domain: Domain, cliques: list[tuple[str, ...]]) -> tuple[
 
   children = {r: list(G.neighbors(r)) for r in regions}
   parents = {r: list(H.neighbors(r)) for r in regions}
-  descendants = {r: list(G1.neighbors(r)) for r in regions}
-  ancestors = {r: list(H1.neighbors(r)) for r in regions}
+  descendants = {r: list(G1.neighbors(r)) for r in regions}  # pyrefly: ignore[bad-argument-type]
+  ancestors = {r: list(H1.neighbors(r)) for r in regions}  # pyrefly: ignore[bad-argument-type]
   forebears = {r: set([r] + ancestors[r]) for r in regions}
   downp = {r: set([r] + descendants[r]) for r in regions}
 
@@ -144,7 +145,7 @@ def build_graph(domain: Domain, cliques: list[tuple[str, ...]]) -> tuple[
           domain.project(rd)
       )  # only for hazan et al
 
-  return regions, cliques, messages, message_order, parents, children
+  return regions, list(cliques), messages, message_order, parents, children
 
 
 _State = dict[tuple[Clique, Clique], Factor]
@@ -188,7 +189,7 @@ def convex_generalized_belief_propagation(
     messages = state
 
   # Hardcode assumption that counting numbers are 1.0 for all regions.
-  pot = potentials.expand(regions)
+  pot = potentials.expand(tuple(regions))
 
   cc = {}
   for r in regions:
@@ -385,7 +386,9 @@ class ApproxMirrorDescent:
     for cl in extra_cliques or []:
       shape = (domain.project(cl).size(),)
       abstract_values = jax.ShapeDtypeStruct(shape, jnp.float32)
-      all_measurements.append(LinearMeasurement(abstract_values, cl))
+      # ``abstract_values`` is a ShapeDtypeStruct used only for JIT shape
+      # inference via jax.eval_shape below; no concrete array is needed.
+      all_measurements.append(LinearMeasurement(abstract_values, cl))  # pyrefly: ignore[bad-argument-type]
     all_measurements = jax.eval_shape(lambda x: x, all_measurements)
 
     loss_fn = marginal_loss.from_linear_measurements(all_measurements, domain)

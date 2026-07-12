@@ -16,6 +16,7 @@ from . import junction_tree, marginal_oracles
 from .clique_utils import Clique
 from .clique_vector import CliqueVector
 from .dataset import Dataset
+from .domain import Attribute
 from .domain import Domain
 from .factor import Factor
 
@@ -43,17 +44,17 @@ class MarkovRandomField:
   marginals: CliqueVector
   total: chex.Numeric = 1
 
-  def project(self, attrs: str | Sequence[str]) -> Factor:
-    if isinstance(attrs, str):
+  def project(self, attrs: Attribute | Sequence[Attribute]) -> Factor:
+    if isinstance(attrs, (str, int)):
       attrs = (attrs,)
     attrs = tuple(attrs)
     if self.marginals.supports(attrs):
       return self.marginals.project(attrs)
     return marginal_oracles.variable_elimination(
-        self.potentials, attrs, self.total
+        self.potentials, attrs, float(self.total)
     )
 
-  def supports(self, attrs: str | Sequence[str]) -> bool:
+  def supports(self, attrs: Attribute | Sequence[Attribute]) -> bool:
     return self.marginals.domain.supports(attrs)
 
   def synthetic_data(
@@ -75,7 +76,7 @@ class MarkovRandomField:
     total = max(1, int(rows or self.total))
     domain = self.domain
     jtree, elimination_order = junction_tree.make_junction_tree(
-        domain, [set(cl) for cl in self.cliques]
+        domain, [tuple(cl) for cl in self.cliques]
     )
 
     # Use maximal cliques from the junction tree for conditioning
@@ -204,6 +205,6 @@ class MarkovRandomField:
     return self.potentials.domain
 
   @property
-  def cliques(self) -> list[Clique]:
+  def cliques(self) -> Sequence[Clique]:
     """Returns the list of cliques the model's potentials are defined over."""
     return self.potentials.cliques
