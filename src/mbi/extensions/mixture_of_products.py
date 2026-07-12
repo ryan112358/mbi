@@ -134,7 +134,7 @@ class MixtureOfProductsState(NamedTuple):
   opt_state: optax.OptState
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class MixtureOfProductsEstimator(Estimator):
   """Estimates a distribution as a mixture of product distributions.
 
@@ -145,19 +145,13 @@ class MixtureOfProductsEstimator(Estimator):
 
   Attributes:
       num_components: Number of mixture components K.
-      learning_rate: Learning rate for the optimizer.
-      optimizer: An optax optimizer.  Defaults to ``optax.adam``.
+      optimizer: An optax optimizer (e.g. ``optax.adam(0.1)``).
       seed: Random seed for parameter initialization.
   """
 
+  optimizer: optax.GradientTransformation
   num_components: int = 100
-  learning_rate: float = 0.1
-  optimizer: optax.GradientTransformation | None = None
   seed: int = 0
-
-  def __post_init__(self):
-    if self.optimizer is None:
-      object.__setattr__(self, "optimizer", optax.adam(self.learning_rate))
 
   def _init(self, domain, loss_fn, known_total, *, warm_start=None, **kwargs):
     """Initialize model and optimizer state."""
@@ -166,7 +160,7 @@ class MixtureOfProductsEstimator(Estimator):
     )
     if warm_start is not None:
       model = warm_start
-    opt_state = self.optimizer.init(model)  # pyrefly: ignore[missing-attribute, bad-argument-type]
+    opt_state = self.optimizer.init(model)  # pyrefly: ignore[bad-argument-type]
     return MixtureOfProductsState(model, opt_state)
 
   def _step(self, state, loss_fn, known_total, constraints=()):
@@ -178,7 +172,7 @@ class MixtureOfProductsEstimator(Estimator):
       return loss_fn(mu)
 
     _, grad = jax.value_and_grad(model_loss)(state.model)
-    updates, opt_state = self.optimizer.update(  # pyrefly: ignore[missing-attribute]
+    updates, opt_state = self.optimizer.update(
         grad, state.opt_state, state.model
     )
     model = optax.apply_updates(state.model, updates)

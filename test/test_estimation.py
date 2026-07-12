@@ -261,6 +261,7 @@ class TestEstimation(unittest.TestCase):
 
   def test_warm_start_mixture_of_products(self):
     """MixtureOfProducts warm-start reuses the model directly."""
+    import optax
     from mbi.extensions.mixture_of_products import (
         MixtureOfProductsEstimator,
     )
@@ -269,7 +270,9 @@ class TestEstimation(unittest.TestCase):
     measurements = fake_measurements(cliques)
     loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
 
-    est = MixtureOfProductsEstimator(num_components=5)
+    est = MixtureOfProductsEstimator(
+        num_components=5, optimizer=optax.adam(0.1)
+    )
     model1 = est.estimate(_DOMAIN, loss_fn, known_total=1.0, iters=50)
     loss1 = loss_fn(model1)
 

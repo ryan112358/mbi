@@ -537,12 +537,8 @@ class DualAveraging(Estimator):
     # reasonable initial guess rather than exactly continuing.
     loss = marginal_loss.mle_loss_fn(state.w)
     est = LBFGS(marginal_oracle=self.marginal_oracle)
-    # LBFGS.estimate returns a MarkovRandomField at runtime; the protocol
-    # return type is the broader Model.
-    return cast(
-        MarkovRandomField,
-        est.estimate(state.w.domain, loss, known_total, constraints),
-    )
+    mrf = est.estimate(state.w.domain, loss, known_total, constraints)
+    return cast(MarkovRandomField, mrf)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -624,12 +620,8 @@ class InteriorGradient(Estimator):
   ) -> MarkovRandomField:
     loss = marginal_loss.mle_loss_fn(state.x)
     est = LBFGS(marginal_oracle=self.marginal_oracle)
-    # LBFGS.estimate returns a MarkovRandomField at runtime; the protocol
-    # return type is the broader Model.
-    return cast(
-        MarkovRandomField,
-        est.estimate(state.x.domain, loss, known_total, constraints),
-    )
+    mrf = est.estimate(state.x.domain, loss, known_total, constraints)
+    return cast(MarkovRandomField, mrf)
 
 
 @dataclasses.dataclass(frozen=True)

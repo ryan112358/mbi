@@ -18,6 +18,7 @@ from collections.abc import Mapping, Sequence
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import ArrayLike as JaxArrayLike
 from numpy.typing import ArrayLike, NDArray
 
 from .domain import Attribute, Domain
@@ -362,12 +363,12 @@ class JaxDataset:
 
     return JaxDataset(data, domain)
 
-  def project(self, cols: Attribute | Sequence[Attribute]) -> Factor:
+  def project(self, attrs: Attribute | Sequence[Attribute]) -> Factor:
     """Project dataset onto a subset of columns."""
-    if isinstance(cols, (str, int)):
-      cols = [cols]
+    if isinstance(attrs, (str, int)):
+      attrs = [attrs]
 
-    domain = self.domain.project(cols)
+    domain = self.domain.project(attrs)
 
     dims = domain.shape
     if not dims:
@@ -387,8 +388,8 @@ class JaxDataset:
 
     return Factor(domain, counts.reshape(dims))
 
-  def supports(self, cols: str | Sequence[str]) -> bool:
-    return self.domain.supports(cols)
+  def supports(self, attrs: Attribute | Sequence[Attribute]) -> bool:
+    return self.domain.supports(attrs)
 
   @property
   def records(self) -> int:
@@ -396,6 +397,18 @@ class JaxDataset:
     if not self.data:
       raise ValueError("Dataset is empty (no columns).")
     return list(self.data.values())[0].shape[0]
+
+  @property
+  def total(self) -> JaxArrayLike:
+    """Total count represented by the dataset.
+
+    This is the sum of the record weights, or the number of records when the
+    dataset is unweighted.  Defined so that a (weighted) JaxDataset satisfies
+    the ``Model`` protocol.
+    """
+    if self.weights is None:
+      return self.records
+    return jnp.sum(self.weights)
 
   def apply_sharding(self, mesh: jax.sharding.Mesh) -> JaxDataset:
     pspec = jax.sharding.PartitionSpec(mesh.axis_names)

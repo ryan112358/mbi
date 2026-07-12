@@ -4,6 +4,7 @@ import unittest
 
 import jax.numpy as jnp
 import numpy as np
+import optax
 from parameterized import parameterized
 
 from mbi import Domain, marginal_loss
@@ -107,7 +108,7 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
     measurements, P = _fake_measurements(_DOMAIN, cliques)
     model = MixtureOfProductsEstimator(
         num_components=50,
-        learning_rate=0.1,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -129,7 +130,7 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
 
     model = MixtureOfProductsEstimator(
         num_components=50,
-        learning_rate=0.01,
+        optimizer=optax.adam(0.01),
     ).estimate(
         _DOMAIN,
         loss_fn,
@@ -152,6 +153,7 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
 
     model = MixtureOfProductsEstimator(
         num_components=50,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         loss_fn,
@@ -170,6 +172,7 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
     measurements, _ = _fake_measurements(_DOMAIN, cliques)
     model = MixtureOfProductsEstimator(
         num_components=10,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -188,6 +191,7 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
     measurements, _ = _fake_measurements(_DOMAIN, cliques)
     model = MixtureOfProductsEstimator(
         num_components=20,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -210,6 +214,7 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
 
     model = MixtureOfProductsEstimator(
         num_components=10,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -230,6 +235,7 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
 
     MixtureOfProductsEstimator(
         num_components=5,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -240,7 +246,6 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
 
   def test_custom_optimizer(self):
     """Should accept a custom optax optimizer."""
-    import optax
 
     cliques = [("a", "b"), ("b", "c")]
     measurements, _ = _fake_measurements(_DOMAIN, cliques)
@@ -261,6 +266,7 @@ class TestMixtureOfProductsEstimation(unittest.TestCase):
     measurements, _ = _fake_measurements(_DOMAIN, cliques)
     model = MixtureOfProductsEstimator(
         num_components=1,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -283,6 +289,7 @@ class TestMixtureOfProductsNonNegativity(unittest.TestCase):
     measurements, _ = _fake_measurements(_DOMAIN, cliques)
     model = MixtureOfProductsEstimator(
         num_components=20,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -302,6 +309,7 @@ class TestMixtureOfProductsNonNegativity(unittest.TestCase):
     measurements, _ = _fake_measurements(_DOMAIN, cliques)
     model = MixtureOfProductsEstimator(
         num_components=20,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,

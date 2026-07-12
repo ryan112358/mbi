@@ -5,6 +5,7 @@ import unittest
 import jax
 import jax.numpy as jnp
 import numpy as np
+import optax
 from parameterized import parameterized
 
 from mbi import Domain, Model, Projectable, marginal_loss
@@ -135,7 +136,7 @@ class TestEstimation(unittest.TestCase):
     seed_data = _make_seed_data(_DOMAIN, n=5000)
     model = ReweightedDatasetEstimator(
         seed_data=seed_data,
-        learning_rate=0.1,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -158,7 +159,7 @@ class TestEstimation(unittest.TestCase):
 
     model = ReweightedDatasetEstimator(
         seed_data=seed_data,
-        learning_rate=0.01,
+        optimizer=optax.adam(0.01),
     ).estimate(
         _DOMAIN,
         loss_fn,
@@ -182,6 +183,7 @@ class TestEstimation(unittest.TestCase):
 
     model = ReweightedDatasetEstimator(
         seed_data=seed_data,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         loss_fn,
@@ -201,6 +203,7 @@ class TestEstimation(unittest.TestCase):
     seed_data = _make_seed_data(_DOMAIN)
     model = ReweightedDatasetEstimator(
         seed_data=seed_data,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -218,6 +221,7 @@ class TestEstimation(unittest.TestCase):
     seed_data = _make_seed_data(_DOMAIN)
     model = ReweightedDatasetEstimator(
         seed_data=seed_data,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -237,6 +241,7 @@ class TestEstimation(unittest.TestCase):
     seed_data = _make_seed_data(_DOMAIN)
     model = ReweightedDatasetEstimator(
         seed_data=seed_data,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -260,6 +265,7 @@ class TestEstimation(unittest.TestCase):
 
     ReweightedDatasetEstimator(
         seed_data=seed_data,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -270,7 +276,6 @@ class TestEstimation(unittest.TestCase):
 
   def test_custom_optimizer(self):
     """Should accept a custom optax optimizer."""
-    import optax
 
     cliques = [("a", "b"), ("b", "c")]
     measurements, _ = _fake_measurements(_DOMAIN, cliques)
@@ -296,6 +301,7 @@ class TestNonNegativity(unittest.TestCase):
     seed_data = _make_seed_data(_DOMAIN)
     model = ReweightedDatasetEstimator(
         seed_data=seed_data,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,
@@ -316,6 +322,7 @@ class TestNonNegativity(unittest.TestCase):
     seed_data = _make_seed_data(_DOMAIN)
     model = ReweightedDatasetEstimator(
         seed_data=seed_data,
+        optimizer=optax.adam(0.1),
     ).estimate(
         _DOMAIN,
         measurements,

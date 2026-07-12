@@ -39,20 +39,16 @@ class ReweightedDatasetEstimator(Estimator):
 
   Attributes:
       seed_data: A Dataset of seed records to reweight.
-      learning_rate: Learning rate for the optimizer.
-      optimizer: An optax optimizer.  Defaults to ``optax.adam``.
+      optimizer: An optax optimizer (e.g. ``optax.adam(0.1)``).
   """
 
   seed_data: Dataset
-  learning_rate: float = 0.1
-  optimizer: optax.GradientTransformation | None = None
+  optimizer: optax.GradientTransformation
   _jax_data: dict[Attribute, jax.Array] = dataclasses.field(
       init=False, repr=False, compare=False
   )
 
   def __post_init__(self):
-    if self.optimizer is None:
-      object.__setattr__(self, "optimizer", optax.adam(self.learning_rate))
     # Precompute JAX arrays from seed data once.
     data_dict = self.seed_data.to_dict()
     jax_data = {
@@ -64,7 +60,7 @@ class ReweightedDatasetEstimator(Estimator):
   def _init(self, domain, loss_fn, known_total, *, warm_start=None, **kwargs):
     """Initialize log-weights and optimizer state."""
     log_weights = jnp.zeros(self.seed_data.records)
-    opt_state = self.optimizer.init(log_weights)  # pyrefly: ignore[missing-attribute]
+    opt_state = self.optimizer.init(log_weights)
     return ReweightedDatasetState(log_weights, opt_state)
 
   def _step(self, state, loss_fn, known_total, constraints=()):
@@ -80,7 +76,7 @@ class ReweightedDatasetEstimator(Estimator):
       return loss_fn(mu)
 
     _, grad = jax.value_and_grad(params_loss)(state.log_weights)
-    updates, opt_state = self.optimizer.update(  # pyrefly: ignore[missing-attribute]
+    updates, opt_state = self.optimizer.update(
         grad, state.opt_state, state.log_weights
     )
     log_weights = optax.apply_updates(state.log_weights, updates)
@@ -90,6 +86,6 @@ class ReweightedDatasetEstimator(Estimator):
     weights = jax.nn.softmax(state.log_weights) * known_total
     return JaxDataset(self._jax_data, self.seed_data.domain, weights)
 
-  def _finalize(self, state, known_total, constraints=()):  # pyrefly: ignore[bad-override]  # returns a JaxDataset Model
+  def _finalize(self, state, known_total, constraints=()) -> JaxDataset:
     weights = jax.nn.softmax(state.log_weights) * known_total
     return JaxDataset(self._jax_data, self.seed_data.domain, weights)
