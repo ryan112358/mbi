@@ -115,8 +115,9 @@ class CliqueVector:
     clique = tuple(clique)
     if clique in self.tables:
       return self[clique]
-    if self.supports(clique):
-      return self[self.parent(clique)].project(clique, log=log)
+    parent = self.parent(clique)
+    if parent is not None:
+      return self[parent].project(clique, log=log)
     raise ValueError(f"Cannot project onto unsupported clique {clique}.")
 
   def expand(self, cliques: Sequence[Clique]) -> CliqueVector:
@@ -139,7 +140,9 @@ class CliqueVector:
       if len(mapping[cl]) == 0:
         tables[cl] = Factor.zeros(dom)
       else:
-        tables[cl] = sum(self[cl2] for cl2 in mapping[cl]).expand(dom)
+        tables[cl] = functools.reduce(
+            operator.add, (self[cl2] for cl2 in mapping[cl])
+        ).expand(dom)
     return CliqueVector(self.domain, cliques, tables)
 
   def contract(

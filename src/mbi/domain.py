@@ -118,8 +118,9 @@ class Domain:
       raise ValueError(f"Cannot project {self} onto {attributes}.")
     shape = tuple(self.config[a] for a in attributes)
     labels = None
-    if self.labels is not None:
-      labels = tuple(self.labels_config[a] for a in attributes)
+    labels_config = self.labels_config
+    if labels_config is not None:
+      labels = tuple(labels_config[a] for a in attributes)
     return Domain(attributes, shape, labels=labels)
 
   def marginalize(self, attrs: Sequence[Attribute]) -> "Domain":
@@ -193,7 +194,7 @@ class Domain:
     """
     extra = other.marginalize(self.attributes)
     new_labels = None
-    if self.labels is not None and other.labels is not None:
+    if self.labels is not None and extra.labels is not None:
       new_labels = self.labels + extra.labels
     return Domain(
         self.attributes + extra.attributes,
@@ -222,7 +223,7 @@ class Domain:
     return self.project(attributes).size()
 
   @property
-  def attrs(self) -> tuple[str, ...]:
+  def attrs(self) -> tuple[Attribute, ...]:
     """Alias for the `attributes` tuple.
 
     .. deprecated::
