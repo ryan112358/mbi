@@ -1,11 +1,11 @@
 # Pyrefly type-checker configuration.
 # See https://pyrefly.org/en/docs/configuration/
 #
-# We run the "default" preset. The findings that existed when the preset was
-# adopted are recorded in pyrefly-baseline.json so that CI only fails on newly
-# introduced errors. The baseline is being burned down incrementally; to see
-# the outstanding findings run `pyrefly check` after temporarily removing the
-# `baseline` setting below.
+# We run the "default" preset with zero outstanding findings.  The baseline
+# file (pyrefly-baseline.json) is now empty: every default-preset error has
+# been fixed or given a targeted inline `# pyrefly: ignore[...]` suppression.
+# The (empty) baseline is kept so CI keeps comparing against it; run
+# `pyrefly check` to confirm no new findings are introduced.
 project-includes = ["src/mbi/**/*.py"]
 python-version = "3.11"
 preset = "default"

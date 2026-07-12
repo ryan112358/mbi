@@ -19,6 +19,7 @@ import optax
 from ..estimation import Estimator
 from ..clique_vector import CliqueVector
 from ..dataset import Dataset, JaxDataset
+from ..domain import Attribute
 
 
 class ReweightedDatasetState(NamedTuple):
@@ -45,6 +46,9 @@ class ReweightedDatasetEstimator(Estimator):
   seed_data: Dataset
   learning_rate: float = 0.1
   optimizer: optax.GradientTransformation | None = None
+  _jax_data: dict[Attribute, jax.Array] = dataclasses.field(
+      init=False, repr=False, compare=False
+  )
 
   def __post_init__(self):
     if self.optimizer is None:
@@ -60,7 +64,7 @@ class ReweightedDatasetEstimator(Estimator):
   def _init(self, domain, loss_fn, known_total, *, warm_start=None, **kwargs):
     """Initialize log-weights and optimizer state."""
     log_weights = jnp.zeros(self.seed_data.records)
-    opt_state = self.optimizer.init(log_weights)
+    opt_state = self.optimizer.init(log_weights)  # pyrefly: ignore[missing-attribute]
     return ReweightedDatasetState(log_weights, opt_state)
 
   def _step(self, state, loss_fn, known_total, constraints=()):
@@ -76,16 +80,16 @@ class ReweightedDatasetEstimator(Estimator):
       return loss_fn(mu)
 
     _, grad = jax.value_and_grad(params_loss)(state.log_weights)
-    updates, opt_state = self.optimizer.update(
+    updates, opt_state = self.optimizer.update(  # pyrefly: ignore[missing-attribute]
         grad, state.opt_state, state.log_weights
     )
     log_weights = optax.apply_updates(state.log_weights, updates)
-    return ReweightedDatasetState(log_weights, opt_state)
+    return ReweightedDatasetState(log_weights, opt_state)  # pyrefly: ignore[bad-argument-type]
 
   def _callback_value(self, state, known_total, constraints=()):
     weights = jax.nn.softmax(state.log_weights) * known_total
     return JaxDataset(self._jax_data, self.seed_data.domain, weights)
 
-  def _finalize(self, state, known_total, constraints=()):
+  def _finalize(self, state, known_total, constraints=()):  # pyrefly: ignore[bad-override]  # returns a JaxDataset Model
     weights = jax.nn.softmax(state.log_weights) * known_total
     return JaxDataset(self._jax_data, self.seed_data.domain, weights)

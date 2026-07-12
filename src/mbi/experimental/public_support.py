@@ -92,18 +92,11 @@ def public_support(
     loss, dL = loss_and_grad_mu(mu)
     dweights = np.zeros(weights.size)
     for cl in dL.cliques:
-      # Note: est.project(cl) returns a Factor, so accessing .data here was buggy.
-      # Assuming logic intended to access data indices or similar, but
-      # fixing the bug is out of scope. However, we must ensure .data isn't
-      # accessed if it's removed from Dataset API.
-      # If est.project(cl) returns Factor, Factor doesn't have .data anyway.
-      # So this line crashes regardless of Dataset changes.
-      # But the user instruction is "do not reference the now-deleted 'data' attribute".
-      # The attribute referenced here is on the return of project(), which is Factor.
-      # Factor never had .data (it has .values).
-      # So this is technically not referencing "Dataset.data".
-      # However, I should update the other lines.
-      idx = est.project(cl).data
+      # Per-record category codes for the clique's columns, shaped
+      # (records, len(cl)).  (Historically this was est.data[:, axes]; the
+      # dict-based Dataset stores one 1D code array per column.)
+      data_dict = est.to_dict()
+      idx = np.stack([data_dict[col] for col in cl], axis=1)
       dweights += np.array(dL[cl].values[tuple(idx.T)])
     return loss, dweights
 
