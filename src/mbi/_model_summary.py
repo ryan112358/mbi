@@ -188,7 +188,7 @@ def summarize(
       A ``ModelSummary`` dataclass.
   """
   if bytes_per_cell is None:
-    bytes_per_cell = 8 if jax.config.jax_enable_x64 else 4
+    bytes_per_cell = 8 if jax.config.jax_enable_x64 else 4  # pylint: disable=no-member  # pyrefly: ignore[missing-attribute]
   input_cliques = [tuple(cl) for cl in cliques]
 
   if jtree is None:
