@@ -663,7 +663,9 @@ class LBFGS(Estimator):
         memory_size=1,
         linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
     )
-    opt_state = optimizer.init(potentials)  # pyrefly: ignore[bad-argument-type]
+    # CliqueVector is a registered pytree but not structurally in the
+    # optax.Params union.
+    opt_state = optimizer.init(cast(optax.Params, potentials))
     return LBFGSState(potentials, opt_state)
 
   def _step(self, state, loss_fn, known_total, constraints=()):
@@ -687,8 +689,12 @@ class LBFGS(Estimator):
         grad=grad,
         value_fn=theta_loss,
     )
-    potentials = optax.apply_updates(state.potentials, updates)
-    return LBFGSState(potentials, opt_state)  # pyrefly: ignore[bad-argument-type]
+    # optax.apply_updates returns the broad optax.Params union; here it is a
+    # CliqueVector.
+    potentials = cast(
+        CliqueVector, optax.apply_updates(state.potentials, updates)
+    )
+    return LBFGSState(potentials, opt_state)
 
   def _callback_value(self, state, known_total, constraints=()):
     # Unlike MD/DA/IG, LBFGSState stores only potentials (not marginals)

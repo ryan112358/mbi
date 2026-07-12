@@ -8,7 +8,7 @@ with softmax normalization to guarantee non-negativity.
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import cast, NamedTuple
 
 import dataclasses
 import jax
@@ -79,8 +79,12 @@ class ReweightedDatasetEstimator(Estimator):
     updates, opt_state = self.optimizer.update(
         grad, state.opt_state, state.log_weights
     )
-    log_weights = optax.apply_updates(state.log_weights, updates)
-    return ReweightedDatasetState(log_weights, opt_state)  # pyrefly: ignore[bad-argument-type]
+    # optax.apply_updates returns the broad optax.Params union; here it is a
+    # jax.Array (the log-weights vector).
+    log_weights = cast(
+        jax.Array, optax.apply_updates(state.log_weights, updates)
+    )
+    return ReweightedDatasetState(log_weights, opt_state)
 
   def _callback_value(self, state, known_total, constraints=()):
     weights = jax.nn.softmax(state.log_weights) * known_total

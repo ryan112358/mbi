@@ -21,7 +21,6 @@ import concurrent.futures
 import functools
 import itertools
 import math
-import operator
 import string
 import warnings
 from collections.abc import Callable, Sequence
@@ -568,7 +567,7 @@ def brute_force_marginals(
     return CliqueVector(potentials.domain, [], {})
 
   P = (
-      functools.reduce(operator.add, potentials.tables.values())
+      sum(potentials.tables.values(), Factor.zeros(Domain([], [])))
       .normalize(total, log=True)
       .exp()
   )
@@ -662,7 +661,7 @@ def variable_elimination(
 
   for z in elim_order:
     psi2 = [psi.pop(i) for i in list(psi.keys()) if z in psi[i].domain]
-    psi[k] = functools.reduce(operator.add, psi2).logsumexp([z])
+    psi[k] = sum(psi2, Factor.zeros(Domain([], []))).logsumexp([z])
     k += 1
 
   newdom = potentials.domain.project(clique)

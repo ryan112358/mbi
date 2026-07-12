@@ -137,12 +137,10 @@ class CliqueVector:
     tables = {}
     for cl in cliques:
       dom = self.domain.project(cl)
-      if len(mapping[cl]) == 0:
-        tables[cl] = Factor.zeros(dom)
-      else:
-        tables[cl] = functools.reduce(
-            operator.add, (self[cl2] for cl2 in mapping[cl])
-        ).expand(dom)
+      # Factor.zeros over the empty domain is the additive identity, so this
+      # also handles the case where mapping[cl] is empty.
+      identity = Factor.zeros(Domain([], []))
+      tables[cl] = sum((self[cl2] for cl2 in mapping[cl]), identity).expand(dom)
     return CliqueVector(self.domain, cliques, tables)
 
   def contract(

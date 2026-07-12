@@ -13,7 +13,7 @@ from __future__ import annotations
 
 
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from typing import cast, NamedTuple
 
 import jax
 import jax.nn
@@ -160,7 +160,9 @@ class MixtureOfProductsEstimator(Estimator):
     )
     if warm_start is not None:
       model = warm_start
-    opt_state = self.optimizer.init(model)  # pyrefly: ignore[bad-argument-type]
+    # MixtureOfProducts is a registered pytree but not structurally in the
+    # optax.Params union.
+    opt_state = self.optimizer.init(cast(optax.Params, model))
     return MixtureOfProductsState(model, opt_state)
 
   def _step(self, state, loss_fn, known_total, constraints=()):
@@ -175,8 +177,10 @@ class MixtureOfProductsEstimator(Estimator):
     updates, opt_state = self.optimizer.update(
         grad, state.opt_state, state.model
     )
-    model = optax.apply_updates(state.model, updates)
-    return MixtureOfProductsState(model, opt_state)  # pyrefly: ignore[bad-argument-type]
+    # optax.apply_updates returns the broad optax.Params union; here it is a
+    # MixtureOfProducts.
+    model = cast(MixtureOfProducts, optax.apply_updates(state.model, updates))
+    return MixtureOfProductsState(model, opt_state)
 
   def _finalize(self, state, known_total, constraints=()):
     return state.model
