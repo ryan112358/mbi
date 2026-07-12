@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable, Sequence
 from typing import Literal
-import chex
+from jax.typing import ArrayLike
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -176,7 +176,7 @@ class Factor:
     return float(self.values)
 
   # Binary operations between two factors
-  def _binaryop(self, fn: Callable, other: Factor | chex.Numeric) -> Factor:
+  def _binaryop(self, fn: Callable, other: Factor | ArrayLike) -> Factor:
     """Helper for applying binary operations between this factor and another factor or scalar."""
     if not isinstance(other, Factor):
       assert jnp.ndim(other) == 0
@@ -186,13 +186,13 @@ class Factor:
     factor2 = other.expand(newdom)
     return Factor(newdom, fn(factor1.values, factor2.values))
 
-  def __sub__(self, other: Factor | chex.Numeric) -> Factor:
+  def __sub__(self, other: Factor | ArrayLike) -> Factor:
     return self._binaryop(jnp.subtract, other)
 
-  def __truediv__(self, other: Factor | chex.Numeric) -> Factor:
+  def __truediv__(self, other: Factor | ArrayLike) -> Factor:
     return self._binaryop(jnp.divide, other)
 
-  def __mul__(self, other: Factor | chex.Numeric) -> Factor:
+  def __mul__(self, other: Factor | ArrayLike) -> Factor:
     """Multiply two factors together.
 
     Example Usage:
@@ -210,19 +210,19 @@ class Factor:
     """
     return self._binaryop(jnp.multiply, other)
 
-  def __add__(self, other: Factor | chex.Numeric) -> Factor:
+  def __add__(self, other: Factor | ArrayLike) -> Factor:
     return self._binaryop(jnp.add, other)
 
-  def __radd__(self, other: chex.Numeric) -> Factor:
+  def __radd__(self, other: ArrayLike) -> Factor:
     return self + other
 
-  def __rsub__(self, other: chex.Numeric) -> Factor:
+  def __rsub__(self, other: ArrayLike) -> Factor:
     return self + (-1 * other)
 
-  def __rmul__(self, other: chex.Numeric) -> Factor:
+  def __rmul__(self, other: ArrayLike) -> Factor:
     return self * other
 
-  def dot(self, other: Factor) -> chex.Numeric:
+  def dot(self, other: Factor) -> ArrayLike:
     if self.domain != other.domain:
       raise ValueError(f"Domains do not match {self.domain} != {other.domain}")
     return jnp.sum(

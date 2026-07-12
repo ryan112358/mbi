@@ -13,7 +13,6 @@ import dataclasses
 from collections.abc import Callable, Sequence
 from typing import Any
 
-import chex
 import jax
 import jax.numpy as jnp
 from jax.typing import ArrayLike
@@ -181,21 +180,21 @@ class MarginalLossFn:
   """
 
   cliques: Sequence[Clique] = jax.tree.static()
-  loss_fn: Callable[[CliqueVector, Any], chex.Numeric] = jax.tree.static()
+  loss_fn: Callable[[CliqueVector, Any], ArrayLike] = jax.tree.static()
   data: Any = ()
   lipschitz: float | None = jax.tree.static(default=None)
 
   def __post_init__(self):
     object.__setattr__(self, "cliques", tuple(self.cliques))
 
-  def __call__(self, marginals: CliqueVector) -> chex.Numeric:
+  def __call__(self, marginals: CliqueVector) -> ArrayLike:
     return self.loss_fn(marginals, self.data)
 
 
 def _l2_loss(
     marginals: CliqueVector,
     measurements: tuple[LinearMeasurement, ...],
-) -> chex.Numeric:
+) -> ArrayLike:
   """Weighted L2 loss over linear measurements."""
   loss = 0.0
   for M in measurements:
@@ -211,7 +210,7 @@ def _l2_loss(
 def _l1_loss(
     marginals: CliqueVector,
     measurements: tuple[LinearMeasurement, ...],
-) -> chex.Numeric:
+) -> ArrayLike:
   """Weighted L1 loss over linear measurements."""
   loss = 0.0
   for M in measurements:
@@ -227,7 +226,7 @@ def _l1_loss(
 def _normalized_l2_loss(
     marginals: CliqueVector,
     measurements: tuple[LinearMeasurement, ...],
-) -> chex.Numeric:
+) -> ArrayLike:
   """Normalized L2 loss over linear measurements."""
   loss = _l2_loss(marginals, measurements)
   total = marginals.project(()).datavector(flatten=False)
@@ -237,7 +236,7 @@ def _normalized_l2_loss(
 def _normalized_l1_loss(
     marginals: CliqueVector,
     measurements: tuple[LinearMeasurement, ...],
-) -> chex.Numeric:
+) -> ArrayLike:
   """Normalized L1 loss over linear measurements."""
   loss = _l1_loss(marginals, measurements)
   total = marginals.project(()).datavector(flatten=False)
@@ -247,7 +246,7 @@ def _normalized_l1_loss(
 def calculate_l2_lipschitz(
     domain: Domain,
     cliques: list[Clique],
-    loss_fn: Callable[[CliqueVector], chex.Numeric],
+    loss_fn: Callable[[CliqueVector], ArrayLike],
 ) -> float:
   """Estimate the Lipschitz constant of L(x) = || f(x) - y ||_2^2 where f is a linear function.
 
@@ -320,7 +319,7 @@ def from_linear_measurements(
   return loss
 
 
-def primal_feasibility(mu: CliqueVector) -> chex.Numeric:
+def primal_feasibility(mu: CliqueVector) -> ArrayLike:
   """Calculates the average L1 distance between overlapping marginals in `mu` (consistency)."""
   ans = 0
   count = 0

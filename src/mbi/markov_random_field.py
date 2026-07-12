@@ -11,6 +11,7 @@ from collections.abc import Sequence
 
 import chex
 import numpy as np
+from jax.typing import ArrayLike
 
 from . import junction_tree, marginal_oracles
 from .clique_utils import Clique
@@ -35,14 +36,14 @@ class MarkovRandomField:
           potential functions for the cliques in the model.
       marginals (CliqueVector): A `CliqueVector` containing the marginal
           distributions for a set of cliques, derived from the potentials.
-      total (chex.Numeric): The total count or effective sample size
+      total (ArrayLike): The total count or effective sample size
           represented by the model. This is often used for scaling or
           interpreting the marginals.
   """
 
   potentials: CliqueVector
   marginals: CliqueVector
-  total: chex.Numeric = 1
+  total: ArrayLike = 1
 
   def project(self, attrs: Attribute | Sequence[Attribute]) -> Factor:
     if isinstance(attrs, (str, int)):
@@ -51,7 +52,7 @@ class MarkovRandomField:
     if self.marginals.supports(attrs):
       return self.marginals.project(attrs)
     return marginal_oracles.variable_elimination(
-        self.potentials, attrs, float(self.total)
+        self.potentials, attrs, float(self.total)  # pyrefly: ignore[bad-argument-type]
     )
 
   def supports(self, attrs: Attribute | Sequence[Attribute]) -> bool:
@@ -73,7 +74,7 @@ class MarkovRandomField:
         A synthetic dataset whose marginals should closely match those of the
         model.
     """
-    total = max(1, int(rows or self.total))
+    total = max(1, int(rows or self.total))  # pyrefly: ignore[bad-argument-type]
     domain = self.domain
     jtree, elimination_order = junction_tree.make_junction_tree(
         domain, [tuple(cl) for cl in self.cliques]

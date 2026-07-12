@@ -15,7 +15,7 @@ import warnings
 from collections.abc import Sequence
 
 import dataclasses
-import chex
+from jax.typing import ArrayLike
 import jax
 import jax.numpy as jnp
 
@@ -160,25 +160,25 @@ class CliqueVector:
         is_leaf=Factor.__instancecheck__,
     )
 
-  def __mul__(self, const: chex.Numeric) -> CliqueVector:
+  def __mul__(self, const: ArrayLike) -> CliqueVector:
     """Multiplies each factor in the vector by a constant."""
     return jax.tree.map(lambda f: f * const, self)
 
-  def __rmul__(self, const: chex.Numeric) -> CliqueVector:
+  def __rmul__(self, const: ArrayLike) -> CliqueVector:
     """Right-multiplies each factor in the vector by a constant."""
     return self.__mul__(const)
 
-  def __truediv__(self, const: chex.Numeric) -> CliqueVector:
+  def __truediv__(self, const: ArrayLike) -> CliqueVector:
     """Divides each factor in the vector by a constant."""
     return self.__mul__(1 / const)
 
-  def __add__(self, other: chex.Numeric | CliqueVector) -> CliqueVector:
+  def __add__(self, other: ArrayLike | CliqueVector) -> CliqueVector:
     """Adds another CliqueVector or a constant to this vector elementwise."""
     if isinstance(other, CliqueVector):
       return jax.tree.map(jnp.add, self, other)
     return jax.tree.map(lambda f: f + other, self)
 
-  def __sub__(self, other: chex.Numeric | CliqueVector) -> CliqueVector:
+  def __sub__(self, other: ArrayLike | CliqueVector) -> CliqueVector:
     """Subtracts another CliqueVector or a constant from this vector elementwise."""
     return self + -1 * other
 
@@ -190,7 +190,7 @@ class CliqueVector:
     """Applies elementwise logarithm (jnp.log) to each factor."""
     return jax.tree.map(jnp.log, self)
 
-  def dot(self, other: CliqueVector) -> chex.Numeric:
+  def dot(self, other: CliqueVector) -> ArrayLike:
     """Computes the dot product between this CliqueVector and another."""
     dots = jax.tree.map(
         Factor.dot, self, other, is_leaf=Factor.__instancecheck__

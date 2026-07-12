@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
+from jax.typing import ArrayLike
+
 if TYPE_CHECKING:
   from .dataset import Dataset
   from .domain import Attribute
@@ -55,7 +57,7 @@ class Model(Projectable, Protocol):
   """
 
   @property
-  def total(self) -> float:
+  def total(self) -> ArrayLike:
     """The total count (number of records) represented by the model."""
 
   def synthetic_data(self, rows: int | None = None) -> Dataset:
