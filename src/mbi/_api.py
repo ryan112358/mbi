@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
   from .dataset import Dataset
+  from .domain import Attribute
   from .domain import Domain
   from .factor import Factor
 
@@ -33,10 +34,10 @@ class Projectable(Protocol):
   def domain(self) -> Domain:
     """Returns the domain over which this projectable is defined."""
 
-  def project(self, attrs: str | Sequence[str]) -> Factor:
+  def project(self, attrs: "Attribute | Sequence[Attribute]") -> Factor:
     """Projection onto a subset of attributes."""
 
-  def supports(self, attrs: str | Sequence[str]) -> bool:
+  def supports(self, attrs: "Attribute | Sequence[Attribute]") -> bool:
     """Returns true if the given attributes can be projected onto."""
 
 

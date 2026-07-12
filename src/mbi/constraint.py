@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .domain import Attribute
 from .domain import Domain
 from .factor import Factor
 
@@ -75,7 +76,7 @@ class Constraint:
       _validate_mapping(self.mapping, self.domain)
 
   @property
-  def clique(self) -> tuple[str, ...]:
+  def clique(self) -> tuple[Attribute, ...]:
     """Sorted attribute names, for junction tree construction."""
     return tuple(sorted(self.domain.attributes))
 
