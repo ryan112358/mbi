@@ -21,6 +21,7 @@ import concurrent.futures
 import functools
 import itertools
 import math
+import operator
 import string
 import warnings
 from collections.abc import Callable, Sequence
@@ -34,6 +35,7 @@ from . import junction_tree
 from .clique_utils import Clique, clique_mapping
 from .clique_vector import CliqueVector
 from .constraint import Constraint
+from .domain import Attribute
 from .domain import Domain
 from .einsum import custom_einsum
 from .factor import Factor
@@ -132,7 +134,10 @@ def einsum_semistable(
   Returns:
       A Factor over *dom* containing the result in log space.
   """
-  maxes = [f.max(f.domain.marginalize(dom).attributes) for f in log_factors]
+  maxes = [
+      f.max(f.domain.marginalize(dom.attributes).attributes)
+      for f in log_factors
+  ]
   stable_factors = [(f - m).exp() for f, m in zip(log_factors, maxes)]
   return sum_product(stable_factors, dom, einsum_fn).log() + sum(maxes)
 
@@ -157,7 +162,7 @@ def einsum_materialized(
       A Factor over *dom* in log space.
   """
   combined = functools.reduce(lambda a, b: a + b, log_factors)
-  elim_attrs = combined.domain.marginalize(dom).attributes
+  elim_attrs = combined.domain.marginalize(dom.attributes).attributes
   return combined.logsumexp(elim_attrs).transpose(dom.attributes)
 
 
@@ -199,7 +204,7 @@ def einsum_fused(
 def _fold_constraints(
     potentials: CliqueVector,
     constraints: Sequence[Constraint],
-) -> tuple[CliqueVector, tuple[tuple[str, ...], ...]]:
+) -> tuple[CliqueVector, Sequence[Clique]]:
   """Fold constraints into potentials as -inf/0 log-space factors.
 
   Returns:
@@ -562,7 +567,11 @@ def brute_force_marginals(
   if len(potentials.cliques) == 0:
     return CliqueVector(potentials.domain, [], {})
 
-  P = sum(potentials.tables.values()).normalize(total, log=True).exp()
+  P = (
+      functools.reduce(operator.add, potentials.tables.values())
+      .normalize(total, log=True)
+      .exp()
+  )
   marginals = {cl: P.project(cl) for cl in input_cliques}
   return CliqueVector(potentials.domain, input_cliques, marginals)
 
@@ -615,7 +624,7 @@ def variable_elimination(
     potentials: CliqueVector,
     clique: Clique,
     total: float = 1,
-    evidence: dict[str, int] | None = None,
+    evidence: dict[Attribute, int] | None = None,
     *,
     constraints: Sequence[Constraint] = (),
 ) -> Factor:
@@ -646,14 +655,14 @@ def variable_elimination(
     for i in list(psi.keys()):
       psi[i] = psi[i].slice(evidence)
 
-  domain = potentials.active_domain.marginalize(evidence.keys())
+  domain = potentials.active_domain.marginalize(list(evidence.keys()))
   cliques = [psi[i].domain.attributes for i in psi] + [clique]
   elim = domain.invert(clique)
   elim_order, _ = junction_tree.greedy_order(domain, cliques, elim=elim)
 
   for z in elim_order:
     psi2 = [psi.pop(i) for i in list(psi.keys()) if z in psi[i].domain]
-    psi[k] = sum(psi2).logsumexp([z])
+    psi[k] = functools.reduce(operator.add, psi2).logsumexp([z])
     k += 1
 
   newdom = potentials.domain.project(clique)
@@ -780,7 +789,7 @@ def calculate_many_marginals(
     else:
       X = results[(Ci, Cl)]
       S = set(Cl) - set(Ci) - set(Cj)
-      results[(Ci, Cj)] = results[(Cj, Ci)] = (X * Y).sum(S)
+      results[(Ci, Cj)] = results[(Cj, Ci)] = (X * Y).sum(tuple(S))
 
   results = {
       domain.canonical(key[0] + key[1]): val for key, val in results.items()
@@ -821,10 +830,10 @@ def kron_query(
         "kron_query does not support constraints. Fold them into"
         " potentials before calling kron_query."
     )
-  new_factors = {}
-  extra_domain = {}
-  extra_cliques = []
-  target_clique = []
+  new_factors: dict[Clique, Factor] = {}
+  extra_domain: dict[Attribute, int] = {}
+  extra_cliques: list[Clique] = []
+  target_clique: list[Attribute] = []
 
   for key in query_factors:
     key2 = key + suffix
@@ -836,6 +845,6 @@ def kron_query(
     target_clique.append(key2)
 
   domain = potentials.domain.merge(Domain.fromdict(extra_domain))
-  cliques = potentials.cliques + tuple(extra_cliques)
+  cliques = tuple(potentials.cliques) + tuple(extra_cliques)
   inputs = CliqueVector(domain, cliques, new_factors)
   return variable_elimination(inputs, tuple(target_clique), total)
