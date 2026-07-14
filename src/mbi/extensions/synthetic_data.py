@@ -297,7 +297,19 @@ def _gather_inputs(cp, domain, pot_map, msg_map):
   return inputs
 
 
-@jax.jit(static_argnames=['query', 'parent_sizes', 'total'])
+@jax.jit(
+    static_argnames=['query', 'parent_sizes', 'total'],
+    # `total` (the row count) is a static argument, so arrays built from it are
+    # compile-time constants. In the root-column branch below, `parent_idx =
+    # jnp.zeros(total)` and the downstream bincount/argsort/repeat over it become
+    # `total`-sized constant subgraphs. XLA's constant_folding pass then evaluates
+    # them on the host, which is extremely slow (tens of seconds/column) and
+    # memory-hungry for large datasets. Disabling the pass for this function
+    # defers that work to the device at runtime with negligible cost (the folded
+    # values are tiny), and applies to both the direct-call and AOT (precompile)
+    # paths, keeping the JIT cache key consistent.
+    compiler_options={'xla_disable_hlo_passes': 'constant_folding'},
+)
 def _generate_column(
     prng, inputs, parent_arrays, *, query, parent_sizes, total
 ):
