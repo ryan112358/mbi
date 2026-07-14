@@ -61,7 +61,9 @@ class TestStochasticRoundChunking(unittest.TestCase):
     self._assert_round_contract(chunked, cond_probs, counts)
 
     # Global total identical across both paths.
-    self.assertEqual(int(np.asarray(dense).sum()), int(np.asarray(chunked).sum()))
+    self.assertEqual(
+        int(np.asarray(dense).sum()), int(np.asarray(chunked).sum())
+    )
 
   def test_dense_path_used_below_threshold(self):
     parent_product, domain_size = 100, 4
