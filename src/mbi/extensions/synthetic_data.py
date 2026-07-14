@@ -319,24 +319,25 @@ def _generate_column(
   return _gumbel_round(prng, marg_2d, parent_idx, total)
 
 
-def _gumbel_round(prng, marg_2d, flat_parent_idx, total):
-  """Assign each record a value matching expected marginals."""
-  rng1, rng2 = jax.random.split(prng)
+# Row-chunk the (parent_product, domain_size) stochastic rounding when a single
+# column's marginal is large. The dense computation materializes ~10 arrays of
+# that shape plus argsort workspace (~26 GiB when parent_product*domain_size
+# approaches 2^28 under jax_enable_x64), which OOMs device memory. Per-parent
+# rounding is independent, so processing parents in chunks caps the working set
+# at a few hundred MiB with identical statistical behavior. Marginals at or below
+# the threshold use the original dense path unchanged.
+_ROUND_CHUNK_CELLS = 1 << 24  # ~16M cells/chunk (~1 GiB working set under x64)
 
-  domain_size = marg_2d.shape[-1]
-  parent_product = marg_2d.shape[0]
 
-  marg_parents = marg_2d.sum(axis=-1, keepdims=True)
-  cond_probs = jnp.where(marg_parents != 0, marg_2d / marg_parents, 0.0)
-
-  counts_per_parent = jnp.bincount(flat_parent_idx, length=parent_product)
-
+def _stochastic_round_dense(rng, cond_probs, counts_per_parent):
+  """Expected-count rounding: floor + Gumbel-top-k of the remainder."""
+  parent_product, domain_size = cond_probs.shape
   expected = counts_per_parent[:, None] * cond_probs
   integ = jnp.floor(expected).astype(jnp.int32)
   frac = expected - jnp.floor(expected)
   extra = counts_per_parent - integ.sum(axis=1)
 
-  u = jax.random.uniform(rng1, (parent_product, domain_size))
+  u = jax.random.uniform(rng, (parent_product, domain_size))
   scores = jnp.log(frac + 1e-30) - jnp.log(-jnp.log(u + 1e-30))
   scores = jnp.where(frac == 0, -jnp.inf, scores)
 
@@ -352,7 +353,50 @@ def _gumbel_round(prng, marg_2d, flat_parent_idx, total):
   )
   roundup = jnp.zeros((parent_product, domain_size), dtype=jnp.int32)
   roundup = roundup.at[row_indices, ranked].set(roundup_mask)
-  integ = jnp.maximum(integ + roundup, 0)
+  return jnp.maximum(integ + roundup, 0)
+
+
+def _stochastic_round_chunked(rng, cond_probs, counts_per_parent):
+  """Row-chunked equivalent of ``_stochastic_round_dense`` for large marginals."""
+  parent_product, domain_size = cond_probs.shape
+  chunk_rows = max(1, _ROUND_CHUNK_CELLS // domain_size)
+  n_chunks = -(-parent_product // chunk_rows)  # ceil division
+  pad = n_chunks * chunk_rows - parent_product
+
+  cp = jnp.pad(cond_probs, ((0, pad), (0, 0)))
+  cp = cp.reshape(n_chunks, chunk_rows, domain_size)
+  ct = jnp.pad(counts_per_parent, (0, pad)).reshape(n_chunks, chunk_rows)
+
+  def body(_, xs):
+    idx, cp_k, ct_k = xs
+    integ_k = _stochastic_round_dense(jax.random.fold_in(rng, idx), cp_k, ct_k)
+    return None, integ_k
+
+  _, integ = jax.lax.scan(body, None, (jnp.arange(n_chunks), cp, ct))
+  return integ.reshape(n_chunks * chunk_rows, domain_size)[:parent_product]
+
+
+def _stochastic_round(rng, cond_probs, counts_per_parent):
+  """Assign integer counts per (parent, value) matching expected marginals."""
+  parent_product, domain_size = cond_probs.shape
+  if parent_product * domain_size <= _ROUND_CHUNK_CELLS:
+    return _stochastic_round_dense(rng, cond_probs, counts_per_parent)
+  return _stochastic_round_chunked(rng, cond_probs, counts_per_parent)
+
+
+def _gumbel_round(prng, marg_2d, flat_parent_idx, total):
+  """Assign each record a value matching expected marginals."""
+  rng1, rng2 = jax.random.split(prng)
+
+  domain_size = marg_2d.shape[-1]
+  parent_product = marg_2d.shape[0]
+
+  marg_parents = marg_2d.sum(axis=-1, keepdims=True)
+  cond_probs = jnp.where(marg_parents != 0, marg_2d / marg_parents, 0.0)
+
+  counts_per_parent = jnp.bincount(flat_parent_idx, length=parent_product)
+
+  integ = _stochastic_round(rng1, cond_probs, counts_per_parent)
 
   value_options = jnp.arange(domain_size, dtype=jnp.int32)
   value_options_tiled = jnp.tile(value_options, parent_product)
