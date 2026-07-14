@@ -1009,9 +1009,9 @@
       "severity": "error"
     },
     {
-      "line": 191,
+      "line": 204,
       "column": 18,
-      "stop_line": 191,
+      "stop_line": 204,
       "stop_column": 22,
       "path": "src/mbi/extensions/synthetic_data.py",
       "code": -2,
@@ -1021,9 +1021,9 @@
       "severity": "error"
     },
     {
-      "line": 220,
+      "line": 233,
       "column": 7,
-      "stop_line": 220,
+      "stop_line": 233,
       "stop_column": 18,
       "path": "src/mbi/extensions/synthetic_data.py",
       "code": -2,
@@ -1033,9 +1033,9 @@
       "severity": "error"
     },
     {
-      "line": 255,
+      "line": 268,
       "column": 23,
-      "stop_line": 255,
+      "stop_line": 268,
       "stop_column": 38,
       "path": "src/mbi/extensions/synthetic_data.py",
       "code": -2,
@@ -1045,10 +1045,10 @@
       "severity": "error"
     },
     {
-      "line": 66,
-      "column": 24,
-      "stop_line": 66,
-      "stop_column": 71,
+      "line": 75,
+      "column": 17,
+      "stop_line": 75,
+      "stop_column": 75,
       "path": "src/mbi/factor.py",
       "code": -2,
       "name": "bad-argument-type",
@@ -1057,9 +1057,9 @@
       "severity": "error"
     },
     {
-      "line": 141,
+      "line": 151,
       "column": 7,
-      "stop_line": 141,
+      "stop_line": 151,
       "stop_column": 43,
       "path": "src/mbi/factor.py",
       "code": -2,
@@ -1069,9 +1069,9 @@
       "severity": "error"
     },
     {
-      "line": 178,
+      "line": 188,
       "column": 32,
-      "stop_line": 178,
+      "stop_line": 188,
       "stop_column": 44,
       "path": "src/mbi/factor.py",
       "code": -2,
@@ -1081,9 +1081,9 @@
       "severity": "error"
     },
     {
-      "line": 180,
+      "line": 190,
       "column": 15,
-      "stop_line": 180,
+      "stop_line": 190,
       "stop_column": 27,
       "path": "src/mbi/factor.py",
       "code": -2,
@@ -1093,9 +1093,9 @@
       "severity": "error"
     },
     {
-      "line": 273,
+      "line": 283,
       "column": 9,
-      "stop_line": 273,
+      "stop_line": 283,
       "stop_column": 17,
       "path": "src/mbi/factor.py",
       "code": -2,

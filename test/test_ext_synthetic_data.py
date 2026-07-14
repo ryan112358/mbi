@@ -1,4 +1,5 @@
 import unittest
+import jax
 import numpy as np
 from mbi import (
     Domain,
@@ -182,6 +183,100 @@ class TestExtSyntheticDataAccuracy(unittest.TestCase):
         cliques,
         cross_cliques=[("A", "C"), ("A", "E"), ("C", "E")],
     )
+
+
+class TestExtSyntheticDataPrecompile(unittest.TestCase):
+  """Tests that precompile() lowers against the signatures generation uses.
+
+  precompile() ahead-of-time lowers ``_generate_column`` for each column; for
+  the resulting compiled executables to be reused, the argument avals (shape +
+  dtype) it lowers against must exactly match those ``synthetic_data`` passes
+  at generation.  Two dtype mismatches previously defeated this whenever
+  ``jax_enable_x64`` was set, forcing a recompile on every one of the columns:
+
+    * ``Factor.abstract`` emitted float32 while real factors were float64, and
+    * parent arrays were passed as ``np.min_scalar_type`` (uint8/uint16/...)
+      instead of the int32 signature precompile lowered against.
+
+  This test records the per-column avals from both paths and asserts they are
+  identical, which is the precise cache-hit precondition.
+  """
+
+  def setUp(self):
+    super().setUp()
+    # precompile() compiles in a background thread that does not inherit a
+    # thread-local ``jax.enable_x64()`` context, so enable x64 globally here.
+    self._prev_x64 = jax.config.read("jax_enable_x64")
+    jax.config.update("jax_enable_x64", True)
+
+  def tearDown(self):
+    jax.config.update("jax_enable_x64", self._prev_x64)
+    super().tearDown()
+
+  def _leaf_avals(self, *args):
+    return tuple(
+        (tuple(leaf.shape), str(leaf.dtype))
+        for leaf in jax.tree_util.tree_leaves(args)
+        if hasattr(leaf, "shape") and hasattr(leaf, "dtype")
+    )
+
+  def test_precompile_signature_matches_generation(self):
+    import importlib
+
+    # The __init__ re-exports the ``synthetic_data`` function, shadowing the
+    # submodule of the same name, so import it explicitly from sys.modules.
+    sd = importlib.import_module("mbi.extensions.synthetic_data")
+    real = sd._generate_column
+
+    # Use a chain so at least one column is generated with parents, exercising
+    # the parent-array dtype path.  The bugs only manifest under x64, where the
+    # default float dtype is float64 (enabled globally in setUp).
+    domain = Domain(["A", "B", "C"], [5, 5, 5])
+    cliques = [("A", "B"), ("B", "C")]
+    model = _create_random_model(domain, cliques, N=1000)
+    rows = 1000
+
+    precompile_sigs = {}
+    generation_sigs = {}
+
+    class _PrecompileRecorder:
+
+      def lower(inner, prng, inputs, parents, *, query, **kwargs):  # pylint: disable=no-self-argument
+        precompile_sigs[query] = self._leaf_avals(prng, inputs, parents)
+        return real.lower(prng, inputs, parents, query=query, **kwargs)
+
+    class _GenerationRecorder:
+
+      def __call__(inner, prng, inputs, parents, *, query, **kwargs):  # pylint: disable=no-self-argument
+        generation_sigs[query] = self._leaf_avals(prng, inputs, parents)
+        return real(prng, inputs, parents, query=query, **kwargs)
+
+    try:
+      sd._generate_column = _PrecompileRecorder()
+      sd.precompile(domain, list(model.cliques), rows).result()
+      sd._generate_column = _GenerationRecorder()
+      sd.synthetic_data(model, rows)
+    finally:
+      sd._generate_column = real
+
+    self.assertTrue(precompile_sigs, "precompile lowered no columns")
+    self.assertEqual(
+        set(precompile_sigs), set(generation_sigs), "column sets differ"
+    )
+    # At least one column must be generated with a parent (the chain
+    # guarantees it): a parent appears as an int32 array of shape (rows,).
+    self.assertTrue(
+        any(((rows,), "int32") in sig for sig in generation_sigs.values()),
+        "expected at least one column generated with an int32 parent array",
+    )
+    for query, gen_sig in generation_sigs.items():
+      self.assertEqual(
+          precompile_sigs[query],
+          gen_sig,
+          f"aval mismatch for column {query}: precompile lowered "
+          f"{precompile_sigs[query]} but generation passed {gen_sig}; "
+          "the JIT cache would miss and recompile.",
+      )
 
 
 if __name__ == "__main__":

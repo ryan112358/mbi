@@ -63,7 +63,17 @@ class Factor:
 
   @classmethod
   def abstract(cls, domain: Domain) -> Factor:
-    return cls(domain, jax.ShapeDtypeStruct(domain.shape, jnp.float32))
+    """Creates a shape/dtype-only Factor for ahead-of-time compilation.
+
+    Uses the same default float dtype as ``zeros``/``ones`` (float64 when
+    ``jax_enable_x64`` is set, float32 otherwise) so that programs traced
+    with abstract factors share the JIT cache with programs run on real
+    factors.  Hardcoding a dtype here silently defeats precompilation and
+    forces a recompile on every call whenever the environment dtype differs.
+    """
+    return cls(
+        domain, jax.ShapeDtypeStruct(domain.shape, jnp.result_type(float))
+    )
 
   # Reshaping operations
   def transpose(self, attrs: Sequence[Attribute]) -> Factor:
