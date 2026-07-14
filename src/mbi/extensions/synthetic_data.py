@@ -92,6 +92,9 @@ def precompile(
         if not any(attr in inp.domain.attributes for inp in inputs):
           inputs.append(Factor.abstract(domain.project([attr])))
 
+      # int32 matches _generate_column's ravel dtype; see the parent_arrays
+      # comment in synthetic_data() for why the boundary is int32 rather than
+      # the compact storage dtype.
       abstract_parents = tuple(
           jax.ShapeDtypeStruct((rows,), jnp.int32) for _ in cp.parents
       )
@@ -157,7 +160,17 @@ def synthetic_data(
     cp = plan.columns[col]
 
     inputs = _gather_inputs(cp, domain, pot_map, msg_map)
-    parent_arrays = tuple(data[p] for p in cp.parents)
+    # Parents feed only _ravel_multi_index, which casts them to int32 anyway, so
+    # int32 is the real compute dtype. Passing int32 here (and lowering int32 in
+    # precompile) keeps the JIT signature a fixed contract, independent of the
+    # compact storage dtype (np.min_scalar_type(domain[p]), applied at the end of
+    # the loop). A dtype mismatch would miss the JIT cache and recompile every
+    # column. The only cost is a slightly larger host->device copy of this
+    # O(rows) array; peak HBM is unchanged, since the int32 index is materialized
+    # on-device regardless.
+    parent_arrays = tuple(
+        jnp.asarray(data[p], dtype=jnp.int32) for p in cp.parents
+    )
     t0 = time.monotonic()
     data[col] = _generate_column(
         col_rng,
