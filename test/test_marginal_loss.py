@@ -1,4 +1,6 @@
+import dataclasses
 import unittest
+import jax
 import numpy as np
 import jax.numpy as jnp
 from mbi.domain import Domain
@@ -100,6 +102,65 @@ class TestCompress(unittest.TestCase):
     )
     result = np.asarray(model.project(('a',)).datavector())
     np.testing.assert_allclose(result, [250, 450, 650], rtol=0.01)
+
+
+class TestJitCacheReuse(unittest.TestCase):
+  """Regression tests for JIT cache reuse across measurement noise.
+
+  ``stddev`` and ``lipschitz`` must be dynamic (traced) pytree leaves, not
+  static aux-data.  When they were static, two otherwise-identical inputs that
+  differed only in noise level produced different pytree treedefs, which
+  changed the ``jax.jit`` cache key and forced a full recompilation.  This
+  silently defeated ``MirrorDescent.precompile`` (its abstract placeholder
+  measurements use the default ``stddev`` / ``lipschitz`` and would never match
+  the real values), so the precompiled executable was always discarded and
+  ``estimate`` recompiled from scratch.
+  """
+
+  def _traces_for(self, arg1, arg2):
+    """Returns (traces after 1st call, traces after 2nd call).
+
+    The body of a jitted function is executed exactly once per trace, i.e.
+    once per compilation.  If ``arg2`` reuses ``arg1``'s compiled program the
+    second call adds no trace.
+    """
+    traces = []
+
+    @jax.jit
+    def f(x):
+      traces.append(None)
+      return jax.tree_util.tree_leaves(x)[0].sum()
+
+    f(arg1)
+    n_after_first = len(traces)
+    f(arg2)
+    n_after_second = len(traces)
+    return n_after_first, n_after_second
+
+  def test_stddev_change_does_not_recompile(self):
+    """Measurements differing only in ``stddev`` reuse the compiled program."""
+    m1 = LinearMeasurement(jnp.zeros(4), ('a',), stddev=1.0)
+    m2 = LinearMeasurement(jnp.zeros(4), ('a',), stddev=9.0)
+    # Sanity check: the treedef must be identical (stddev is a leaf, not aux).
+    self.assertEqual(
+        jax.tree_util.tree_structure(m1), jax.tree_util.tree_structure(m2)
+    )
+    n_after_first, n_after_second = self._traces_for(m1, m2)
+    self.assertEqual(n_after_first, n_after_second)
+
+  def test_lipschitz_change_does_not_recompile(self):
+    """Losses differing only in ``lipschitz`` reuse the compiled program."""
+    domain = Domain.fromdict({'a': 4})
+    loss1 = from_linear_measurements(
+        [LinearMeasurement(jnp.zeros(4), ('a',), stddev=1.0)], domain
+    )
+    loss2 = dataclasses.replace(loss1, lipschitz=loss1.lipschitz * 3.0)
+    self.assertEqual(
+        jax.tree_util.tree_structure(loss1),
+        jax.tree_util.tree_structure(loss2),
+    )
+    n_after_first, n_after_second = self._traces_for(loss1, loss2)
+    self.assertEqual(n_after_first, n_after_second)
 
 
 if __name__ == '__main__':
