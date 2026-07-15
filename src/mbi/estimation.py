@@ -208,7 +208,7 @@ class Estimator(ABC):
     all_measurements = list(measurements or [])
     for cl in extra_cliques or []:
       shape = (domain.project(cl).size(),)
-      abstract_values = jax.ShapeDtypeStruct(shape, jnp.float32)
+      abstract_values = jax.ShapeDtypeStruct(shape, jnp.result_type(float))
       all_measurements.append(
           marginal_loss.LinearMeasurement(abstract_values, cl)
       )
@@ -390,7 +390,7 @@ class MirrorDescent(Estimator):
     # proportional to L. We also divide by scaling factor to account for
     # the fact that gradients are scaled up by a factor of known_total.
     # See Eq 75. of https://www.cs.uic.edu/~zhangx/teaching/bregman.pdf.
-    L = loss_fn.lipschitz or 1.0
+    L = loss_fn.lipschitz
     alpha = 2.0 / (L * known_total) if self.stepsize is None else self.stepsize
     mu = marginal_oracle(potentials, known_total)
     initial_loss = loss_fn(mu)
@@ -491,7 +491,7 @@ class DualAveraging(Estimator):
     )  # upper bound on entropy
     Q = 0  # upper bound on variance of stochastic gradients
     gamma = Q / D
-    L = (loss_fn.lipschitz or 1.0) / known_total
+    L = loss_fn.lipschitz / known_total
 
     w = v = marginal_oracle(potentials, known_total)
     gbar = CliqueVector.zeros(domain, loss_fn.cliques)
@@ -579,7 +579,7 @@ class InteriorGradient(Estimator):
         loss_fn.cliques, domain, constraints=constraints
     )
 
-    inv_lipschitz = 1.0 / (loss_fn.lipschitz or 1.0)
+    inv_lipschitz = 1.0 / loss_fn.lipschitz
     x = y = z = marginal_oracle(potentials, known_total)
     initial_loss = loss_fn(x)
     return InteriorGradientState(
@@ -776,7 +776,7 @@ class UniversalAcceleratedMethod(Estimator):
     # f_scaled(p) = loss_fn(N*p) has Lipschitz-continuous gradient with
     # constant N² * L, where L = loss_fn.lipschitz.  The initial stepsize
     # is the inverse of this smoothness estimate.
-    L = loss_fn.lipschitz or 1.0
+    L = loss_fn.lipschitz
     stepsize = 1.0 / (known_total * known_total * L)
     return _AcceleratedStepSearchState(
         x=x,

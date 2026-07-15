@@ -101,7 +101,9 @@ class LinearMeasurement:
 
   noisy_measurement: ArrayLike
   clique: Clique = jax.tree.static()
-  stddev: float = jax.tree.static(default=1.0)
+  # Dynamic (traced) leaf, not static aux-data: a static value gets baked into
+  # the treedef, changing the jit cache key and defeating precompile() reuse.
+  stddev: float = 1.0
   query: Callable[[Factor], ArrayLike] = jax.tree.static(
       default=DatavectorQuery()
   )
@@ -177,13 +179,15 @@ class MarginalLossFn:
           treated as static metadata for JIT compilation.
       data: Arbitrary pytree of arrays captured by ``loss_fn``.  This is
           traced through JIT and can change without recompilation.
-      lipschitz: Optional Lipschitz constant of the gradient.
+      lipschitz: Lipschitz constant of the gradient. Defaults to ``1.0``.
   """
 
   cliques: Sequence[Clique] = jax.tree.static()
   loss_fn: Callable[[CliqueVector, Any], chex.Numeric] = jax.tree.static()
   data: Any = ()
-  lipschitz: float | None = jax.tree.static(default=None)
+  # Dynamic (traced) leaf, always a concrete float (never None): a static value
+  # gets baked into the treedef, changing the jit cache key and defeating reuse.
+  lipschitz: float = 1.0
 
   def __post_init__(self):
     object.__setattr__(self, "cliques", tuple(self.cliques))

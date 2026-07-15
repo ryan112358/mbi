@@ -1,3 +1,5 @@
+import importlib
+import logging
 import unittest
 import jax
 import numpy as np
@@ -277,6 +279,97 @@ class TestExtSyntheticDataPrecompile(unittest.TestCase):
           f"{precompile_sigs[query]} but generation passed {gen_sig}; "
           "the JIT cache would miss and recompile.",
       )
+
+
+class TestExtSyntheticDataCacheHit(unittest.TestCase):
+  """Behavioral test: synthetic_data() reuses precompile()'s JIT cache.
+
+  Complements the aval-signature test above by asserting the *observable*
+  consequence: after precompile() warms the cache, generation triggers zero
+  new compilations of the per-column kernel ``_generate_column``.  Checked in
+  both the default (float32) and ``jax_enable_x64`` (float64) regimes, since
+  the dtype mismatches that used to defeat reuse only surfaced under x64.
+  """
+
+  class _CompileCounter(logging.Handler):
+    """Counts JAX 'Compiling ... _generate_column' log records."""
+
+    def __init__(self):
+      super().__init__()
+      self.n = 0
+
+    def emit(self, record):
+      try:
+        msg = record.getMessage()
+      except Exception:  # pylint: disable=broad-exception-caught
+        return
+      if "Compiling" in msg and "_generate_column" in msg:
+        self.n += 1
+
+  def _run_regime(self, enable_x64):
+    sd = importlib.import_module("mbi.extensions.synthetic_data")
+    # ``jax_log_compiles`` / ``jax_enable_compilation_cache`` are contextmanager
+    # flags, which must be read via attribute access rather than config.read().
+    prev_x64 = jax.config.jax_enable_x64
+    prev_log = jax.config.jax_log_compiles
+    prev_cache = jax.config.jax_enable_compilation_cache
+    counter = self._CompileCounter()
+    loggers = [logging.getLogger(name) for name in ("", "jax", "jax._src")]
+    prev_levels = [(lg, lg.level) for lg in loggers]
+    try:
+      jax.config.update("jax_enable_x64", enable_x64)
+      # Disable the persistent on-disk cache and clear the in-memory cache so
+      # that precompile() genuinely compiles (emitting the log records we
+      # count) rather than loading a warm executable from a previous run.
+      jax.config.update("jax_enable_compilation_cache", False)
+      jax.clear_caches()
+      jax.config.update("jax_log_compiles", True)
+      for lg in loggers:
+        lg.setLevel(logging.DEBUG)
+        lg.addHandler(counter)
+
+      # A chain guarantees columns generated with parents, exercising the
+      # parent-array dtype path that broke reuse under x64.
+      domain = Domain(["A", "B", "C"], [5, 5, 5])
+      cliques = [("A", "B"), ("B", "C")]
+      model = _create_random_model(domain, cliques, N=1000)
+      rows = 1000
+
+      sd.precompile(domain, list(model.cliques), rows).result()
+      n_after_precompile = counter.n
+      sd.synthetic_data(model, rows)
+      n_after_generate = counter.n
+    finally:
+      for lg in loggers:
+        lg.removeHandler(counter)
+      for lg, level in prev_levels:
+        lg.setLevel(level)
+      jax.config.update("jax_log_compiles", prev_log)
+      jax.config.update("jax_enable_compilation_cache", prev_cache)
+      jax.config.update("jax_enable_x64", prev_x64)
+
+    # precompile() must actually have compiled the kernel, otherwise the test
+    # is vacuous; then generation must add no further compilations.
+    self.assertGreater(
+        n_after_precompile,
+        0,
+        "precompile() compiled no _generate_column; test is vacuous",
+    )
+    self.assertEqual(
+        n_after_generate,
+        n_after_precompile,
+        "synthetic_data() recompiled _generate_column "
+        f"({n_after_generate - n_after_precompile} new compiles) with "
+        f"jax_enable_x64={enable_x64}: the precompile() cache missed.",
+    )
+
+  def test_cache_hit_x64(self):
+    """Under jax_enable_x64 (float64), generation reuses the precompiled cache."""
+    self._run_regime(enable_x64=True)
+
+  def test_cache_hit_default(self):
+    """Under the default (float32) regime, generation reuses the cache."""
+    self._run_regime(enable_x64=False)
 
 
 if __name__ == "__main__":
