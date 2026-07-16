@@ -240,7 +240,13 @@ def minimum_variance_unbiased_total(
       # TODO: generalize to support any linear measurement that supports total query
       # Accept both the DatavectorQuery dataclass and the legacy
       # Factor.datavector callable as identity queries.
-      if isinstance(M.query, DatavectorQuery) or M.query == Factor.datavector:
+      is_identity = (
+          isinstance(M.query, DatavectorQuery) or M.query == Factor.datavector
+      )
+      # Honor an opt-out flag when the query carries one; the legacy
+      # Factor.datavector callable has no flag and defaults to contributing.
+      use_for_total = getattr(M.query, "use_for_total_estimation", True)
+      if is_identity and use_for_total:
         estimates.append(y.sum())
         variances.append(M.stddev**2 * y.size)
     except Exception:  # pylint: disable=broad-exception-caught
