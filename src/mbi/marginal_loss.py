@@ -48,11 +48,8 @@ class DatavectorQuery:
   """Identity query: ``f.datavector()``.
 
   Attributes:
-      use_for_total_estimation: Whether measurements using this query should
-          contribute to :func:`mbi.minimum_variance_unbiased_total`.  Defaults
-          to ``True``.  Set to ``False`` to exclude the measurement from
-          total-count estimation, e.g. when its marginal is a biased or
-          partial view of the population and would skew the estimate.
+      use_for_total_estimation: If ``False``, exclude measurements using this
+          query from ``minimum_variance_unbiased_total``. Defaults to ``True``.
   """
 
   use_for_total_estimation: bool = True
