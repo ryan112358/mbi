@@ -41,6 +41,29 @@ class TestEstimation(unittest.TestCase):
     total = estimation.minimum_variance_unbiased_total(measurements)
     np.testing.assert_allclose(total, 1.0, rtol=1e-5)
 
+  def test_total_estimator_legacy_factor_datavector_query(self):
+    # Regression test: measurements whose query is the legacy
+    # ``Factor.datavector`` callable (rather than a ``DatavectorQuery``
+    # instance) must still contribute to the total estimate.
+    P = Factor.random(_DOMAIN)
+    P = 10.0 * P / P.sum()  # total = 10
+    y = P.project(("a",)).datavector()
+    m = marginal_loss.LinearMeasurement(y, ("a",), query=Factor.datavector)
+    total = estimation.minimum_variance_unbiased_total([m])
+    np.testing.assert_allclose(total, 10.0, rtol=1e-5)
+
+  def test_total_estimator_ignores_non_identity_query(self):
+    # A non-identity query (e.g. a normalized datavector) carries no
+    # information about the total and must be excluded, so the fallback
+    # default (1.0) is returned.
+    P = Factor.random(_DOMAIN)
+    y = P.project(("a",)).datavector()
+    m = marginal_loss.LinearMeasurement(
+        y, ("a",), query=marginal_loss.NormalizedQuery()
+    )
+    total = estimation.minimum_variance_unbiased_total([m])
+    np.testing.assert_allclose(total, 1.0, rtol=1e-5)
+
   @parameterized.expand(itertools.product(_CLIQUE_SETS))
   def test_mirror_descent(self, cliques):
     measurements = fake_measurements(cliques)

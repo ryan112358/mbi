@@ -238,7 +238,9 @@ def minimum_variance_unbiased_total(
     y = M.noisy_measurement
     try:
       # TODO: generalize to support any linear measurement that supports total query
-      if isinstance(M.query, DatavectorQuery):  # query = Identity
+      # Accept both the DatavectorQuery dataclass and the legacy
+      # Factor.datavector callable as identity queries.
+      if isinstance(M.query, DatavectorQuery) or M.query == Factor.datavector:
         estimates.append(y.sum())
         variances.append(M.stddev**2 * y.size)
     except Exception:  # pylint: disable=broad-exception-caught
