@@ -238,13 +238,11 @@ def minimum_variance_unbiased_total(
     y = M.noisy_measurement
     try:
       # TODO: generalize to support any linear measurement that supports total query
-      # Accept both the DatavectorQuery dataclass and the legacy
-      # Factor.datavector callable as identity queries.
+      # Identity queries (DatavectorQuery or the legacy Factor.datavector) that
+      # haven't opted out via use_for_total_estimation contribute to the total.
       is_identity = (
           isinstance(M.query, DatavectorQuery) or M.query == Factor.datavector
       )
-      # Honor an opt-out flag when the query carries one; the legacy
-      # Factor.datavector callable has no flag and defaults to contributing.
       use_for_total = getattr(M.query, "use_for_total_estimation", True)
       if is_identity and use_for_total:
         estimates.append(y.sum())

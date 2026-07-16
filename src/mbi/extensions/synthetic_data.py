@@ -92,9 +92,7 @@ def precompile(
         if not any(attr in inp.domain.attributes for inp in inputs):
           inputs.append(Factor.abstract(domain.project([attr])))
 
-      # int32 matches _generate_column's ravel dtype; see the parent_arrays
-      # comment in synthetic_data() for why the boundary is int32 rather than
-      # the compact storage dtype.
+      # int32 matches _generate_column's ravel dtype (see parent_arrays below).
       abstract_parents = tuple(
           jax.ShapeDtypeStruct((rows,), jnp.int32) for _ in cp.parents
       )
@@ -160,14 +158,8 @@ def synthetic_data(
     cp = plan.columns[col]
 
     inputs = _gather_inputs(cp, domain, pot_map, msg_map)
-    # Parents feed only _ravel_multi_index, which casts them to int32 anyway, so
-    # int32 is the real compute dtype. Passing int32 here (and lowering int32 in
-    # precompile) keeps the JIT signature a fixed contract, independent of the
-    # compact storage dtype (np.min_scalar_type(domain[p]), applied at the end of
-    # the loop). A dtype mismatch would miss the JIT cache and recompile every
-    # column. The only cost is a slightly larger host->device copy of this
-    # O(rows) array; peak HBM is unchanged, since the int32 index is materialized
-    # on-device regardless.
+    # Parents are only fed to _ravel_multi_index (int32); pinning int32 here
+    # keeps the JIT signature stable and avoids per-column recompiles.
     parent_arrays = tuple(
         jnp.asarray(data[p], dtype=jnp.int32) for p in cp.parents
     )
@@ -299,15 +291,8 @@ def _gather_inputs(cp, domain, pot_map, msg_map):
 
 @jax.jit(
     static_argnames=['query', 'parent_sizes', 'total'],
-    # `total` (the row count) is a static argument, so arrays built from it are
-    # compile-time constants. In the root-column branch below, `parent_idx =
-    # jnp.zeros(total)` and the downstream bincount/argsort/repeat over it become
-    # `total`-sized constant subgraphs. XLA's constant_folding pass then evaluates
-    # them on the host, which is extremely slow (tens of seconds/column) and
-    # memory-hungry for large datasets. Disabling the pass for this function
-    # defers that work to the device at runtime with negligible cost (the folded
-    # values are tiny), and applies to both the direct-call and AOT (precompile)
-    # paths, keeping the JIT cache key consistent.
+    # `total` is static, so root-column arrays built from it become large
+    # constant subgraphs XLA would fold on the host (slow); defer to device.
     compiler_options={'xla_disable_hlo_passes': 'constant_folding'},
 )
 def _generate_column(
@@ -331,13 +316,8 @@ def _generate_column(
   return _gumbel_round(prng, marg_2d, parent_idx, total)
 
 
-# Row-chunk the (parent_product, domain_size) stochastic rounding when a single
-# column's marginal is large. The dense computation materializes ~10 arrays of
-# that shape plus argsort workspace (~26 GiB when parent_product*domain_size
-# approaches 2^28 under jax_enable_x64), which OOMs device memory. Per-parent
-# rounding is independent, so processing parents in chunks caps the working set
-# at a few hundred MiB with identical statistical behavior. Marginals at or below
-# the threshold use the original dense path unchanged.
+# Chunk the per-parent rounding for large marginals: the dense path allocates
+# many (parent_product, domain_size) arrays (~26 GiB near 2^28 x64) and OOMs.
 _ROUND_CHUNK_CELLS = 1 << 24  # ~16M cells/chunk (~1 GiB working set under x64)
 
 
