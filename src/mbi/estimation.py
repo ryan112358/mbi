@@ -254,7 +254,7 @@ def minimum_variance_unbiased_total(
     return 1.0
   else:
     weights = 1.0 / variances
-    return max(1, float(np.average(estimates, weights=weights)))
+    return max(1.0, float(np.average(estimates, weights=weights)))
 
 
 def _initialize(domain, loss_fn, known_total, potentials):
