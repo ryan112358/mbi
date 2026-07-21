@@ -59,7 +59,7 @@ class TestEstimation(unittest.TestCase):
     P = Factor.random(_DOMAIN)
     y = P.project(("a",)).datavector()
     m = marginal_loss.LinearMeasurement(
-        y, ("a",), query=marginal_loss.NormalizedQuery()
+        y, ("a",), query=lambda f: f.normalize(1.0).datavector()
     )
     total = estimation.minimum_variance_unbiased_total([m])
     np.testing.assert_allclose(total, 1.0, rtol=1e-5)
