@@ -208,6 +208,17 @@ class TestAnalyticLipschitz(unittest.TestCase):
       # And it agrees with the power-iteration ground truth.
       self.assertAlmostEqual(analytic, self._power(ms), delta=1e-2)
 
+  def test_routes_subclique_to_smallest_domain_parent(self):
+    # (a,) fits in (a,b) [size 6] and (a,c) [size 8]; routing via the smaller
+    # gives block (a,b) = 1 + |ab|/|a| = 4, order-independently.
+    for order in [
+        [self._m(('a', 'b')), self._m(('a', 'c')), self._m(('a',))],
+        [self._m(('a', 'c')), self._m(('a', 'b')), self._m(('a',))],
+    ]:
+      analytic = calculate_l2_lipschitz_from_metadata(self.domain, order)
+      self.assertAlmostEqual(analytic, 4.0, places=9)
+      self.assertAlmostEqual(analytic, self._power(order), delta=1e-2)
+
   def test_upper_bounds_power_for_weighted_overlap(self):
     # Non-uniform weights on overlapping sub-cliques: analytic may be a strict
     # but safe overestimate (never below the true constant).
