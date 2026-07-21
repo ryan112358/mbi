@@ -20,7 +20,7 @@ from jax.typing import ArrayLike
 import numpy as np
 import optax
 
-from .clique_utils import Clique, maximal_subset
+from .clique_utils import Clique, clique_mapping, maximal_subset
 from .clique_vector import CliqueVector
 from .domain import Domain
 from .factor import Factor
@@ -316,21 +316,16 @@ def calculate_l2_lipschitz_from_metadata(
   user-supplied callable query), signalling the caller to fall back to the
   power-iteration estimate.
   """
-  maximal = maximal_subset([m.clique for m in measurements])
-
-  def parent(clique: Clique) -> Clique:
-    scope = set(clique)
-    for c in maximal:  # Same order CliqueVector.parent scans.
-      if scope <= set(c):
-        return c
-    raise ValueError(f"No maximal clique contains {clique}.")
+  cliques = [m.clique for m in measurements]
+  maximal = maximal_subset(cliques)
+  routing = clique_mapping(maximal, cliques, domain)
 
   blocks: dict[Clique, float] = {}
   for m in measurements:
     q_norm_sq = _query_op_norm_sq(m.query)
     if q_norm_sq is None:
       return None
-    containing = parent(m.clique)
+    containing = routing[m.clique]
     proj_norm_sq = domain.size(containing) / domain.size(m.clique)
     stddev = max(float(m.stddev), 1e-12)
     contribution = q_norm_sq / stddev**2 * proj_norm_sq
