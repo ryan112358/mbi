@@ -102,10 +102,12 @@ class CliqueVector:
 
   # @functools.lru_cache(maxsize=None)
   def parent(self, clique: Clique) -> Clique | None:
-    """Finds a clique in this vector that is a superset of the given clique."""
-    for result in self.cliques:
-      if set(clique) <= set(result):
-        return result
+    """Returns the smallest-domain clique in this vector containing ``clique``."""
+    scope = set(clique)
+    candidates = [c for c in self.cliques if scope <= set(c)]
+    if not candidates:
+      return None
+    return min(candidates, key=self.domain.size)
 
   def supports(self, clique: Clique) -> bool:
     """Checks if the given clique is supported (is a subset of any clique in the vector)."""

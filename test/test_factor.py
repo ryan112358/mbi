@@ -1,6 +1,7 @@
 import unittest
 from mbi.factor import Factor
 from mbi.domain import Domain
+import jax
 import numpy as np
 import jax.numpy as jnp
 
@@ -19,6 +20,19 @@ class TestFactor(unittest.TestCase):
   def test_abstract(self):
     domain = Domain(["a", "b", "c", "d"], [2, 3, 4, 5])
     factor = Factor.abstract(domain)
+
+  def test_abstract_dtype_matches_zeros(self):
+    # Abstract factors must share the default float dtype with real factors
+    # so AOT-precompiled programs hit the JIT cache instead of recompiling.
+    domain = Domain(["a", "b", "c", "d"], [2, 3, 4, 5])
+    self.assertEqual(
+        Factor.abstract(domain).values.dtype, Factor.zeros(domain).values.dtype
+    )
+
+  def test_abstract_dtype_respects_x64(self):
+    domain = Domain(["a", "b"], [2, 3])
+    with jax.enable_x64():
+      self.assertEqual(Factor.abstract(domain).values.dtype, jnp.float64)
 
   def test_expand(self):
     domain = Domain(["a", "b", "c", "d"], [2, 3, 4, 5])

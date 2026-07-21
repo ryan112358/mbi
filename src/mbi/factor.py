@@ -63,11 +63,13 @@ class Factor:
 
   @classmethod
   def abstract(cls, domain: Domain) -> Factor:
-    # ShapeDtypeStruct is used for abstract shape/dtype evaluation (e.g. under
-    # jax.eval_shape); it deliberately stands in for a concrete Array here.
+    """Creates a shape/dtype-only Factor for ahead-of-time compilation."""
+    # Match zeros/ones' default float dtype so abstract-traced programs share
+    # the JIT cache with real runs (a fixed dtype would force recompiles).
     return cls(
         domain,
-        jax.ShapeDtypeStruct(domain.shape, jnp.float32),  # pyrefly: ignore[bad-argument-type]
+        # ShapeDtypeStruct stands in for a concrete Array under eval_shape.
+        jax.ShapeDtypeStruct(domain.shape, jnp.result_type(float)),  # pyrefly: ignore[bad-argument-type]
     )
 
   # Reshaping operations

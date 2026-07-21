@@ -11,6 +11,7 @@ from collections.abc import Callable
 from jax.typing import ArrayLike
 import jax
 
+from . import estimation
 from . import marginal_loss
 from .clique_vector import CliqueVector
 from .domain import Domain
@@ -43,19 +44,20 @@ def _pad(string: str, length: int):
 @dataclasses.dataclass
 class Callback:
   loss_fns: dict[str, Callable[..., ArrayLike]]
-  _step: int = 0
+  _call: int = 0
   _logs: list = dataclasses.field(default_factory=list)
 
   def __call__(self, marginals: CliqueVector) -> None:
-    if self._step == 0:
+    step = self._call * estimation.CALLBACK_EVERY
+    if self._call == 0:
       header = "|".join([_pad(x, 12) for x in ["step", *self.loss_fns.keys()]])
       log(header)
       log("=" * len(header))
     row = [self.loss_fns[key](marginals) for key in self.loss_fns]
-    self._logs.append([self._step] + row)
-    padded_step = str(self._step) + " " * (9 - len(str(self._step)))
+    self._logs.append([step] + row)
+    padded_step = str(step) + " " * (9 - len(str(step)))
     log(padded_step, *[f"{v:.6f}"[:6] for v in row], sep="   |   ")
-    self._step += 1
+    self._call += 1
 
   @property
   def summary(self) -> dict[str, list]:

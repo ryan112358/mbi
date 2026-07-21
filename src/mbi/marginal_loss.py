@@ -11,7 +11,7 @@ included.
 
 import dataclasses
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, SupportsFloat, cast
 
 import jax
 import jax.numpy as jnp
@@ -19,7 +19,7 @@ from jax.typing import ArrayLike
 import numpy as np
 import optax
 
-from .clique_utils import Clique, maximal_subset
+from .clique_utils import Clique, clique_mapping, maximal_subset
 from .clique_vector import CliqueVector
 from .domain import Domain
 from .factor import Factor
@@ -44,10 +44,20 @@ def _weighted_datavector(weights: np.ndarray, x: Factor) -> jax.Array:
 
 @dataclasses.dataclass(frozen=True)
 class DatavectorQuery:
-  """Identity query: ``f.datavector()``."""
+  """Identity query: ``f.datavector()``.
+
+  Attributes:
+      use_for_total_estimation: If ``False``, exclude measurements using this
+          query from ``minimum_variance_unbiased_total``. Defaults to ``True``.
+  """
+
+  use_for_total_estimation: bool = True
 
   def __call__(self, f: Factor) -> jax.Array:
     return f.datavector()
+
+  def op_norm_sq(self) -> float:
+    return 1.0
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -59,20 +69,15 @@ class WeightedQuery:
   def __call__(self, f: Factor) -> jax.Array:
     return f.datavector() * self.weights
 
+  def op_norm_sq(self) -> float:
+    return float(np.max(np.asarray(self.weights) ** 2))
+
   # Identity-based hash/eq so JAX static tracing works (ndarray isn't hashable).
   def __hash__(self) -> int:
     return id(self)
 
   def __eq__(self, other: object) -> bool:
     return self is other
-
-
-@dataclasses.dataclass(frozen=True)
-class NormalizedQuery:
-  """L1-normalized datavector: ``f.normalize(1).datavector()``."""
-
-  def __call__(self, f: Factor) -> jax.Array:
-    return f.normalize(1.0).datavector()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -83,6 +88,9 @@ class SlicedQuery:
 
   def __call__(self, f: Factor) -> jax.Array:
     return f.datavector()[self.start :]
+
+  def op_norm_sq(self) -> float:
+    return 1.0
 
 
 @jax.tree_util.register_dataclass
@@ -100,7 +108,9 @@ class LinearMeasurement:
 
   noisy_measurement: ArrayLike
   clique: Clique = jax.tree.static()
-  stddev: float = jax.tree.static(default=1.0)
+  # Dynamic (traced) leaf, not static aux-data: a static value gets baked into
+  # the treedef, changing the jit cache key and defeating precompile() reuse.
+  stddev: float = 1.0
   query: Callable[[Factor], ArrayLike] = jax.tree.static(
       default=DatavectorQuery()
   )
@@ -176,13 +186,15 @@ class MarginalLossFn:
           treated as static metadata for JIT compilation.
       data: Arbitrary pytree of arrays captured by ``loss_fn``.  This is
           traced through JIT and can change without recompilation.
-      lipschitz: Optional Lipschitz constant of the gradient.
+      lipschitz: Lipschitz constant of the gradient. Defaults to ``1.0``.
   """
 
   cliques: Sequence[Clique] = jax.tree.static()
   loss_fn: Callable[[CliqueVector, Any], ArrayLike] = jax.tree.static()
   data: Any = ()
-  lipschitz: float | None = jax.tree.static(default=None)
+  # Dynamic (traced) leaf, always a concrete float (never None): a static value
+  # gets baked into the treedef, changing the jit cache key and defeating reuse.
+  lipschitz: float = 1.0
 
   def __post_init__(self):
     object.__setattr__(self, "cliques", tuple(self.cliques))
@@ -276,6 +288,54 @@ def calculate_l2_lipschitz(
   return float(estimate)
 
 
+def _query_op_norm_sq(query: Callable[[Factor], ArrayLike]) -> float | None:
+  """Squared operator norm ||Q||_2^2 of a linear query, or None if unknown."""
+  fn = getattr(query, "op_norm_sq", None)
+  return float(cast(SupportsFloat, fn())) if callable(fn) else None
+
+
+def calculate_l2_lipschitz_from_metadata(
+    domain: Domain,
+    measurements: Sequence[LinearMeasurement],
+) -> float | None:
+  """Lipschitz constant of the (unnormalized) l2 loss gradient from metadata.
+
+  The loss is quadratic, so its gradient's Lipschitz constant is lambda_max of a
+  Hessian that is block-diagonal by maximal clique::
+
+      H = sum_M (1 / sigma_M^2) (Q_M P_{c_M})^T (Q_M P_{c_M})
+
+  where P_{c_M} marginalizes a maximal-clique table down to clique c_M, with
+  ||P_c||^2 = |C| / |c| (the product of the summed-out domain sizes). Bounding
+  each block by the sum of its terms' norms gives::
+
+      L <= max_C sum_{M->C} ||Q_M||^2 / sigma_M^2 * |C| / |c_M|.
+
+  The uniform vector is the top eigenvector of every marginalization operator,
+  so this is *exact* when all queries are identity marginals (the common case)
+  and a safe overestimate otherwise (a larger L only shrinks the step size).
+
+  Returns None if any query's operator norm is unknown (e.g. a nonlinear or
+  user-supplied callable query), signalling the caller to fall back to the
+  power-iteration estimate.
+  """
+  cliques = [m.clique for m in measurements]
+  maximal = maximal_subset(cliques)
+  routing = clique_mapping(maximal, cliques, domain)
+
+  blocks: dict[Clique, float] = {}
+  for m in measurements:
+    q_norm_sq = _query_op_norm_sq(m.query)
+    if q_norm_sq is None:
+      return None
+    containing = routing[m.clique]
+    proj_norm_sq = domain.size(containing) / domain.size(m.clique)
+    stddev = max(float(m.stddev), 1e-12)
+    contribution = q_norm_sq / stddev**2 * proj_norm_sq
+    blocks[containing] = blocks.get(containing, 0.0) + contribution
+  return max(blocks.values()) if blocks else 1.0
+
+
 def from_linear_measurements(
     measurements: list[LinearMeasurement],
     domain: Domain,
@@ -313,7 +373,9 @@ def from_linear_measurements(
       for m in measurements
   )
   if norm == "l2" and not normalize and not has_abstract:
-    lipschitz = calculate_l2_lipschitz(domain, maximal_cliques, loss)
+    lipschitz = calculate_l2_lipschitz_from_metadata(domain, measurements)
+    if lipschitz is None:
+      lipschitz = calculate_l2_lipschitz(domain, maximal_cliques, loss)
     return MarginalLossFn(maximal_cliques, loss_fn, data, lipschitz)
 
   return loss

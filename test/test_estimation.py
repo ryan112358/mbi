@@ -41,6 +41,61 @@ class TestEstimation(unittest.TestCase):
     total = estimation.minimum_variance_unbiased_total(measurements)
     np.testing.assert_allclose(total, 1.0, rtol=1e-5)
 
+  def test_total_estimator_legacy_factor_datavector_query(self):
+    # Regression test: measurements whose query is the legacy
+    # ``Factor.datavector`` callable (rather than a ``DatavectorQuery``
+    # instance) must still contribute to the total estimate.
+    P = Factor.random(_DOMAIN)
+    P = 10.0 * P / P.sum()  # total = 10
+    y = P.project(("a",)).datavector()
+    m = marginal_loss.LinearMeasurement(y, ("a",), query=Factor.datavector)
+    total = estimation.minimum_variance_unbiased_total([m])
+    np.testing.assert_allclose(total, 10.0, rtol=1e-5)
+
+  def test_total_estimator_ignores_non_identity_query(self):
+    # A non-identity query (e.g. a normalized datavector) carries no
+    # information about the total and must be excluded, so the fallback
+    # default (1.0) is returned.
+    P = Factor.random(_DOMAIN)
+    y = P.project(("a",)).datavector()
+    m = marginal_loss.LinearMeasurement(
+        y, ("a",), query=lambda f: f.normalize(1.0).datavector()
+    )
+    total = estimation.minimum_variance_unbiased_total([m])
+    np.testing.assert_allclose(total, 1.0, rtol=1e-5)
+
+  def test_total_estimator_respects_use_for_total_estimation_flag(self):
+    # An identity query that opts out of total estimation must be excluded,
+    # so the fallback default (1.0) is returned.
+    P = Factor.random(_DOMAIN)
+    P = 10.0 * P / P.sum()  # total = 10
+    y = P.project(("a",)).datavector()
+    m = marginal_loss.LinearMeasurement(
+        y,
+        ("a",),
+        query=marginal_loss.DatavectorQuery(use_for_total_estimation=False),
+    )
+    total = estimation.minimum_variance_unbiased_total([m])
+    np.testing.assert_allclose(total, 1.0, rtol=1e-5)
+
+  def test_total_estimator_mixes_opted_in_measurements_only(self):
+    # Only measurements that opt in should drive the estimate; an opted-out
+    # measurement with a wildly different scale must not skew it.
+    P = Factor.random(_DOMAIN)
+    P = 10.0 * P / P.sum()  # total = 10
+    y_in = P.project(("a",)).datavector()
+    y_out = 1000.0 * P.project(("b",)).datavector()  # scale 1000, opted out
+    m_in = marginal_loss.LinearMeasurement(
+        y_in, ("a",), query=marginal_loss.DatavectorQuery()
+    )
+    m_out = marginal_loss.LinearMeasurement(
+        y_out,
+        ("b",),
+        query=marginal_loss.DatavectorQuery(use_for_total_estimation=False),
+    )
+    total = estimation.minimum_variance_unbiased_total([m_in, m_out])
+    np.testing.assert_allclose(total, 10.0, rtol=1e-5)
+
   @parameterized.expand(itertools.product(_CLIQUE_SETS))
   def test_mirror_descent(self, cliques):
     measurements = fake_measurements(cliques)

@@ -13,7 +13,6 @@ from mbi import (
     Factor,
     LinearMeasurement,
     MarkovRandomField,
-    NormalizedQuery,
     SlicedQuery,
     WeightedQuery,
     load,
@@ -119,7 +118,6 @@ class TestLinearMeasurements:
     ms = [
         LinearMeasurement(jnp.ones(size), cl),
         LinearMeasurement(jnp.ones(size), cl, query=WeightedQuery(weights)),
-        LinearMeasurement(jnp.ones(size), cl, query=NormalizedQuery()),
         LinearMeasurement(jnp.ones(size - 1), cl, query=SlicedQuery(start=1)),
     ]
     loaded = _roundtrip(ms)
@@ -127,9 +125,8 @@ class TestLinearMeasurements:
     assert isinstance(loaded[0].query, DatavectorQuery)
     assert isinstance(loaded[1].query, WeightedQuery)
     np.testing.assert_allclose(loaded[1].query.weights, weights, atol=1e-7)
-    assert isinstance(loaded[2].query, NormalizedQuery)
-    assert isinstance(loaded[3].query, SlicedQuery)
-    assert loaded[3].query.start == 1
+    assert isinstance(loaded[2].query, SlicedQuery)
+    assert loaded[2].query.start == 1
 
     # Functional equivalence for the weighted query.
     f = Factor(domain.project(cl), jnp.ones(size))

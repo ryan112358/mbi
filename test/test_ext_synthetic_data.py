@@ -1,4 +1,7 @@
+import importlib
+import logging
 import unittest
+import jax
 import numpy as np
 from mbi import (
     Domain,
@@ -182,6 +185,191 @@ class TestExtSyntheticDataAccuracy(unittest.TestCase):
         cliques,
         cross_cliques=[("A", "C"), ("A", "E"), ("C", "E")],
     )
+
+
+class TestExtSyntheticDataPrecompile(unittest.TestCase):
+  """Tests that precompile() lowers against the signatures generation uses.
+
+  precompile() ahead-of-time lowers ``_generate_column`` for each column; for
+  the resulting compiled executables to be reused, the argument avals (shape +
+  dtype) it lowers against must exactly match those ``synthetic_data`` passes
+  at generation.  Two dtype mismatches previously defeated this whenever
+  ``jax_enable_x64`` was set, forcing a recompile on every one of the columns:
+
+    * ``Factor.abstract`` emitted float32 while real factors were float64, and
+    * parent arrays were passed as ``np.min_scalar_type`` (uint8/uint16/...)
+      instead of the int32 signature precompile lowered against.
+
+  This test records the per-column avals from both paths and asserts they are
+  identical, which is the precise cache-hit precondition.
+  """
+
+  def setUp(self):
+    super().setUp()
+    # precompile() compiles in a background thread that does not inherit a
+    # thread-local ``jax.enable_x64()`` context, so enable x64 globally here.
+    self._prev_x64 = jax.config.read("jax_enable_x64")
+    jax.config.update("jax_enable_x64", True)
+
+  def tearDown(self):
+    jax.config.update("jax_enable_x64", self._prev_x64)
+    super().tearDown()
+
+  def _leaf_avals(self, *args):
+    return tuple(
+        (tuple(leaf.shape), str(leaf.dtype))
+        for leaf in jax.tree_util.tree_leaves(args)
+        if hasattr(leaf, "shape") and hasattr(leaf, "dtype")
+    )
+
+  def test_precompile_signature_matches_generation(self):
+    import importlib
+
+    # The __init__ re-exports the ``synthetic_data`` function, shadowing the
+    # submodule of the same name, so import it explicitly from sys.modules.
+    sd = importlib.import_module("mbi.extensions.synthetic_data")
+    real = sd._generate_column
+
+    # Use a chain so at least one column is generated with parents, exercising
+    # the parent-array dtype path.  The bugs only manifest under x64, where the
+    # default float dtype is float64 (enabled globally in setUp).
+    domain = Domain(["A", "B", "C"], [5, 5, 5])
+    cliques = [("A", "B"), ("B", "C")]
+    model = _create_random_model(domain, cliques, N=1000)
+    rows = 1000
+
+    precompile_sigs = {}
+    generation_sigs = {}
+
+    class _PrecompileRecorder:
+
+      def lower(inner, prng, inputs, parents, *, query, **kwargs):  # pylint: disable=no-self-argument
+        precompile_sigs[query] = self._leaf_avals(prng, inputs, parents)
+        return real.lower(prng, inputs, parents, query=query, **kwargs)
+
+    class _GenerationRecorder:
+
+      def __call__(inner, prng, inputs, parents, *, query, **kwargs):  # pylint: disable=no-self-argument
+        generation_sigs[query] = self._leaf_avals(prng, inputs, parents)
+        return real(prng, inputs, parents, query=query, **kwargs)
+
+    try:
+      sd._generate_column = _PrecompileRecorder()
+      sd.precompile(domain, list(model.cliques), rows).result()
+      sd._generate_column = _GenerationRecorder()
+      sd.synthetic_data(model, rows)
+    finally:
+      sd._generate_column = real
+
+    self.assertTrue(precompile_sigs, "precompile lowered no columns")
+    self.assertEqual(
+        set(precompile_sigs), set(generation_sigs), "column sets differ"
+    )
+    # At least one column must be generated with a parent (the chain
+    # guarantees it): a parent appears as an int32 array of shape (rows,).
+    self.assertTrue(
+        any(((rows,), "int32") in sig for sig in generation_sigs.values()),
+        "expected at least one column generated with an int32 parent array",
+    )
+    for query, gen_sig in generation_sigs.items():
+      self.assertEqual(
+          precompile_sigs[query],
+          gen_sig,
+          f"aval mismatch for column {query}: precompile lowered "
+          f"{precompile_sigs[query]} but generation passed {gen_sig}; "
+          "the JIT cache would miss and recompile.",
+      )
+
+
+class TestExtSyntheticDataCacheHit(unittest.TestCase):
+  """Behavioral test: synthetic_data() reuses precompile()'s JIT cache.
+
+  Complements the aval-signature test above by asserting the *observable*
+  consequence: after precompile() warms the cache, generation triggers zero
+  new compilations of the per-column kernel ``_generate_column``.  Checked in
+  both the default (float32) and ``jax_enable_x64`` (float64) regimes, since
+  the dtype mismatches that used to defeat reuse only surfaced under x64.
+  """
+
+  class _CompileCounter(logging.Handler):
+    """Counts JAX 'Compiling ... _generate_column' log records."""
+
+    def __init__(self):
+      super().__init__()
+      self.n = 0
+
+    def emit(self, record):
+      try:
+        msg = record.getMessage()
+      except Exception:  # pylint: disable=broad-exception-caught
+        return
+      if "Compiling" in msg and "_generate_column" in msg:
+        self.n += 1
+
+  def _run_regime(self, enable_x64):
+    sd = importlib.import_module("mbi.extensions.synthetic_data")
+    # ``jax_log_compiles`` / ``jax_enable_compilation_cache`` are contextmanager
+    # flags, which must be read via attribute access rather than config.read().
+    prev_x64 = jax.config.jax_enable_x64
+    prev_log = jax.config.jax_log_compiles
+    prev_cache = jax.config.jax_enable_compilation_cache
+    counter = self._CompileCounter()
+    loggers = [logging.getLogger(name) for name in ("", "jax", "jax._src")]
+    prev_levels = [(lg, lg.level) for lg in loggers]
+    try:
+      jax.config.update("jax_enable_x64", enable_x64)
+      # Disable the persistent on-disk cache and clear the in-memory cache so
+      # that precompile() genuinely compiles (emitting the log records we
+      # count) rather than loading a warm executable from a previous run.
+      jax.config.update("jax_enable_compilation_cache", False)
+      jax.clear_caches()
+      jax.config.update("jax_log_compiles", True)
+      for lg in loggers:
+        lg.setLevel(logging.DEBUG)
+        lg.addHandler(counter)
+
+      # A chain guarantees columns generated with parents, exercising the
+      # parent-array dtype path that broke reuse under x64.
+      domain = Domain(["A", "B", "C"], [5, 5, 5])
+      cliques = [("A", "B"), ("B", "C")]
+      model = _create_random_model(domain, cliques, N=1000)
+      rows = 1000
+
+      sd.precompile(domain, list(model.cliques), rows).result()
+      n_after_precompile = counter.n
+      sd.synthetic_data(model, rows)
+      n_after_generate = counter.n
+    finally:
+      for lg in loggers:
+        lg.removeHandler(counter)
+      for lg, level in prev_levels:
+        lg.setLevel(level)
+      jax.config.update("jax_log_compiles", prev_log)
+      jax.config.update("jax_enable_compilation_cache", prev_cache)
+      jax.config.update("jax_enable_x64", prev_x64)
+
+    # precompile() must actually have compiled the kernel, otherwise the test
+    # is vacuous; then generation must add no further compilations.
+    self.assertGreater(
+        n_after_precompile,
+        0,
+        "precompile() compiled no _generate_column; test is vacuous",
+    )
+    self.assertEqual(
+        n_after_generate,
+        n_after_precompile,
+        "synthetic_data() recompiled _generate_column "
+        f"({n_after_generate - n_after_precompile} new compiles) with "
+        f"jax_enable_x64={enable_x64}: the precompile() cache missed.",
+    )
+
+  def test_cache_hit_x64(self):
+    """Under jax_enable_x64 (float64), generation reuses the precompiled cache."""
+    self._run_regime(enable_x64=True)
+
+  def test_cache_hit_default(self):
+    """Under the default (float32) regime, generation reuses the cache."""
+    self._run_regime(enable_x64=False)
 
 
 if __name__ == "__main__":
