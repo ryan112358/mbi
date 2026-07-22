@@ -38,6 +38,19 @@ def _pad(string: str, length: int):
   return " " * left_pad + string + " " * right_pad
 
 
+@jax.jit
+def _compute_row(loss_fns, marginals):
+  """Evaluates all loss functions on the marginals in one fused, jitted pass."""
+  # Passing loss_fns as a traced argument keeps measurement data dynamic (not
+  # baked into the compiled program) and lets XLA share projections across them.
+  return [loss_fn(marginals) for loss_fn in loss_fns]
+
+
+def _primal_feasibility_loss(marginals, unused_data):
+  """Adapts primal_feasibility to the (marginals, data) loss_fn signature."""
+  return marginal_loss.primal_feasibility(marginals)
+
+
 @dataclasses.dataclass
 class Callback:
   loss_fns: dict[str, marginal_loss.MarginalLossFn]
@@ -50,7 +63,7 @@ class Callback:
       header = "|".join([_pad(x, 12) for x in ["step", *self.loss_fns.keys()]])
       log(header)
       log("=" * len(header))
-    row = [self.loss_fns[key](marginals) for key in self.loss_fns]
+    row = _compute_row(tuple(self.loss_fns.values()), marginals)
     self._logs.append([step] + row)
     padded_step = str(step) + " " * (9 - len(str(step)))
     log(padded_step, *[f"{v:.6f}"[:6] for v in row], sep="   |   ")
@@ -99,7 +112,8 @@ def default(
         ground_truth, domain, norm="l1", normalize=True
     )
 
-  loss_fns = {key: jax.jit(val.__call__) for key, val in loss_fns.items()}
-  loss_fns["Primal Feas"] = jax.jit(marginal_loss.primal_feasibility)
+  loss_fns["Primal Feas"] = marginal_loss.MarginalLossFn(
+      cliques=(), loss_fn=_primal_feasibility_loss
+  )
 
   return Callback(loss_fns)
