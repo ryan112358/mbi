@@ -35,8 +35,7 @@ def save(obj: Any, file: str | os.PathLike | io.IOBase) -> None:
   arrays = {f"leaf_{i}": np.asarray(leaf) for i, leaf in enumerate(leaves)}
   arrays["_treedef"] = np.frombuffer(pickle.dumps(treedef), dtype=np.uint8)
   buf = io.BytesIO()
-  # numpy's savez_compressed stub lists `allow_pickle: bool` before `**kwds`, so
-  # unpacking a dict[str, ndarray] is flagged as a bad `allow_pickle` value.
+  # numpy stub: allow_pickle precedes **kwds, so unpacking arrays trips it.
   np.savez_compressed(buf, **arrays)  # pyrefly: ignore[bad-argument-type]
   data = buf.getvalue()
   if isinstance(file, (str, os.PathLike)):

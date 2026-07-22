@@ -106,6 +106,7 @@ def build_graph(domain: Domain, cliques: Sequence[Clique]) -> tuple[
 
   children = {r: list(G.neighbors(r)) for r in regions}
   parents = {r: list(H.neighbors(r)) for r in regions}
+  # transitive_closure drops the node type, so .neighbors(tuple) is flagged.
   descendants = {r: list(G1.neighbors(r)) for r in regions}  # pyrefly: ignore[bad-argument-type]
   ancestors = {r: list(H1.neighbors(r)) for r in regions}  # pyrefly: ignore[bad-argument-type]
   forebears = {r: set([r] + ancestors[r]) for r in regions}
