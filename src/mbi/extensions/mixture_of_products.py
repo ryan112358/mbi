@@ -27,7 +27,7 @@ import dataclasses
 from ..estimation import Estimator
 from ..clique_vector import CliqueVector
 from ..dataset import Dataset
-from ..domain import Domain
+from ..domain import Attribute, Domain
 from ..factor import Factor
 
 
@@ -36,7 +36,7 @@ from ..factor import Factor
 class MixtureOfProducts:
   """A discrete distribution as a mixture of product distributions."""
 
-  _logits: dict[str, jax.Array]
+  _logits: dict[Attribute, jax.Array]
   domain: Domain = field(metadata={"static": True})
   total: float = field(metadata={"static": True})
 
@@ -65,7 +65,7 @@ class MixtureOfProducts:
     return next(iter(self._logits.values())).shape[0]
 
   @property
-  def products(self) -> dict[str, jax.Array]:
+  def products(self) -> dict[Attribute, jax.Array]:
     """Per-attribute categorical probabilities (softmax of logits)."""
     return {
         col: jax.nn.softmax(self._logits[col], axis=1) for col in self._logits
@@ -134,7 +134,7 @@ class MixtureOfProductsState(NamedTuple):
   opt_state: optax.OptState
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class MixtureOfProductsEstimator(Estimator):
   """Estimates a distribution as a mixture of product distributions.
 
@@ -145,19 +145,13 @@ class MixtureOfProductsEstimator(Estimator):
 
   Attributes:
       num_components: Number of mixture components K.
-      learning_rate: Learning rate for the optimizer.
-      optimizer: An optax optimizer.  Defaults to ``optax.adam``.
+      optimizer: An optax optimizer (e.g. ``optax.adam(0.1)``).
       seed: Random seed for parameter initialization.
   """
 
+  optimizer: optax.GradientTransformation
   num_components: int = 100
-  learning_rate: float = 0.1
-  optimizer: optax.GradientTransformation | None = None
   seed: int = 0
-
-  def __post_init__(self):
-    if self.optimizer is None:
-      object.__setattr__(self, "optimizer", optax.adam(self.learning_rate))
 
   def _init(self, domain, loss_fn, known_total, *, warm_start=None, **kwargs):
     """Initialize model and optimizer state."""
@@ -166,7 +160,7 @@ class MixtureOfProductsEstimator(Estimator):
     )
     if warm_start is not None:
       model = warm_start
-    opt_state = self.optimizer.init(model)
+    opt_state = self.optimizer.init(model)  # pyrefly: ignore[bad-argument-type]
     return MixtureOfProductsState(model, opt_state)
 
   def _step(self, state, loss_fn, known_total, constraints=()):
@@ -182,7 +176,7 @@ class MixtureOfProductsEstimator(Estimator):
         grad, state.opt_state, state.model
     )
     model = optax.apply_updates(state.model, updates)
-    return MixtureOfProductsState(model, opt_state)
+    return MixtureOfProductsState(model, opt_state)  # pyrefly: ignore[bad-argument-type]
 
   def _finalize(self, state, known_total, constraints=()):
     return state.model

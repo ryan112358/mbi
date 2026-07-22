@@ -13,11 +13,12 @@ import dataclasses
 import json
 import math
 import warnings
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import ArrayLike as JaxArrayLike
 from numpy.typing import ArrayLike, NDArray
 
 from .domain import Attribute, Domain
@@ -34,15 +35,16 @@ def _validate_column_meta(data: np.ndarray, attr: Attribute):
     )
 
 
-def _validate_data(data: dict[Attribute, np.ndarray], domain: Domain):
+def _validate_data(data: Mapping[Attribute, ArrayLike], domain: Domain):
   if set(data.keys()) != set(domain.attributes):
     raise ValueError("Keys in data dictionary must match domain attributes")
   n = None
   for col in data:
-    _validate_column_meta(data[col], col)
+    column = np.asarray(data[col])
+    _validate_column_meta(column, col)
     if n is None:
-      n = data[col].shape[0]
-    if n != data[col].shape[0]:
+      n = column.shape[0]
+    if n != column.shape[0]:
       raise ValueError("All columns must have the same length.")
 
 
@@ -88,7 +90,7 @@ class Dataset:
       weights: Optional per-row weights (defaults to all ones).
   """
 
-  data: dict[Attribute, ArrayLike]
+  data: Mapping[Attribute, ArrayLike]
   domain: Domain
   weights: ArrayLike | None = dataclasses.field(default=None)
 
@@ -104,9 +106,9 @@ class Dataset:
     _validate_data(self.data, self.domain)
 
     if self.data:
-      n = next(iter(self.data.values())).shape[0]
+      n = np.shape(next(iter(self.data.values())))[0]
     elif self.weights is not None:
-      n = self.weights.size
+      n = np.size(self.weights)
     else:
       raise ValueError(
           "Weights must be provided if data is empty (cannot infer N)"
@@ -114,14 +116,14 @@ class Dataset:
 
     if self.weights is None:
       object.__setattr__(self, "weights", np.ones(n))
-    elif self.weights.size != n:
+    elif np.size(self.weights) != n:
       raise ValueError(
-          f"Weights length ({self.weights.size}) does not match "
+          f"Weights length ({np.size(self.weights)}) does not match "
           f"data length ({n})"
       )
 
   def to_dict(self) -> dict[Attribute, np.ndarray]:
-    return self.data
+    return {k: np.asarray(v) for k, v in self.data.items()}
 
   @staticmethod
   def synthetic(domain: Domain, N: int) -> Dataset:
@@ -171,7 +173,7 @@ class Dataset:
       if not set(domain_obj.attributes) <= set(header):
         raise ValueError("data must contain domain attributes")
 
-      indices = [header_map[attr] for attr in domain_obj.attributes]
+      indices = [header_map[str(attr)] for attr in domain_obj.attributes]
       rows = []
       for row in reader:
         try:
@@ -206,16 +208,20 @@ class Dataset:
   def records(self) -> int:
     """Returns the number of records (rows) in the dataset."""
     if not self.data:
-      return self.weights.size
-    return next(iter(self.data.values())).shape[0]
+      assert self.weights is not None  # guaranteed by __post_init__
+      return np.size(self.weights)
+    return np.shape(next(iter(self.data.values())))[0]
 
   def datavector(self, flatten: bool = True) -> NDArray:
     """Return the database in vector-of-counts form."""
     dims = self.domain.shape
     if len(dims) == 0:
-      result = self.weights.sum()
+      assert self.weights is not None  # guaranteed by __post_init__
+      result = np.sum(self.weights)
       return np.array([result]) if flatten else result
-    multi_index = tuple(self.data[a] for a in self.domain.attributes)
+    multi_index = tuple(
+        np.asarray(self.data[a]) for a in self.domain.attributes
+    )
     linear_indices = np.ravel_multi_index(multi_index, dims, order="C")
     counts = np.bincount(
         linear_indices, minlength=math.prod(dims), weights=self.weights
@@ -256,7 +262,7 @@ class Dataset:
             f" size {self.domain[attr]} for attribute {attr}"
         )
 
-      new_col = map_array[self.data[attr]]
+      new_col = map_array[np.asarray(self.data[attr])]
       new_data[attr] = new_col.astype(np.min_scalar_type(np.max(map_array)))
       new_domain_config[attr] = int(np.max(map_array) + 1)
 
@@ -300,7 +306,7 @@ class Dataset:
       starts[1:] = np.cumsum(counts)
       starts = starts[:-1]
 
-      current_col = self.data[attr]
+      current_col = np.asarray(self.data[attr])
 
       col_counts = counts[current_col]
       if np.any(col_counts == 0):
@@ -357,12 +363,12 @@ class JaxDataset:
 
     return JaxDataset(data, domain)
 
-  def project(self, cols: Attribute | Sequence[Attribute]) -> Factor:
+  def project(self, attrs: Attribute | Sequence[Attribute]) -> Factor:
     """Project dataset onto a subset of columns."""
-    if isinstance(cols, (str, int)):
-      cols = [cols]
+    if isinstance(attrs, (str, int)):
+      attrs = [attrs]
 
-    domain = self.domain.project(cols)
+    domain = self.domain.project(attrs)
 
     dims = domain.shape
     if not dims:
@@ -382,8 +388,8 @@ class JaxDataset:
 
     return Factor(domain, counts.reshape(dims))
 
-  def supports(self, cols: str | Sequence[str]) -> bool:
-    return self.domain.supports(cols)
+  def supports(self, attrs: Attribute | Sequence[Attribute]) -> bool:
+    return self.domain.supports(attrs)
 
   @property
   def records(self) -> int:
@@ -391,6 +397,18 @@ class JaxDataset:
     if not self.data:
       raise ValueError("Dataset is empty (no columns).")
     return list(self.data.values())[0].shape[0]
+
+  @property
+  def total(self) -> JaxArrayLike:
+    """Total count represented by the dataset.
+
+    This is the sum of the record weights, or the number of records when the
+    dataset is unweighted.  Defined so that a (weighted) JaxDataset satisfies
+    the ``Model`` protocol.
+    """
+    if self.weights is None:
+      return self.records
+    return jnp.sum(self.weights)
 
   def apply_sharding(self, mesh: jax.sharding.Mesh) -> JaxDataset:
     pspec = jax.sharding.PartitionSpec(mesh.axis_names)

@@ -15,7 +15,7 @@ import warnings
 from collections.abc import Sequence
 
 import dataclasses
-import chex
+from jax.typing import ArrayLike
 import jax
 import jax.numpy as jnp
 
@@ -117,8 +117,9 @@ class CliqueVector:
     clique = tuple(clique)
     if clique in self.tables:
       return self[clique]
-    if self.supports(clique):
-      return self[self.parent(clique)].project(clique, log=log)
+    parent = self.parent(clique)
+    if parent is not None:
+      return self[parent].project(clique, log=log)
     raise ValueError(f"Cannot project onto unsupported clique {clique}.")
 
   def expand(self, cliques: Sequence[Clique]) -> CliqueVector:
@@ -138,10 +139,10 @@ class CliqueVector:
     tables = {}
     for cl in cliques:
       dom = self.domain.project(cl)
-      if len(mapping[cl]) == 0:
-        tables[cl] = Factor.zeros(dom)
-      else:
-        tables[cl] = sum(self[cl2] for cl2 in mapping[cl]).expand(dom)
+      # Factor.zeros over the empty domain is the additive identity, so this
+      # also handles the case where mapping[cl] is empty.
+      identity = Factor.zeros(Domain([], []))
+      tables[cl] = sum((self[cl2] for cl2 in mapping[cl]), identity).expand(dom)
     return CliqueVector(self.domain, cliques, tables)
 
   def contract(
@@ -159,25 +160,25 @@ class CliqueVector:
         is_leaf=Factor.__instancecheck__,
     )
 
-  def __mul__(self, const: chex.Numeric) -> CliqueVector:
+  def __mul__(self, const: ArrayLike) -> CliqueVector:
     """Multiplies each factor in the vector by a constant."""
     return jax.tree.map(lambda f: f * const, self)
 
-  def __rmul__(self, const: chex.Numeric) -> CliqueVector:
+  def __rmul__(self, const: ArrayLike) -> CliqueVector:
     """Right-multiplies each factor in the vector by a constant."""
     return self.__mul__(const)
 
-  def __truediv__(self, const: chex.Numeric) -> CliqueVector:
+  def __truediv__(self, const: ArrayLike) -> CliqueVector:
     """Divides each factor in the vector by a constant."""
     return self.__mul__(1 / const)
 
-  def __add__(self, other: chex.Numeric | CliqueVector) -> CliqueVector:
+  def __add__(self, other: ArrayLike | CliqueVector) -> CliqueVector:
     """Adds another CliqueVector or a constant to this vector elementwise."""
     if isinstance(other, CliqueVector):
       return jax.tree.map(jnp.add, self, other)
     return jax.tree.map(lambda f: f + other, self)
 
-  def __sub__(self, other: chex.Numeric | CliqueVector) -> CliqueVector:
+  def __sub__(self, other: ArrayLike | CliqueVector) -> CliqueVector:
     """Subtracts another CliqueVector or a constant from this vector elementwise."""
     return self + -1 * other
 
@@ -189,7 +190,7 @@ class CliqueVector:
     """Applies elementwise logarithm (jnp.log) to each factor."""
     return jax.tree.map(jnp.log, self)
 
-  def dot(self, other: CliqueVector) -> chex.Numeric:
+  def dot(self, other: CliqueVector) -> ArrayLike:
     """Computes the dot product between this CliqueVector and another."""
     dots = jax.tree.map(
         Factor.dot, self, other, is_leaf=Factor.__instancecheck__

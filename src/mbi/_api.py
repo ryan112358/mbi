@@ -11,8 +11,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol
 
+from jax.typing import ArrayLike
+
 if TYPE_CHECKING:
   from .dataset import Dataset
+  from .domain import Attribute
   from .domain import Domain
   from .factor import Factor
 
@@ -33,10 +36,10 @@ class Projectable(Protocol):
   def domain(self) -> Domain:
     """Returns the domain over which this projectable is defined."""
 
-  def project(self, attrs: str | Sequence[str]) -> Factor:
+  def project(self, attrs: "Attribute | Sequence[Attribute]") -> Factor:
     """Projection onto a subset of attributes."""
 
-  def supports(self, attrs: str | Sequence[str]) -> bool:
+  def supports(self, attrs: "Attribute | Sequence[Attribute]") -> bool:
     """Returns true if the given attributes can be projected onto."""
 
 
@@ -54,7 +57,7 @@ class Model(Projectable, Protocol):
   """
 
   @property
-  def total(self) -> float:
+  def total(self) -> ArrayLike:
     """The total count (number of records) represented by the model."""
 
   def synthetic_data(self, rows: int | None = None) -> Dataset:

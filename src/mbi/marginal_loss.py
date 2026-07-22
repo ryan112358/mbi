@@ -13,7 +13,6 @@ import dataclasses
 from collections.abc import Callable, Sequence
 from typing import Any, SupportsFloat, cast
 
-import chex
 import jax
 import jax.numpy as jnp
 from jax.typing import ArrayLike
@@ -191,7 +190,7 @@ class MarginalLossFn:
   """
 
   cliques: Sequence[Clique] = jax.tree.static()
-  loss_fn: Callable[[CliqueVector, Any], chex.Numeric] = jax.tree.static()
+  loss_fn: Callable[[CliqueVector, Any], ArrayLike] = jax.tree.static()
   data: Any = ()
   # Dynamic (traced) leaf, always a concrete float (never None): a static value
   # gets baked into the treedef, changing the jit cache key and defeating reuse.
@@ -200,20 +199,22 @@ class MarginalLossFn:
   def __post_init__(self):
     object.__setattr__(self, "cliques", tuple(self.cliques))
 
-  def __call__(self, marginals: CliqueVector) -> chex.Numeric:
+  def __call__(self, marginals: CliqueVector) -> ArrayLike:
     return self.loss_fn(marginals, self.data)
 
 
 def _l2_loss(
     marginals: CliqueVector,
     measurements: tuple[LinearMeasurement, ...],
-) -> chex.Numeric:
+) -> ArrayLike:
   """Weighted L2 loss over linear measurements."""
   loss = 0.0
   for M in measurements:
     mu = marginals.project(M.clique)
     stddev = jnp.maximum(M.stddev, 1e-12)
-    diff = (M.query(mu) - M.noisy_measurement) / stddev
+    diff = (
+        jnp.asarray(M.query(mu)) - jnp.asarray(M.noisy_measurement)
+    ) / stddev
     loss += 0.5 * jnp.vdot(diff, diff)
   return loss
 
@@ -221,13 +222,15 @@ def _l2_loss(
 def _l1_loss(
     marginals: CliqueVector,
     measurements: tuple[LinearMeasurement, ...],
-) -> chex.Numeric:
+) -> ArrayLike:
   """Weighted L1 loss over linear measurements."""
   loss = 0.0
   for M in measurements:
     mu = marginals.project(M.clique)
     stddev = jnp.maximum(M.stddev, 1e-12)
-    diff = (M.query(mu) - M.noisy_measurement) / stddev
+    diff = (
+        jnp.asarray(M.query(mu)) - jnp.asarray(M.noisy_measurement)
+    ) / stddev
     loss += jnp.sum(jnp.abs(diff))
   return loss
 
@@ -235,7 +238,7 @@ def _l1_loss(
 def _normalized_l2_loss(
     marginals: CliqueVector,
     measurements: tuple[LinearMeasurement, ...],
-) -> chex.Numeric:
+) -> ArrayLike:
   """Normalized L2 loss over linear measurements."""
   loss = _l2_loss(marginals, measurements)
   total = marginals.project(()).datavector(flatten=False)
@@ -245,7 +248,7 @@ def _normalized_l2_loss(
 def _normalized_l1_loss(
     marginals: CliqueVector,
     measurements: tuple[LinearMeasurement, ...],
-) -> chex.Numeric:
+) -> ArrayLike:
   """Normalized L1 loss over linear measurements."""
   loss = _l1_loss(marginals, measurements)
   total = marginals.project(()).datavector(flatten=False)
@@ -255,7 +258,7 @@ def _normalized_l1_loss(
 def calculate_l2_lipschitz(
     domain: Domain,
     cliques: list[Clique],
-    loss_fn: Callable[[CliqueVector], chex.Numeric],
+    loss_fn: Callable[[CliqueVector], ArrayLike],
 ) -> float:
   """Estimate the Lipschitz constant of L(x) = || f(x) - y ||_2^2 where f is a linear function.
 
@@ -378,7 +381,7 @@ def from_linear_measurements(
   return loss
 
 
-def primal_feasibility(mu: CliqueVector) -> chex.Numeric:
+def primal_feasibility(mu: CliqueVector) -> ArrayLike:
   """Calculates the average L1 distance between overlapping marginals in `mu` (consistency)."""
   ans = 0
   count = 0

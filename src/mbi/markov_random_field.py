@@ -11,11 +11,13 @@ from collections.abc import Sequence
 
 import chex
 import numpy as np
+from jax.typing import ArrayLike
 
 from . import junction_tree, marginal_oracles
 from .clique_utils import Clique
 from .clique_vector import CliqueVector
 from .dataset import Dataset
+from .domain import Attribute
 from .domain import Domain
 from .factor import Factor
 
@@ -34,26 +36,26 @@ class MarkovRandomField:
           potential functions for the cliques in the model.
       marginals (CliqueVector): A `CliqueVector` containing the marginal
           distributions for a set of cliques, derived from the potentials.
-      total (chex.Numeric): The total count or effective sample size
+      total (ArrayLike): The total count or effective sample size
           represented by the model. This is often used for scaling or
           interpreting the marginals.
   """
 
   potentials: CliqueVector
   marginals: CliqueVector
-  total: chex.Numeric = 1
+  total: ArrayLike = 1
 
-  def project(self, attrs: str | Sequence[str]) -> Factor:
-    if isinstance(attrs, str):
+  def project(self, attrs: Attribute | Sequence[Attribute]) -> Factor:
+    if isinstance(attrs, (str, int)):
       attrs = (attrs,)
     attrs = tuple(attrs)
     if self.marginals.supports(attrs):
       return self.marginals.project(attrs)
     return marginal_oracles.variable_elimination(
-        self.potentials, attrs, self.total
+        self.potentials, attrs, float(self.total)  # pyrefly: ignore[bad-argument-type]
     )
 
-  def supports(self, attrs: str | Sequence[str]) -> bool:
+  def supports(self, attrs: Attribute | Sequence[Attribute]) -> bool:
     return self.marginals.domain.supports(attrs)
 
   def synthetic_data(
@@ -72,10 +74,10 @@ class MarkovRandomField:
         A synthetic dataset whose marginals should closely match those of the
         model.
     """
-    total = max(1, int(rows or self.total))
+    total = max(1, int(rows or self.total))  # pyrefly: ignore[bad-argument-type]
     domain = self.domain
     jtree, elimination_order = junction_tree.make_junction_tree(
-        domain, [set(cl) for cl in self.cliques]
+        domain, [tuple(cl) for cl in self.cliques]
     )
 
     # Use maximal cliques from the junction tree for conditioning
@@ -204,6 +206,6 @@ class MarkovRandomField:
     return self.potentials.domain
 
   @property
-  def cliques(self) -> list[Clique]:
+  def cliques(self) -> Sequence[Clique]:
     """Returns the list of cliques the model's potentials are defined over."""
     return self.potentials.cliques

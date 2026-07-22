@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable, Sequence
 from typing import Literal
-import chex
+from jax.typing import ArrayLike
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -67,7 +67,9 @@ class Factor:
     # Match zeros/ones' default float dtype so abstract-traced programs share
     # the JIT cache with real runs (a fixed dtype would force recompiles).
     return cls(
-        domain, jax.ShapeDtypeStruct(domain.shape, jnp.result_type(float))
+        domain,
+        # ShapeDtypeStruct stands in for a concrete Array under eval_shape.
+        jax.ShapeDtypeStruct(domain.shape, jnp.result_type(float)),  # pyrefly: ignore[bad-argument-type]
     )
 
   # Reshaping operations
@@ -133,7 +135,7 @@ class Factor:
     Returns:
         A new Factor with the evidence attributes removed.
     """
-    slices = [slice(None)] * len(self.domain)
+    slices: list[slice | int | jax.Array] = [slice(None)] * len(self.domain)
     relevant = [e for e in evidence if e in self.domain.attributes]
     for attr in relevant:
       val = evidence[attr]
@@ -176,22 +178,23 @@ class Factor:
     return float(self.values)
 
   # Binary operations between two factors
-  def _binaryop(self, fn: Callable, other: Factor | chex.Numeric) -> Factor:
+  def _binaryop(self, fn: Callable, other: Factor | ArrayLike) -> Factor:
     """Helper for applying binary operations between this factor and another factor or scalar."""
-    if not isinstance(other, Factor) and jnp.ndim(other) == 0:
+    if not isinstance(other, Factor):
+      assert jnp.ndim(other) == 0
       other = Factor(Domain([], []), jnp.asarray(other))
     newdom = self.domain.merge(other.domain)
     factor1 = self.expand(newdom)
     factor2 = other.expand(newdom)
     return Factor(newdom, fn(factor1.values, factor2.values))
 
-  def __sub__(self, other: Factor | chex.Numeric) -> Factor:
+  def __sub__(self, other: Factor | ArrayLike) -> Factor:
     return self._binaryop(jnp.subtract, other)
 
-  def __truediv__(self, other: Factor | chex.Numeric) -> Factor:
+  def __truediv__(self, other: Factor | ArrayLike) -> Factor:
     return self._binaryop(jnp.divide, other)
 
-  def __mul__(self, other: Factor | chex.Numeric) -> Factor:
+  def __mul__(self, other: Factor | ArrayLike) -> Factor:
     """Multiply two factors together.
 
     Example Usage:
@@ -209,19 +212,19 @@ class Factor:
     """
     return self._binaryop(jnp.multiply, other)
 
-  def __add__(self, other: Factor | chex.Numeric) -> Factor:
+  def __add__(self, other: Factor | ArrayLike) -> Factor:
     return self._binaryop(jnp.add, other)
 
-  def __radd__(self, other: chex.Numeric) -> Factor:
+  def __radd__(self, other: ArrayLike) -> Factor:
     return self + other
 
-  def __rsub__(self, other: chex.Numeric) -> Factor:
+  def __rsub__(self, other: ArrayLike) -> Factor:
     return self + (-1 * other)
 
-  def __rmul__(self, other: chex.Numeric) -> Factor:
+  def __rmul__(self, other: ArrayLike) -> Factor:
     return self * other
 
-  def dot(self, other: Factor) -> chex.Numeric:
+  def dot(self, other: Factor) -> ArrayLike:
     if self.domain != other.domain:
       raise ValueError(f"Domains do not match {self.domain} != {other.domain}")
     return jnp.sum(
@@ -272,7 +275,7 @@ class Factor:
     """
     if mesh is None:
       return self
-    pspec = [None] * len(self.domain)
+    pspec: list[Attribute | None] = [None] * len(self.domain)
     for i, ax in enumerate(self.domain):
       if ax in mesh.axis_names:
         pspec[i] = ax

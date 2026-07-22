@@ -6,6 +6,9 @@ marginals. It logs loss values and other relevant statistics.
 """
 
 import dataclasses
+from typing import Any
+
+from jax.typing import ArrayLike
 import jax
 
 from . import estimation
@@ -39,14 +42,18 @@ def _pad(string: str, length: int):
 
 
 @jax.jit
-def _compute_row(loss_fns, marginals):
+def _compute_row(
+    loss_fns: tuple[marginal_loss.MarginalLossFn, ...], marginals: CliqueVector
+) -> list[ArrayLike]:
   """Evaluates all loss functions on the marginals in one fused, jitted pass."""
   # Passing loss_fns as a traced argument keeps measurement data dynamic (not
   # baked into the compiled program) and lets XLA share projections across them.
   return [loss_fn(marginals) for loss_fn in loss_fns]
 
 
-def _primal_feasibility_loss(marginals, unused_data):
+def _primal_feasibility_loss(
+    marginals: CliqueVector, unused_data: Any
+) -> ArrayLike:
   """Adapts primal_feasibility to the (marginals, data) loss_fn signature."""
   return marginal_loss.primal_feasibility(marginals)
 

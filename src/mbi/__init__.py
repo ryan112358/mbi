@@ -10,7 +10,7 @@ import warnings
 
 import jax
 
-if not jax.config.jax_enable_x64:  # pylint: disable=no-member
+if not jax.config.jax_enable_x64:  # pylint: disable=no-member  # pyrefly: ignore[missing-attribute]
   warnings.warn(
       "JAX is running in float32 mode. For large datasets (N > 100K),"
       " this can cause estimation algorithms to stall or diverge due to"
@@ -19,7 +19,7 @@ if not jax.config.jax_enable_x64:  # pylint: disable=no-member
       stacklevel=1,
   )
 
-if jax.config.jax_enable_compilation_cache:  # pylint: disable=no-member
+if jax.config.jax_enable_compilation_cache:  # pylint: disable=no-member  # pyrefly: ignore[missing-attribute]
   warnings.warn(
       "JAX persistent compilation cache is enabled. MBI generates many"
       " small compiled programs, which makes the cache counterproductive"

@@ -18,6 +18,7 @@ from .. import junction_tree, marginal_oracles
 from ..clique_utils import Clique, clique_mapping
 from ..clique_vector import CliqueVector
 from ..dataset import Dataset
+from ..domain import Attribute
 from ..domain import Domain
 from ..factor import Factor
 from ..markov_random_field import MarkovRandomField
@@ -151,7 +152,7 @@ def synthetic_data(
   )
 
   rng = jax.random.PRNGKey(seed)
-  data: dict[str, np.ndarray] = {}
+  data: dict[Attribute, np.ndarray] = {}
 
   for step, col in enumerate(plan.order):
     rng, col_rng = jax.random.split(rng)
@@ -200,10 +201,10 @@ def synthetic_data(
 class _ColumnPlan:
   """Per-column metadata for generation."""
 
-  col: str
-  query: tuple[str, ...]
-  parents: tuple[str, ...]
-  maximal_clique: tuple[str, ...]
+  col: Attribute
+  query: Clique
+  parents: Clique
+  maximal_clique: Clique
   parent_sizes: tuple[int, ...]
 
 
@@ -211,15 +212,15 @@ class _ColumnPlan:
 class _GenerationPlan:
   """Junction-tree analysis needed by both precompile and generate."""
 
-  order: tuple[str, ...]
-  columns: dict[str, _ColumnPlan]
+  order: Clique
+  columns: dict[Attribute, _ColumnPlan]
   jtree: Any  # nx.Graph
-  maximal_cliques: list[tuple[str, ...]]
+  maximal_cliques: list[Clique]
 
 
 def _build_plan(domain, cliques):
   """Analyse the junction tree and build per-column generation metadata."""
-  clique_sets = [set(cl) for cl in cliques]
+  clique_sets = [tuple(cl) for cl in cliques]
   jtree, elimination_order = junction_tree.make_junction_tree(
       domain,
       clique_sets,
@@ -235,8 +236,8 @@ def _build_plan(domain, cliques):
   # not an original clique.
   jtree_clique_sets = [set(cl) for cl in maximal_cliques]
 
-  columns: dict[str, _ColumnPlan] = {}
-  used: set[str] = set()
+  columns: dict[Attribute, _ColumnPlan] = {}
+  used: set[Attribute] = set()
   for col in order:
     relevant = [cl for cl in jtree_clique_sets if col in cl]
     parents = tuple(sorted(used.intersection(set().union(*relevant))))

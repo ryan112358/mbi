@@ -21,13 +21,14 @@ import math
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 import dataclasses
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from jax.typing import ArrayLike
 
 from . import marginal_loss, marginal_oracles
 from ._api import Model, Projectable  # noqa: F401  # pylint: disable=unused-import
@@ -43,6 +44,7 @@ _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 CALLBACK_EVERY = 50
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class Estimator(ABC):
   """An object that estimates a Model from a marginal-based loss function.
 
@@ -210,7 +212,7 @@ class Estimator(ABC):
       shape = (domain.project(cl).size(),)
       abstract_values = jax.ShapeDtypeStruct(shape, jnp.result_type(float))
       all_measurements.append(
-          marginal_loss.LinearMeasurement(abstract_values, cl)
+          marginal_loss.LinearMeasurement(abstract_values, cl)  # pyrefly: ignore[bad-argument-type]
       )
     all_measurements = jax.eval_shape(lambda x: x, all_measurements)
 
@@ -245,8 +247,8 @@ def minimum_variance_unbiased_total(
       )
       use_for_total = getattr(M.query, "use_for_total_estimation", True)
       if is_identity and use_for_total:
-        estimates.append(y.sum())
-        variances.append(M.stddev**2 * y.size)
+        estimates.append(np.sum(y))
+        variances.append(M.stddev**2 * np.size(y))
     except Exception:  # pylint: disable=broad-exception-caught
       continue
   estimates, variances = np.array(estimates), np.array(variances)
@@ -290,7 +292,7 @@ class MirrorDescentState(NamedTuple):
   mu: CliqueVector
   potentials: CliqueVector
   alpha: jax.Array | float
-  loss: jax.Array | float
+  loss: ArrayLike
 
 
 class DualAveragingState(NamedTuple):
@@ -299,7 +301,7 @@ class DualAveragingState(NamedTuple):
   w: CliqueVector
   v: CliqueVector
   gbar: CliqueVector
-  loss: jax.Array | float
+  loss: ArrayLike
   lipschitz: jax.Array | float
   gamma: jax.Array | float
   t: jax.Array | int
@@ -313,7 +315,7 @@ class InteriorGradientState(NamedTuple):
   c: jax.Array | float
   y: CliqueVector
   z: CliqueVector
-  loss: jax.Array | float
+  loss: ArrayLike
   inv_lipschitz: jax.Array | float
 
 
@@ -372,7 +374,7 @@ class MirrorDescent(Estimator):
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
   mesh: jax.sharding.Mesh | None = None
 
-  def _init(
+  def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
       self,
       domain: Domain,
       loss_fn: marginal_loss.MarginalLossFn,
@@ -471,7 +473,7 @@ class DualAveraging(Estimator):
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
   mesh: jax.sharding.Mesh | None = None
 
-  def _init(
+  def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
       self,
       domain: Domain,
       loss_fn: marginal_loss.MarginalLossFn,
@@ -541,7 +543,8 @@ class DualAveraging(Estimator):
     # reasonable initial guess rather than exactly continuing.
     loss = marginal_loss.mle_loss_fn(state.w)
     est = LBFGS(marginal_oracle=self.marginal_oracle)
-    return est.estimate(state.w.domain, loss, known_total, constraints)
+    mrf = est.estimate(state.w.domain, loss, known_total, constraints)
+    return cast(MarkovRandomField, mrf)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -564,7 +567,7 @@ class InteriorGradient(Estimator):
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
   mesh: jax.sharding.Mesh | None = None
 
-  def _init(
+  def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
       self,
       domain: Domain,
       loss_fn: marginal_loss.MarginalLossFn,
@@ -623,7 +626,8 @@ class InteriorGradient(Estimator):
   ) -> MarkovRandomField:
     loss = marginal_loss.mle_loss_fn(state.x)
     est = LBFGS(marginal_oracle=self.marginal_oracle)
-    return est.estimate(state.x.domain, loss, known_total, constraints)
+    mrf = est.estimate(state.x.domain, loss, known_total, constraints)
+    return cast(MarkovRandomField, mrf)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -645,7 +649,7 @@ class LBFGS(Estimator):
 
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
 
-  def _init(
+  def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
       self,
       domain,
       loss_fn,
@@ -665,7 +669,7 @@ class LBFGS(Estimator):
         memory_size=1,
         linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
     )
-    opt_state = optimizer.init(potentials)
+    opt_state = optimizer.init(potentials)  # pyrefly: ignore[bad-argument-type]
     return LBFGSState(potentials, opt_state)
 
   def _step(self, state, loss_fn, known_total, constraints=()):
@@ -690,7 +694,7 @@ class LBFGS(Estimator):
         value_fn=theta_loss,
     )
     potentials = optax.apply_updates(state.potentials, updates)
-    return LBFGSState(potentials, opt_state)
+    return LBFGSState(potentials, opt_state)  # pyrefly: ignore[bad-argument-type]
 
   def _callback_value(self, state, known_total, constraints=()):
     # Unlike MD/DA/IG, LBFGSState stores only potentials (not marginals)
@@ -758,7 +762,7 @@ class UniversalAcceleratedMethod(Estimator):
   norm: int = 2
   linesearch: bool = False
 
-  def _init(
+  def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
       self,
       domain,
       loss_fn,

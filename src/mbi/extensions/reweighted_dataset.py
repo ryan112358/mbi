@@ -8,7 +8,7 @@ with softmax normalization to guarantee non-negativity.
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import cast, NamedTuple
 
 import dataclasses
 import jax
@@ -19,6 +19,7 @@ import optax
 from ..estimation import Estimator
 from ..clique_vector import CliqueVector
 from ..dataset import Dataset, JaxDataset
+from ..domain import Attribute
 
 
 class ReweightedDatasetState(NamedTuple):
@@ -38,17 +39,16 @@ class ReweightedDatasetEstimator(Estimator):
 
   Attributes:
       seed_data: A Dataset of seed records to reweight.
-      learning_rate: Learning rate for the optimizer.
-      optimizer: An optax optimizer.  Defaults to ``optax.adam``.
+      optimizer: An optax optimizer (e.g. ``optax.adam(0.1)``).
   """
 
   seed_data: Dataset
-  learning_rate: float = 0.1
-  optimizer: optax.GradientTransformation | None = None
+  optimizer: optax.GradientTransformation
+  _jax_data: dict[Attribute, jax.Array] = dataclasses.field(
+      init=False, repr=False, compare=False
+  )
 
   def __post_init__(self):
-    if self.optimizer is None:
-      object.__setattr__(self, "optimizer", optax.adam(self.learning_rate))
     # Precompute JAX arrays from seed data once.
     data_dict = self.seed_data.to_dict()
     jax_data = {
@@ -79,13 +79,17 @@ class ReweightedDatasetEstimator(Estimator):
     updates, opt_state = self.optimizer.update(
         grad, state.opt_state, state.log_weights
     )
-    log_weights = optax.apply_updates(state.log_weights, updates)
+    # optax.apply_updates returns the broad optax.Params union; here it is a
+    # jax.Array (the log-weights vector).
+    log_weights = cast(
+        jax.Array, optax.apply_updates(state.log_weights, updates)
+    )
     return ReweightedDatasetState(log_weights, opt_state)
 
   def _callback_value(self, state, known_total, constraints=()):
     weights = jax.nn.softmax(state.log_weights) * known_total
     return JaxDataset(self._jax_data, self.seed_data.domain, weights)
 
-  def _finalize(self, state, known_total, constraints=()):
+  def _finalize(self, state, known_total, constraints=()) -> JaxDataset:
     weights = jax.nn.softmax(state.log_weights) * known_total
     return JaxDataset(self._jax_data, self.seed_data.domain, weights)

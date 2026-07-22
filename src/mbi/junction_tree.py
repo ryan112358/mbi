@@ -10,17 +10,19 @@ computing greedy elimination orders, and estimating model size.
 import itertools
 from collections import OrderedDict
 from collections.abc import Collection, Sequence
+from typing import cast
 
 import networkx as nx
 import numpy as np
 
 from .clique_utils import Clique
+from .domain import Attribute
 from .domain import Domain
 
 
 def maximal_cliques(junction_tree: nx.Graph) -> list[Clique]:
   """Return the list of maximal cliques in the model."""
-  return list(nx.dfs_preorder_nodes(junction_tree))
+  return cast(list[Clique], list(nx.dfs_preorder_nodes(junction_tree)))
 
 
 def message_passing_order(
@@ -38,19 +40,20 @@ def message_passing_order(
   graph = nx.DiGraph()
   graph.add_nodes_from(messages)
   graph.add_edges_from(edges)
-  return list(nx.topological_sort(graph))
+  return cast(list[tuple[Clique, Clique]], list(nx.topological_sort(graph)))
 
 
 def _make_graph(domain: Domain, cliques: Collection[Clique]) -> nx.Graph:
   """Create a graph from the domain and cliques."""
   graph = nx.Graph()
-  graph.add_nodes_from(domain.attributes)
+  graph.add_nodes_from(domain.attributes)  # pyrefly: ignore[bad-argument-type]
   for cl in cliques:
+    # pyrefly: ignore[bad-argument-type]
     graph.add_edges_from(itertools.combinations(cl, 2))
   return graph
 
 
-def _triangulated(graph: nx.Graph, order: list[str]) -> nx.Graph:
+def _triangulated(graph: nx.Graph, order: list[Attribute]) -> nx.Graph:
   """Triangulate the graph using the given elimination order."""
   edges = set()
   graph2 = nx.Graph(graph)
@@ -68,17 +71,17 @@ def greedy_order(
     domain: Domain,
     cliques: Sequence[Clique],
     stochastic: bool = False,
-    elim: list[str] | None = None,
-) -> tuple[list[str], int]:
+    elim: list[Attribute] | None = None,
+) -> tuple[list[Attribute], int]:
   """Compute a greedy elimination order."""
   order = []
   unmarked = elim if elim is not None else list(domain.attributes)
-  cliques = set(cliques)
+  clique_set = set(cliques)
   total_cost = 0
   for _ in range(len(unmarked)):
     cost = OrderedDict()
     for a in unmarked:
-      neighbors = [cl for cl in cliques if a in cl]
+      neighbors = [cl for cl in clique_set if a in cl]
       variables = tuple(set.union(set(), *[set(n) for n in neighbors]))
       newdom = domain.project(variables)
       cost[a] = newdom.size()
@@ -95,10 +98,10 @@ def greedy_order(
 
     order.append(a)
     unmarked.remove(a)
-    neighbors = [cl for cl in cliques if a in cl]
+    neighbors = [cl for cl in clique_set if a in cl]
     variables = tuple(set.union(set(), *[set(n) for n in neighbors]) - {a})
-    cliques -= set(neighbors)
-    cliques.add(variables)
+    clique_set -= set(neighbors)
+    clique_set.add(variables)
     total_cost += cost[a]
 
   return order, total_cost
@@ -107,14 +110,16 @@ def greedy_order(
 def make_junction_tree(
     domain: Domain,
     cliques: Collection[Clique],
-    elimination_order: list[str] | int | None = None,
-) -> tuple[nx.Graph, list[str]]:
+    elimination_order: list[Attribute] | int | None = None,
+) -> tuple[nx.Graph, list[Attribute]]:
   """Create a junction tree."""
   cliques = [tuple(cl) for cl in cliques]
   graph = _make_graph(domain, cliques)
 
   if elimination_order is None and not nx.is_empty(graph) and nx.is_tree(graph):
-    elimination_order = list(nx.dfs_postorder_nodes(graph))
+    elimination_order = cast(
+        list[Attribute], list(nx.dfs_postorder_nodes(graph))
+    )
   elif elimination_order is None:
     elimination_order = greedy_order(domain, cliques, stochastic=False)[0]
   elif isinstance(elimination_order, int):
@@ -125,7 +130,9 @@ def make_junction_tree(
     elimination_order = min(orders, key=lambda x: x[1])[0]
 
   tri = _triangulated(graph, elimination_order)
-  cliques = sorted([domain.canonical(c) for c in nx.find_cliques(tri)])
+  cliques = sorted(
+      [domain.canonical(cast(Clique, c)) for c in nx.find_cliques(tri)]
+  )
   complete = nx.Graph()
   complete.add_nodes_from(cliques)
   for c1, c2 in itertools.combinations(cliques, 2):
