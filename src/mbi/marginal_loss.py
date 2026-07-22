@@ -111,7 +111,7 @@ class LinearMeasurement:
   # Dynamic (traced) leaf, not static aux-data: a static value gets baked into
   # the treedef, changing the jit cache key and defeating precompile() reuse.
   stddev: float = 1.0
-  query: Callable[[Factor], ArrayLike] = jax.tree.static(
+  query: Callable[[Factor], jax.Array] = jax.tree.static(
       default=DatavectorQuery()
   )
 
@@ -212,9 +212,7 @@ def _l2_loss(
   for M in measurements:
     mu = marginals.project(M.clique)
     stddev = jnp.maximum(M.stddev, 1e-12)
-    diff = (
-        jnp.asarray(M.query(mu)) - jnp.asarray(M.noisy_measurement)
-    ) / stddev
+    diff = (M.query(mu) - jnp.asarray(M.noisy_measurement)) / stddev
     loss += 0.5 * jnp.vdot(diff, diff)
   return loss
 
@@ -228,9 +226,7 @@ def _l1_loss(
   for M in measurements:
     mu = marginals.project(M.clique)
     stddev = jnp.maximum(M.stddev, 1e-12)
-    diff = (
-        jnp.asarray(M.query(mu)) - jnp.asarray(M.noisy_measurement)
-    ) / stddev
+    diff = (M.query(mu) - jnp.asarray(M.noisy_measurement)) / stddev
     loss += jnp.sum(jnp.abs(diff))
   return loss
 
@@ -288,7 +284,7 @@ def calculate_l2_lipschitz(
   return float(estimate)
 
 
-def _query_op_norm_sq(query: Callable[[Factor], ArrayLike]) -> float | None:
+def _query_op_norm_sq(query: Callable[[Factor], jax.Array]) -> float | None:
   """Squared operator norm ||Q||_2^2 of a linear query, or None if unknown."""
   fn = getattr(query, "op_norm_sq", None)
   return float(cast(SupportsFloat, fn())) if callable(fn) else None

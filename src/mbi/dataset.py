@@ -19,7 +19,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike as JaxArrayLike
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import NDArray
 
 from .domain import Attribute, Domain
 from .factor import Factor
@@ -35,12 +35,12 @@ def _validate_column_meta(data: np.ndarray, attr: Attribute):
     )
 
 
-def _validate_data(data: Mapping[Attribute, ArrayLike], domain: Domain):
+def _validate_data(data: Mapping[Attribute, np.ndarray], domain: Domain):
   if set(data.keys()) != set(domain.attributes):
     raise ValueError("Keys in data dictionary must match domain attributes")
   n = None
   for col in data:
-    column = np.asarray(data[col])
+    column = data[col]
     _validate_column_meta(column, col)
     if n is None:
       n = column.shape[0]
@@ -90,9 +90,9 @@ class Dataset:
       weights: Optional per-row weights (defaults to all ones).
   """
 
-  data: Mapping[Attribute, ArrayLike]
+  data: Mapping[Attribute, np.ndarray]
   domain: Domain
-  weights: ArrayLike | None = dataclasses.field(default=None)
+  weights: np.ndarray | None = dataclasses.field(default=None)
 
   def __post_init__(self):
     object.__setattr__(
@@ -123,7 +123,7 @@ class Dataset:
       )
 
   def to_dict(self) -> dict[Attribute, np.ndarray]:
-    return {k: np.asarray(v) for k, v in self.data.items()}
+    return dict(self.data)
 
   @staticmethod
   def synthetic(domain: Domain, N: int) -> Dataset:
@@ -219,9 +219,7 @@ class Dataset:
       assert self.weights is not None  # guaranteed by __post_init__
       result = np.sum(self.weights)
       return np.array([result]) if flatten else result
-    multi_index = tuple(
-        np.asarray(self.data[a]) for a in self.domain.attributes
-    )
+    multi_index = tuple(self.data[a] for a in self.domain.attributes)
     linear_indices = np.ravel_multi_index(multi_index, dims, order="C")
     counts = np.bincount(
         linear_indices, minlength=math.prod(dims), weights=self.weights
@@ -262,7 +260,7 @@ class Dataset:
             f" size {self.domain[attr]} for attribute {attr}"
         )
 
-      new_col = map_array[np.asarray(self.data[attr])]
+      new_col = map_array[self.data[attr]]
       new_data[attr] = new_col.astype(np.min_scalar_type(np.max(map_array)))
       new_domain_config[attr] = int(np.max(map_array) + 1)
 
@@ -306,7 +304,7 @@ class Dataset:
       starts[1:] = np.cumsum(counts)
       starts = starts[:-1]
 
-      current_col = np.asarray(self.data[attr])
+      current_col = self.data[attr]
 
       col_counts = counts[current_col]
       if np.any(col_counts == 0):
