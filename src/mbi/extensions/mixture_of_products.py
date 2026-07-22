@@ -160,8 +160,6 @@ class MixtureOfProductsEstimator(Estimator):
     )
     if warm_start is not None:
       model = warm_start
-    # MixtureOfProducts is a registered pytree, which optax.Params (a union of
-    # Array/Iterable/Mapping/scalars) cannot express.
     opt_state = self.optimizer.init(model)  # pyrefly: ignore[bad-argument-type]
     return MixtureOfProductsState(model, opt_state)
 
@@ -178,8 +176,6 @@ class MixtureOfProductsEstimator(Estimator):
         grad, state.opt_state, state.model
     )
     model = optax.apply_updates(state.model, updates)
-    # apply_updates returns optax.Params; the runtime value is a
-    # MixtureOfProducts, which is not expressible in that union.
     return MixtureOfProductsState(model, opt_state)  # pyrefly: ignore[bad-argument-type]
 
   def _finalize(self, state, known_total, constraints=()):

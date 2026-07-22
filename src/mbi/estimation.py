@@ -669,8 +669,6 @@ class LBFGS(Estimator):
         memory_size=1,
         linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
     )
-    # CliqueVector is a registered pytree, which optax.Params (a union of
-    # Array/Iterable/Mapping/scalars) cannot express.
     opt_state = optimizer.init(potentials)  # pyrefly: ignore[bad-argument-type]
     return LBFGSState(potentials, opt_state)
 
@@ -696,8 +694,6 @@ class LBFGS(Estimator):
         value_fn=theta_loss,
     )
     potentials = optax.apply_updates(state.potentials, updates)
-    # apply_updates returns optax.Params; the runtime value is a CliqueVector,
-    # which is not expressible in that union.
     return LBFGSState(potentials, opt_state)  # pyrefly: ignore[bad-argument-type]
 
   def _callback_value(self, state, known_total, constraints=()):
