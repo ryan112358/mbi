@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
@@ -18,8 +19,22 @@ if TYPE_CHECKING:
   from .marginal_oracles import MarginalOracle
 
 
+def _sci(n: float) -> str:
+  """Scientific notation via logs, safe for ints too large to cast to float."""
+  log10 = math.log10(n)
+  exp = math.floor(log10)
+  mantissa = 10 ** (log10 - exp)
+  if mantissa >= 9.995:  # would round to "10.00e{exp}"
+    mantissa, exp = 1.0, exp + 1
+  return f"{mantissa:.2f}e{exp}"
+
+
 def _fmt_size(n: int | float) -> str:
   """Format a number of cells as a human-readable string."""
+  # Beyond a trillion, use scientific notation: the domain size can be an int
+  # too large to cast to float (which would raise OverflowError).
+  if n >= 1e12:
+    return _sci(n)
   if n >= 1e9:
     return f"{n / 1e9:.2f}B"
   if n >= 1e6:
@@ -29,8 +44,10 @@ def _fmt_size(n: int | float) -> str:
   return str(n)
 
 
-def _fmt_bytes(nbytes: int) -> str:
+def _fmt_bytes(nbytes: int | float) -> str:
   """Format a byte count as a human-readable string."""
+  if nbytes >= 2**50:
+    return f"{_sci(nbytes)} B"
   if nbytes >= 2**30:
     return f"{nbytes / 2**30:.2f} GiB"
   if nbytes >= 2**20:
