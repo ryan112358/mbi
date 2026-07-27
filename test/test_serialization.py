@@ -135,3 +135,26 @@ class TestLinearMeasurements:
         np.asarray(ms[1].query(f)),
         atol=1e-7,
     )
+
+
+class TestInvalidLeaves:
+
+  def test_object_leaf_raises(self):
+    """save() must reject non-array leaves instead of writing a corrupt file."""
+
+    class NotAnArray:
+      pass
+
+    buf = io.BytesIO()
+    with pytest.raises(TypeError):
+      save([NotAnArray()], buf)
+
+  def test_dict_of_objects_raises(self):
+    """A pytree whose leaves are arbitrary objects is rejected up front."""
+
+    class NotAnArray:
+      pass
+
+    buf = io.BytesIO()
+    with pytest.raises(TypeError):
+      save({"a": NotAnArray(), "b": NotAnArray()}, buf)

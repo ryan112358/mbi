@@ -32,7 +32,12 @@ def save(obj: Any, file: str | os.PathLike | io.IOBase) -> None:
       file: Path string or writable binary file-like object.
   """
   leaves, treedef = jax.tree.flatten(obj)
-  arrays = {f"leaf_{i}": np.asarray(leaf) for i, leaf in enumerate(leaves)}
+  arrays = {}
+  for i, leaf in enumerate(leaves):
+    array = np.asarray(leaf)
+    if array.dtype == object:
+      raise TypeError(f"Cannot save non-array leaf {i}: {type(leaf).__name__}.")
+    arrays[f"leaf_{i}"] = array
   arrays["_treedef"] = np.frombuffer(pickle.dumps(treedef), dtype=np.uint8)
   buf = io.BytesIO()
   # numpy stub: allow_pickle precedes **kwds, so unpacking arrays trips it.
