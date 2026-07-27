@@ -154,6 +154,7 @@ class Estimator(ABC):
           potentials=potentials,
           marginals=oracle(potentials, known_total),
           total=known_total,
+          constraints=constraints,
       )
 
     if "potentials" in kwargs:
@@ -453,6 +454,7 @@ class MirrorDescent(Estimator):
         potentials=state.potentials,
         marginals=marginals,
         total=known_total,
+        constraints=constraints,
     )
 
 
@@ -719,6 +721,7 @@ class LBFGS(Estimator):
         potentials=state.potentials,
         marginals=marginals,
         total=known_total,
+        constraints=constraints,
     )
 
 
