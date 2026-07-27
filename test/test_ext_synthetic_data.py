@@ -7,13 +7,14 @@ from mbi import (
     Domain,
     Factor,
     CliqueVector,
+    Constraint,
     MarkovRandomField,
     marginal_oracles,
 )
 from mbi.extensions.synthetic_data import synthetic_data as ext_synthetic_data
 
 
-def _create_random_model(domain, cliques, N):
+def _create_random_model(domain, cliques, N, constraints=()):
   """Creates a random MRF with given cliques and total count N."""
   potentials = {}
   np.random.seed(0)
@@ -27,7 +28,10 @@ def _create_random_model(domain, cliques, N):
   marginals = marginal_oracles.message_passing_stable(potential_vector, total=N)
 
   return MarkovRandomField(
-      potentials=potential_vector, marginals=marginals, total=N
+      potentials=potential_vector,
+      marginals=marginals,
+      total=N,
+      constraints=constraints,
   )
 
 
@@ -370,6 +374,141 @@ class TestExtSyntheticDataCacheHit(unittest.TestCase):
   def test_cache_hit_default(self):
     """Under the default (float32) regime, generation reuses the cache."""
     self._run_regime(enable_x64=False)
+
+
+class TestExtSyntheticDataConstraints(unittest.TestCase):
+  """extensions.synthetic_data must honor the model's structural constraints.
+
+  A fitted MRF stores raw potentials; constraints are folded in only during
+  inference.  The JAX generation path reconstructs each column's conditional
+  marginal from those potentials, so it must re-fold the constraints or it
+  emits records that violate the functional dependencies the model was fit
+  under.  Mirrors TestSyntheticDataConstraints for MRF.synthetic_data.
+  """
+
+  def _count_violations(self, synth, mapping):
+    """Number of rows where b != mapping[a] (a functional dependency)."""
+    data = synth.to_dict()
+    a = np.asarray(data["a"])
+    b = np.asarray(data["b"])
+    return int(np.sum(b != np.asarray(mapping)[a]))
+
+  def test_respects_constraint_on_model_clique(self):
+    """A functional dependency on an existing model clique is honored."""
+    domain = Domain(["a", "b"], [4, 2])
+    mapping = [0, 0, 1, 1]  # b = mapping[a]
+    constraint = Constraint(domain=domain, mapping=np.asarray(mapping))
+    model = _create_random_model(
+        domain, [("a", "b")], N=2000, constraints=(constraint,)
+    )
+
+    synth = ext_synthetic_data(model, rows=2000)
+    self.assertEqual(self._count_violations(synth, mapping), 0)
+
+  def test_respects_constraint_on_new_clique(self):
+    """A constraint whose clique is not a model clique is still honored.
+
+    The (a, b) constraint clique is absent from the model's cliques, so
+    generation must add it to the plan (via _plan_cliques and folding) for
+    the -inf mask to reach the reconstructed conditional marginal.  This is
+    the cross-attribute case that matters in practice (e.g. DP Synth).
+    """
+    domain = Domain(["a", "b", "c"], [4, 2, 3])
+    mapping = [0, 0, 1, 1]  # b = mapping[a]
+    constraint = Constraint(
+        domain=Domain(["a", "b"], [4, 2]), mapping=np.asarray(mapping)
+    )
+    model = _create_random_model(
+        domain, [("a", "c"), ("b", "c")], N=3000, constraints=(constraint,)
+    )
+
+    synth = ext_synthetic_data(model, rows=3000)
+    self.assertEqual(self._count_violations(synth, mapping), 0)
+
+  def test_unconstrained_model_still_covers_domain(self):
+    """With no constraints the fold is skipped and generation is unaffected."""
+    domain = Domain(["a", "b"], [4, 2])
+    model = _create_random_model(domain, [("a", "b")], N=2000)
+    data = ext_synthetic_data(model, rows=2000).to_dict()
+    self.assertEqual(len(np.asarray(data["a"])), 2000)
+    # Both b values should appear when unconstrained.
+    self.assertGreater(len(np.unique(np.asarray(data["b"]))), 1)
+
+  def test_precompile_with_constraints_warms_cache(self):
+    """precompile(constraints=...) warms the cache for a constrained model.
+
+    The constraint adds a clique to the plan, changing _generate_column's
+    input signature.  precompile() must augment its plan identically or the
+    subsequent constraint-aware synthetic_data() call recompiles.
+    """
+    sd = importlib.import_module("mbi.extensions.synthetic_data")
+
+    class _CompileCounter(logging.Handler):
+
+      def __init__(self):
+        super().__init__()
+        self.n = 0
+
+      def emit(self, record):
+        try:
+          msg = record.getMessage()
+        except Exception:  # pylint: disable=broad-exception-caught
+          return
+        if "Compiling" in msg and "_generate_column" in msg:
+          self.n += 1
+
+    prev_x64 = jax.config.jax_enable_x64
+    prev_log = jax.config.jax_log_compiles
+    prev_cache = jax.config.jax_enable_compilation_cache
+    counter = _CompileCounter()
+    loggers = [logging.getLogger(name) for name in ("", "jax", "jax._src")]
+    prev_levels = [(lg, lg.level) for lg in loggers]
+    try:
+      jax.config.update("jax_enable_x64", False)
+      jax.config.update("jax_enable_compilation_cache", False)
+      jax.clear_caches()
+      jax.config.update("jax_log_compiles", True)
+      for lg in loggers:
+        lg.setLevel(logging.DEBUG)
+        lg.addHandler(counter)
+
+      domain = Domain(["a", "b", "c"], [4, 2, 3])
+      mapping = np.asarray([0, 0, 1, 1])
+      constraint = Constraint(
+          domain=Domain(["a", "b"], [4, 2]), mapping=mapping
+      )
+      model = _create_random_model(
+          domain, [("a", "c"), ("b", "c")], N=1000, constraints=(constraint,)
+      )
+      rows = 1000
+
+      sd.precompile(
+          domain, list(model.cliques), rows, constraints=model.constraints
+      ).result()
+      n_after_precompile = counter.n
+      sd.synthetic_data(model, rows)
+      n_after_generate = counter.n
+    finally:
+      for lg in loggers:
+        lg.removeHandler(counter)
+      for lg, level in prev_levels:
+        lg.setLevel(level)
+      jax.config.update("jax_log_compiles", prev_log)
+      jax.config.update("jax_enable_compilation_cache", prev_cache)
+      jax.config.update("jax_enable_x64", prev_x64)
+
+    self.assertGreater(
+        n_after_precompile,
+        0,
+        "precompile() compiled no _generate_column; test is vacuous",
+    )
+    self.assertEqual(
+        n_after_generate,
+        n_after_precompile,
+        "synthetic_data() recompiled _generate_column "
+        f"({n_after_generate - n_after_precompile} new compiles) with "
+        "constraints: the precompile() cache missed.",
+    )
 
 
 if __name__ == "__main__":

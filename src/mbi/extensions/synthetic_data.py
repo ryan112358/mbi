@@ -8,6 +8,7 @@ import dataclasses
 import functools
 import logging
 import time
+from collections.abc import Sequence
 from typing import Any
 
 import jax
@@ -17,6 +18,7 @@ import numpy as np
 from .. import junction_tree, marginal_oracles
 from ..clique_utils import Clique, clique_mapping
 from ..clique_vector import CliqueVector
+from ..constraint import Constraint
 from ..dataset import Dataset
 from ..domain import Attribute
 from ..domain import Domain
@@ -35,6 +37,7 @@ def precompile(
     domain: Domain,
     cliques: list[Clique],
     rows: int,
+    constraints: Sequence[Constraint] = (),
 ) -> concurrent.futures.Future:
   """Warm the JIT cache for ``synthetic_data`` asynchronously.
 
@@ -50,8 +53,12 @@ def precompile(
     domain: The Domain over which the model is defined.
     cliques: The cliques of the model (known after measurement selection).
     rows: Number of records that will be generated.
+    constraints: Structural constraints the model is fit under.  Their
+        cliques are added to the plan so the warmed JIT cache matches the
+        constraint-aware ``synthetic_data`` call.
   """
   rows = max(1, int(rows))
+  cliques = _plan_cliques(cliques, constraints, domain)
   plan = _build_plan(domain, cliques)
 
   def _compile_all():
@@ -130,13 +137,26 @@ def synthetic_data(
   """
   rows = max(1, int(rows))
   domain = model.domain
-  plan = _build_plan(domain, model.cliques)
 
   # Empirically necessary for large models (574-col, ~60 cliques): without
   # this, XLA compilation is orders of magnitude slower. Exact mechanism TBD.
   potentials = jax.tree.map(jnp.asarray, model.potentials)
 
-  # Clique ordering in model.potentials must match the cliques passed to
+  # Fold constraints in as -inf/0 log-space factors so each column's
+  # conditional marginal (reconstructed below from potentials + messages)
+  # puts zero mass on forbidden cells.  Without this, generated records can
+  # violate the constraints the model was fit under.
+  if model.constraints:
+    potentials, _ = marginal_oracles._fold_constraints(
+        potentials, model.constraints
+    )
+    # Constraint factors are weak-typed (built from Python -inf scalars),
+    # but precompile()'s abstract factors are not.  Strip weak types so the
+    # _generate_column JIT signatures match and the warmed cache is reused.
+    potentials = jax.tree.map(lambda x: x.astype(x.dtype), potentials)
+  plan = _build_plan(domain, potentials.cliques)
+
+  # Clique ordering in potentials must match the cliques passed to
   # precompile() for the JIT cache to hit (cliques are pytree metadata).
   _, messages = marginal_oracles.message_passing_implicit(
       potentials,
@@ -216,6 +236,21 @@ class _GenerationPlan:
   columns: dict[Attribute, _ColumnPlan]
   jtree: Any  # nx.Graph
   maximal_cliques: list[Clique]
+
+
+def _plan_cliques(cliques, constraints, domain):
+  """Model cliques plus any constraint cliques not already present.
+
+  Mirrors the clique construction in ``marginal_oracles._fold_constraints``
+  (which ``synthetic_data`` uses) so that ``precompile`` and ``synthetic_data``
+  build the same junction tree and JIT signature.
+  """
+  cliques = list(cliques)
+  for c in constraints:
+    cl = domain.canonical(c.clique)
+    if cl not in cliques:
+      cliques.append(cl)
+  return cliques
 
 
 def _build_plan(domain, cliques):
