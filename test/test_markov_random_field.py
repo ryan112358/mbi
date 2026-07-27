@@ -1,11 +1,14 @@
 import unittest
 import numpy as np
 from mbi import (
+    Constraint,
     Domain,
     Factor,
     CliqueVector,
     MarkovRandomField,
     Dataset,
+    estimation,
+    marginal_loss,
     marginal_oracles,
 )
 
@@ -259,6 +262,62 @@ class TestSyntheticDataComprehensive(unittest.TestCase):
     domain = Domain(["A", "B", "C", "D", "E"], [2, 2, 2, 2, 2])
     cliques = [("A", "B"), ("B", "C", "D"), ("C", "D", "E", "A")]  # Loop
     self._test_model_structure(domain, cliques)
+
+
+class TestSyntheticDataConstraints(unittest.TestCase):
+  """Synthetic data must respect the constraints the model was fit under."""
+
+  def _mapping_constraint(self):
+    # b is a deterministic function of a: only b == mapping[a] is valid.
+    domain = Domain(["a", "b"], [4, 2])
+    mapping = np.array([0, 0, 1, 1])
+    return domain, mapping, Constraint(domain=domain, mapping=mapping)
+
+  def test_synthetic_data_respects_stored_constraints(self):
+    domain, mapping, constraint = self._mapping_constraint()
+    # Uniform potentials: absent the constraint ~half the rows would
+    # violate the functional dependency b == mapping[a].
+    potentials = CliqueVector.zeros(domain, [("a", "b")])
+    marginals = marginal_oracles.message_passing_stable(potentials, 1.0)
+    model = MarkovRandomField(
+        potentials=potentials,
+        marginals=marginals,
+        total=5000,
+        constraints=(constraint,),
+    )
+    np.random.seed(0)
+    synth = model.synthetic_data(method="round").to_dict()
+    self.assertEqual(np.sum(synth["b"] != mapping[synth["a"]]), 0)
+
+  def test_synthetic_data_unconstrained_is_unchanged(self):
+    # Without constraints the uniform model violates the dependency, so the
+    # constraint-aware path is not silently always on.
+    domain, mapping, _ = self._mapping_constraint()
+    potentials = CliqueVector.zeros(domain, [("a", "b")])
+    marginals = marginal_oracles.message_passing_stable(potentials, 1.0)
+    model = MarkovRandomField(
+        potentials=potentials, marginals=marginals, total=5000
+    )
+    np.random.seed(0)
+    synth = model.synthetic_data(method="round").to_dict()
+    self.assertGreater(np.sum(synth["b"] != mapping[synth["a"]]), 0)
+
+  def test_estimate_threads_constraints_end_to_end(self):
+    domain, mapping, constraint = self._mapping_constraint()
+    valid = np.zeros((4, 2))
+    valid[np.arange(4), mapping] = 1.0
+    joint = Factor(domain, valid)
+    measurements = [
+        marginal_loss.LinearMeasurement(joint.datavector(), ("a", "b"))
+    ]
+    model = estimation.MirrorDescent().estimate(
+        domain, measurements, 1000.0, constraints=(constraint,), iters=250
+    )
+    self.assertEqual(len(model.constraints), 1)
+    np.testing.assert_array_equal(model.constraints[0].mapping, mapping)
+    np.random.seed(0)
+    synth = model.synthetic_data(method="round").to_dict()
+    self.assertEqual(np.sum(synth["b"] != mapping[synth["a"]]), 0)
 
 
 if __name__ == "__main__":

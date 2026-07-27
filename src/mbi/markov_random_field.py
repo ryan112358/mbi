@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from . import junction_tree, marginal_oracles
 from .clique_utils import Clique
 from .clique_vector import CliqueVector
+from .constraint import Constraint
 from .dataset import Dataset
 from .domain import Attribute
 from .domain import Domain
@@ -39,11 +40,15 @@ class MarkovRandomField:
       total (ArrayLike): The total count or effective sample size
           represented by the model. This is often used for scaling or
           interpreting the marginals.
+      constraints (tuple[Constraint, ...]): Structural constraints the model
+          was fit under, used by ``synthetic_data`` so generated records
+          respect them. Empty if the model was fit without constraints.
   """
 
   potentials: CliqueVector
   marginals: CliqueVector
   total: ArrayLike = 1
+  constraints: tuple[Constraint, ...] = ()
 
   def project(self, attrs: Attribute | Sequence[Attribute]) -> Factor:
     if isinstance(attrs, (str, int)):
@@ -87,7 +92,15 @@ class MarkovRandomField:
     cliques = [set(cl) for cl in jtree.nodes]
 
     potentials = self.potentials.expand(list(jtree.nodes))
-    marginals = marginal_oracles.message_passing_stable(potentials, self.total)
+    if self.constraints:
+      # Shafer-Shenoy handles the -inf constraint potentials that HUGIN can't.
+      marginals = marginal_oracles.message_passing_shafer_shenoy(
+          potentials, self.total, constraints=self.constraints
+      )
+    else:
+      marginals = marginal_oracles.message_passing_stable(
+          potentials, self.total
+      )
 
     def synthetic_col(counts, total):
       """Generates a synthetic column by sampling or rounding based on counts and total."""
