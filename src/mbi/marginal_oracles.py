@@ -62,7 +62,7 @@ class MarginalOracle(Protocol):
   def __call__(
       self,
       potentials: CliqueVector,
-      total: float = 1.0,
+      total: jax.Array | float = 1.0,
       *,
       constraints: Sequence[Constraint] = (),
   ) -> CliqueVector:
@@ -230,7 +230,7 @@ def _fold_constraints(
 @jax.jit(static_argnames=["jtree", "return_messages"])
 def message_passing_hugin(
     potentials: CliqueVector,
-    total: float = 1.0,
+    total: jax.Array | float = 1.0,
     jtree: nx.Graph | None = None,
     *,
     constraints: Sequence[Constraint] = (),
@@ -290,7 +290,7 @@ def message_passing_hugin(
 @jax.jit(static_argnames=["jtree", "return_messages"])
 def message_passing_shafer_shenoy(
     potentials: CliqueVector,
-    total: float = 1.0,
+    total: jax.Array | float = 1.0,
     jtree: nx.Graph | None = None,
     *,
     constraints: Sequence[Constraint] = (),
@@ -354,7 +354,7 @@ def message_passing_shafer_shenoy(
 @jax.jit(static_argnames=["jtree", "contraction", "return_messages"])
 def message_passing_implicit(
     potentials: CliqueVector,
-    total: float = 1.0,
+    total: jax.Array | float = 1.0,
     jtree: nx.Graph | None = None,
     *,
     constraints: Sequence[Constraint] = (),
@@ -550,7 +550,7 @@ def default_oracle(
 
 def brute_force_marginals(
     potentials: CliqueVector,
-    total: float = 1,
+    total: jax.Array | float = 1,
     *,
     constraints: Sequence[Constraint] = (),
 ) -> CliqueVector:
@@ -577,7 +577,7 @@ def brute_force_marginals(
 
 def einsum_marginals(
     potentials: CliqueVector,
-    total: float = 1,
+    total: jax.Array | float = 1,
     einsum_fn: Callable = jnp.einsum,
     *,
     constraints: Sequence[Constraint] = (),
@@ -622,7 +622,7 @@ def einsum_marginals(
 def variable_elimination(
     potentials: CliqueVector,
     clique: Clique,
-    total: float = 1,
+    total: jax.Array | float = 1,
     evidence: dict[Attribute, int] | None = None,
     *,
     constraints: Sequence[Constraint] = (),

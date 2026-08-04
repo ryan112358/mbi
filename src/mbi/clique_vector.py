@@ -152,7 +152,9 @@ class CliqueVector:
     tables = {cl: self.project(cl, log=log) for cl in cliques}
     return CliqueVector(self.domain, cliques, tables)
 
-  def normalize(self, total: float = 1, log: bool = True) -> CliqueVector:
+  def normalize(
+      self, total: jax.Array | float = 1, log: bool = True
+  ) -> CliqueVector:
     """Normalizes each factor within the CliqueVector."""
     return jax.tree.map(
         lambda f: f.normalize(total, log),

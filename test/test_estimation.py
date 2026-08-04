@@ -1,4 +1,5 @@
 import itertools
+import math
 import unittest
 
 import numpy as np
@@ -173,6 +174,71 @@ class TestEstimation(unittest.TestCase):
       expected = mu.project(cl).datavector()
       actual = model.project(cl).datavector()
       np.testing.assert_allclose(actual, expected, atol=100 / total)
+
+  def test_tol_none_runs_all_iters(self):
+    # tol=None runs the full budget: one callback per CALLBACK_EVERY block.
+    cliques = [("a", "b"), ("b", "c"), ("c", "d")]
+    loss_fn = marginal_loss.from_linear_measurements(
+        fake_measurements(cliques), _DOMAIN
+    )
+    calls = []
+    estimation.MirrorDescent().estimate(
+        _DOMAIN,
+        loss_fn,
+        known_total=1.0,
+        iters=200,
+        callback_fn=lambda _: calls.append(1),
+        tol=None,
+    )
+    self.assertEqual(len(calls), math.ceil(200 / estimation.CALLBACK_EVERY))
+
+  @parameterized.expand([estimation.MirrorDescent, estimation.LBFGS])
+  def test_tol_stops_early(self, estimator_cls):
+    # Monotone methods plateau and stop before the budget, still accurate.
+    measurements = fake_measurements([("a", "b"), ("b", "c"), ("c", "d")])
+    loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
+    calls = []
+    model = estimator_cls().estimate(
+        _DOMAIN,
+        loss_fn,
+        known_total=1.0,
+        iters=5000,
+        callback_fn=lambda _: calls.append(1),
+        tol=1e-6,
+    )
+    self.assertLess(len(calls), math.ceil(5000 / estimation.CALLBACK_EVERY))
+    for M in measurements:
+      actual = model.project(M.clique).datavector()
+      np.testing.assert_allclose(actual, M.noisy_measurement, atol=1e-2)
+
+  @parameterized.expand([
+      estimation.MirrorDescent,
+      estimation.DualAveraging,
+      estimation.InteriorGradient,
+      estimation.LBFGS,
+      estimation.UniversalAcceleratedMethod,
+  ])
+  def test_tol_supported_by_all_estimators(self, estimator_cls):
+    measurements = fake_measurements([("a", "b"), ("b", "c"), ("c", "d")])
+    loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
+    model = estimator_cls().estimate(
+        _DOMAIN, loss_fn, known_total=1.0, iters=500, tol=1e-6
+    )
+    for M in measurements:
+      actual = model.project(M.clique).datavector()
+      self.assertTrue(np.all(np.isfinite(actual)))
+
+  def test_tol_unsupported_estimator_raises(self):
+    class _NoLoss(estimation.MirrorDescent):
+
+      def _loss_value(self, state, loss_fn, known_total, constraints=()):
+        return None
+
+    loss_fn = marginal_loss.from_linear_measurements(
+        fake_measurements([("a", "b"), ("b", "c")]), _DOMAIN
+    )
+    with self.assertRaises(ValueError):
+      _NoLoss().estimate(_DOMAIN, loss_fn, known_total=1.0, iters=100, tol=1e-6)
 
   def test_precompile(self):
     """precompile() should complete without error."""

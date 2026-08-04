@@ -109,6 +109,10 @@ class Estimator(ABC):
     """
     return state[0]
 
+  def _loss_value(self, state, loss_fn, known_total, constraints=()):  # pylint: disable=unused-argument
+    """Current objective value for ``tol`` early stopping, or None."""
+    return getattr(state, "loss", None)
+
   def _oracle(self, cliques, domain, constraints=()):
     """Return the marginal oracle, falling back to ``default_oracle``."""
     oracle = self.marginal_oracle or marginal_oracles.default_oracle(
@@ -129,6 +133,8 @@ class Estimator(ABC):
       iters: int = 1000,
       callback_fn: Callable | None = None,
       warm_start: Model | None = None,
+      tol: float | None = None,
+      patience: int = 2,
       **kwargs: Any,
   ) -> Model:
     """Estimate a Model from noisy marginal measurements.
@@ -137,6 +143,10 @@ class Estimator(ABC):
     previously estimated model instead of from scratch.  For potential-based
     estimators the model's potentials are expanded to cover any new cliques;
     for MixtureOfProducts the model is used directly.
+
+    If ``tol`` is set, optimization stops early once the relative loss
+    improvement over a callback block stays at or below ``tol`` for
+    ``patience`` consecutive blocks (default: run the full ``iters``).
     """
     constraints = tuple(constraints)
     if isinstance(loss_fn, list):
@@ -178,10 +188,21 @@ class Estimator(ABC):
     )
     # De-alias so that donate_argnames in _multi_step is safe.
     state = jax.tree.map(jnp.copy, state)
+    prev_loss, stalls = np.inf, 0
     for _ in range(math.ceil(iters / CALLBACK_EVERY)):
       state = self._multi_step(state, loss_fn, known_total, constraints)
       if callback_fn is not None:
         callback_fn(self._callback_value(state, known_total, constraints))
+      if tol is not None:
+        loss = self._loss_value(state, loss_fn, known_total, constraints)
+        if loss is None:
+          raise ValueError(f"{type(self).__name__} does not support tol.")
+        loss = float(loss)
+        converged = prev_loss - loss <= tol * max(abs(loss), 1.0)
+        stalls = stalls + 1 if converged else 0
+        prev_loss = loss
+        if stalls >= patience:
+          break
     return self._finalize(state, known_total, constraints=constraints)
 
   @jax.jit(static_argnames=["self"], donate_argnames=["state"])
@@ -710,6 +731,10 @@ class LBFGS(Estimator):
     )
     return marginal_oracle(state.potentials, known_total)
 
+  def _loss_value(self, state, loss_fn, known_total, constraints=()):
+    # optax.lbfgs stores the latest objective value in its state.
+    return optax.tree_utils.tree_get(state.opt_state, "value")
+
   def _finalize(self, state, known_total, constraints=()):
     marginal_oracle = self._oracle(
         state.potentials.cliques,
@@ -884,6 +909,10 @@ class UniversalAcceleratedMethod(Estimator):
   def _callback_value(self, state, known_total, constraints=()):
     # Scale back to N-simplex for user-facing callbacks.
     return state.x * known_total
+
+  def _loss_value(self, state, loss_fn, known_total, constraints=()):
+    # State tracks no loss; recompute on the N-scaled iterate.
+    return loss_fn(state.x * known_total)
 
   def _finalize(self, state, known_total, constraints=()):
     # Scale back to N-simplex and recover potentials via MLE.
