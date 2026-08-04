@@ -162,7 +162,9 @@ class Factor:
     """Applies element-wise logarithm (jnp.log) to the factor's values."""
     return Factor(self.domain, jnp.log(self.values))
 
-  def normalize(self, total: float = 1.0, log: bool = False) -> Factor:
+  def normalize(
+      self, total: jax.Array | float = 1.0, log: bool = False
+  ) -> Factor:
     """Normalizes the factor so its values sum to `total` (or log-normalize)."""
     if log:
       return self + jnp.log(total) - self.logsumexp()
