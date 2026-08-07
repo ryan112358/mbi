@@ -26,10 +26,10 @@ import warnings
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
-import frozendict
 import jax
 import jax.numpy as jnp
 import networkx as nx
+from frozendict import frozendict
 
 from . import junction_tree
 from .clique_utils import Clique, clique_mapping
@@ -626,7 +626,7 @@ def variable_elimination(
     potentials: CliqueVector,
     clique: tuple[str, ...],
     total: float = 1.0,
-    evidence: frozendict.frozendict | None = None,
+    evidence: frozendict | None = None,
     *,
     constraints: Sequence[Constraint] = (),
 ) -> Factor:
@@ -646,7 +646,7 @@ def variable_elimination(
   """
   potentials, _ = _fold_constraints(potentials, constraints)
   clique = tuple(clique)
-  evidence_dict = evidence if evidence is not None else frozendict.frozendict()
+  evidence_dict = evidence if evidence is not None else frozendict()
   if set(clique) & set(evidence_dict.keys()):
     raise ValueError("Evidence attributes cannot be in the query clique.")
 
