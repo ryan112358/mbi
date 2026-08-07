@@ -695,9 +695,10 @@ def precompile_bulk_variable_elimination(
   abstract_potentials = CliqueVector.abstract(domain, potential_cliques)
   abstract_constraints = jax.eval_shape(lambda x: x, tuple(constraints))
 
+  jitted = jax.jit(variable_elimination, static_argnames=("clique", "evidence"))
   def _compile_all():
     for query in marginal_queries:
-      variable_elimination.lower(
+      jitted.lower(
           abstract_potentials, query, 1.0, None, constraints=abstract_constraints
       ).compile()
 
@@ -732,8 +733,9 @@ def bulk_variable_elimination(
     A CliqueVector with the marginals computed over the specified cliques.
   """
   constraints = tuple(constraints)
+  jitted = jax.jit(variable_elimination, static_argnames=("clique", "evidence"))
   def _evaluate(query):
-    return query, variable_elimination(potentials, query, total, None, constraints=constraints)
+    return query, jitted(potentials, query, total, None, constraints=constraints)
 
   futures = [_COMPILE_POOL.submit(_evaluate, cl) for cl in marginal_queries]
   results = {}
