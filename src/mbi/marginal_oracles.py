@@ -646,8 +646,8 @@ def variable_elimination(
   """
   potentials, _ = _fold_constraints(potentials, constraints)
   clique = tuple(clique)
-  evidence = evidence or {}
-  if set(clique) & set(evidence.keys()):
+  evidence_dict = evidence if evidence is not None else frozendict.frozendict()
+  if set(clique) & set(evidence_dict.keys()):
     raise ValueError("Evidence attributes cannot be in the query clique.")
 
   k = len(potentials.cliques)
@@ -744,7 +744,7 @@ def bulk_variable_elimination(
     )
 
   futures = [_COMPILE_POOL.submit(_evaluate, cl) for cl in marginal_queries]
-  results = {}
+  results: dict[tuple[str, ...], Factor] = {}
   for future in concurrent.futures.as_completed(futures):
     query, result = future.result()
     results[query] = result

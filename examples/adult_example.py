@@ -32,16 +32,16 @@ sigma = 2.0 / epsilon_split
 
 measurements = []
 for col in data.domain:
-    x = data.project(col).datavector()
-    y = x + np.random.laplace(loc=0, scale=sigma, size=x.size)
-    measurements.append(marginal_loss.LinearMeasurement(y, (col,)))
+  x = data.project(col).datavector()
+  y = x + np.random.laplace(loc=0, scale=sigma, size=x.size)
+  measurements.append(marginal_loss.LinearMeasurement(y, (col,)))
 
 # spend half of privacy budget to measure some more 2 and 3 way marginals
 
 for cl in cliques:
-    x = data.project(cl).datavector()
-    y = x + np.random.laplace(loc=0, scale=sigma, size=x.size)
-    measurements.append(marginal_loss.LinearMeasurement(y, cl))
+  x = data.project(cl).datavector()
+  y = x + np.random.laplace(loc=0, scale=sigma, size=x.size)
+  measurements.append(marginal_loss.LinearMeasurement(y, cl))
 
 # now estimate the data distribution from the noisy measurements
 

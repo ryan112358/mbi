@@ -14,10 +14,14 @@ from mbi.domain import Domain
 from mbi.extensions.message_passing import implicit as ext_implicit
 from mbi.extensions.message_passing import shafer_shenoy as ext_shafer_shenoy
 from mbi.factor import Factor
-from mbi.marginal_oracles import (einsum_fused, einsum_materialized,
-                                  einsum_semistable, message_passing_hugin,
-                                  message_passing_implicit,
-                                  message_passing_shafer_shenoy)
+from mbi.marginal_oracles import (
+    einsum_fused,
+    einsum_materialized,
+    einsum_semistable,
+    message_passing_hugin,
+    message_passing_implicit,
+    message_passing_shafer_shenoy,
+)
 
 np.random.seed(0)
 
