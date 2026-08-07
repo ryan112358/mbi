@@ -653,11 +653,12 @@ def variable_elimination(
   k = len(potentials.cliques)
   psi = dict(zip(range(k), potentials.tables.values()))
 
-  if evidence:
+  if evidence_dict:
+    evidence_dict_obj = dict(evidence_dict)
     for i in list(psi.keys()):
-      psi[i] = psi[i].slice(evidence)
+      psi[i] = psi[i].slice(evidence_dict_obj)
 
-  domain = potentials.active_domain.marginalize(list(evidence.keys()))
+  domain = potentials.active_domain.marginalize(list(evidence_dict.keys()))
   cliques = [psi[i].domain.attributes for i in psi] + [clique]
   elim = domain.invert(clique)
   elim_order, _ = junction_tree.greedy_order(domain, cliques, elim=elim)
@@ -744,7 +745,7 @@ def bulk_variable_elimination(
     )
 
   futures = [_COMPILE_POOL.submit(_evaluate, cl) for cl in marginal_queries]
-  results: dict[tuple[str, ...], Factor] = {}
+  results: dict[tuple[int | str, ...], Factor] = {}
   for future in concurrent.futures.as_completed(futures):
     query, result = future.result()
     results[query] = result
