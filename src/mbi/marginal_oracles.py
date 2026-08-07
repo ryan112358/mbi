@@ -34,12 +34,13 @@ from . import junction_tree
 from .clique_utils import Clique, clique_mapping
 from .clique_vector import CliqueVector
 from .constraint import Constraint
-from .domain import Attribute
-from .domain import Domain
+from .domain import Attribute, Domain
 from .einsum import custom_einsum
 from .factor import Factor
 
 _EINSUM_LETTERS = list(string.ascii_lowercase) + list(string.ascii_uppercase)
+
+_COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 
 class MarginalOracle(Protocol):
@@ -619,11 +620,12 @@ def einsum_marginals(
   )
 
 
+@jax.jit(static_argnames=("clique",))
 def variable_elimination(
     potentials: CliqueVector,
-    clique: Clique,
-    total: jax.Array | float = 1,
-    evidence: dict[Attribute, int] | None = None,
+    clique: tuple[str, ...],
+    total: float = 1.0,
+    evidence: dict[Attribute, int | jax.Array] | None = None,
     *,
     constraints: Sequence[Constraint] = (),
 ) -> Factor:
@@ -643,18 +645,18 @@ def variable_elimination(
   """
   potentials, _ = _fold_constraints(potentials, constraints)
   clique = tuple(clique)
-  evidence = evidence or {}
-  if set(clique) & set(evidence.keys()):
+  evidence_dict = evidence if evidence is not None else {}
+  if set(clique) & set(evidence_dict.keys()):
     raise ValueError("Evidence attributes cannot be in the query clique.")
 
   k = len(potentials.cliques)
   psi = dict(zip(range(k), potentials.tables.values()))
 
-  if evidence:
+  if evidence_dict:
     for i in list(psi.keys()):
-      psi[i] = psi[i].slice(evidence)
+      psi[i] = psi[i].slice(evidence_dict)
 
-  domain = potentials.active_domain.marginalize(list(evidence.keys()))
+  domain = potentials.active_domain.marginalize(list(evidence_dict.keys()))
   cliques = [psi[i].domain.attributes for i in psi] + [clique]
   elim = domain.invert(clique)
   elim_order, _ = junction_tree.greedy_order(domain, cliques, elim=elim)
@@ -668,6 +670,40 @@ def variable_elimination(
   zero = Factor(Domain([], []), jnp.asarray(0.0))
   unnormalized = sum(psi.values(), start=zero).expand(newdom)
   return unnormalized.normalize(total, log=True).exp().project(clique)
+
+
+def precompile_bulk_variable_elimination(
+    domain: Domain,
+    potential_cliques: Sequence[tuple[str, ...]],
+    marginal_queries: list[tuple[str, ...]],
+    *,
+    constraints: Sequence[Constraint] = (),
+) -> concurrent.futures.Future:
+  """Warm the JIT cache for ``bulk_variable_elimination`` asynchronously.
+
+  Fire and forget. Only requires domain and clique structure.
+
+  Args:
+    domain: The Domain of the graphical model.
+    potential_cliques: The cliques that potentials are defined over.
+    marginal_queries: A list of cliques to obtain marginals for.
+    constraints: Structural constraints.
+  """
+  abstract_potentials = CliqueVector.abstract(domain, potential_cliques)
+  abstract_constraints = jax.eval_shape(lambda x: x, tuple(constraints))
+
+  jitted = jax.jit(variable_elimination, static_argnames=("clique",))
+
+  def _compile_all():
+    for query in marginal_queries:
+      jitted.lower(
+          abstract_potentials,
+          query,
+          total=1.0,
+          constraints=abstract_constraints,
+      ).compile()
+
+  return _COMPILE_POOL.submit(_compile_all)
 
 
 def bulk_variable_elimination(
@@ -697,22 +733,22 @@ def bulk_variable_elimination(
   Returns:
     A CliqueVector with the marginals computed over the specified cliques.
   """
-  potentials, _ = _fold_constraints(potentials, constraints)
-  jitted = jax.jit(variable_elimination, static_argnums=(1,))
+  constraints = tuple(constraints)
+  jitted = jax.jit(variable_elimination, static_argnames=("clique",))
 
-  # Async + parallel precompilation.
-  def _precompile(query):
-    return query, jitted.lower(potentials, query, total).compile()
+  def _evaluate(query):
+    return query, jitted(
+        potentials, query, total=total, constraints=constraints
+    )
 
-  with concurrent.futures.ThreadPoolExecutor() as executor:
-    futures = [executor.submit(_precompile, cl) for cl in marginal_queries]
+  futures = [_COMPILE_POOL.submit(_evaluate, cl) for cl in marginal_queries]
+  results: dict[tuple[int | str, ...], Factor] = {}
+  for future in concurrent.futures.as_completed(futures):
+    query, result = future.result()
+    results[query] = result
 
-    results = {}
-    for future in concurrent.futures.as_completed(futures):
-      query, compiled_fn = future.result()
-      results[query] = compiled_fn(potentials, total)
-
-    return CliqueVector(potentials.domain, marginal_queries, results)
+  out_domain = _fold_constraints(potentials, constraints)[0].domain
+  return CliqueVector(out_domain, marginal_queries, results)
 
 
 def calculate_many_marginals(

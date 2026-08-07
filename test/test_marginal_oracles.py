@@ -1,26 +1,26 @@
+import functools
+import itertools
 import unittest
-from mbi.domain import Domain
-from mbi.factor import Factor
-from mbi.clique_vector import CliqueVector
-from mbi import marginal_oracles
-from mbi.marginal_oracles import (
-    message_passing_implicit,
-    message_passing_hugin,
-    message_passing_shafer_shenoy,
-    einsum_materialized,
-    einsum_fused,
-    einsum_semistable,
-)
-from mbi.constraint import Constraint
-from mbi.extensions.message_passing import (
-    shafer_shenoy as ext_shafer_shenoy,
-    implicit as ext_implicit,
-)
+
 import jax.numpy as jnp
 import numpy as np
 from parameterized import parameterized
-import itertools
-import functools
+
+from mbi import marginal_oracles
+from mbi.clique_vector import CliqueVector
+from mbi.constraint import Constraint
+from mbi.domain import Domain
+from mbi.extensions.message_passing import implicit as ext_implicit
+from mbi.extensions.message_passing import shafer_shenoy as ext_shafer_shenoy
+from mbi.factor import Factor
+from mbi.marginal_oracles import (
+    einsum_fused,
+    einsum_materialized,
+    einsum_semistable,
+    message_passing_hugin,
+    message_passing_implicit,
+    message_passing_shafer_shenoy,
+)
 
 np.random.seed(0)
 
