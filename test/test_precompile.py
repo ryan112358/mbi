@@ -283,3 +283,51 @@ class TestSyntheticDataPrecompile(unittest.TestCase):
 
 if __name__ == "__main__":
   unittest.main()
+
+
+@contextlib.contextmanager
+def _count_variable_elimination_traces():
+  counter = {"n": 0}
+  import mbi.marginal_oracles as oracles
+
+  orig = oracles.variable_elimination
+
+  def spy(*args, **kwargs):
+    counter["n"] += 1
+    return orig(*args, **kwargs)
+
+  try:
+    oracles.variable_elimination = spy
+    yield counter
+  finally:
+    oracles.variable_elimination = orig
+
+
+class TestBulkVariableEliminationPrecompile(unittest.TestCase):
+  """``precompile`` must make ``bulk_variable_elimination`` reuse ``variable_elimination``."""
+
+  def test_precompile_cache_reuse(self):
+    jax.clear_caches()
+    potentials = _random_model(total=10.0).potentials
+    queries = [potentials.cliques[0], potentials.cliques[1]]
+
+    import mbi.marginal_oracles as oracles
+
+    with _count_variable_elimination_traces() as counter:
+      oracles.precompile_bulk_variable_elimination(
+          _DOMAIN, potentials.cliques, queries
+      ).result()
+      after_precompile = counter["n"]
+      self.assertEqual(
+          after_precompile,
+          len(queries),
+          "precompile should trace for each query",
+      )
+
+      ans = oracles.bulk_variable_elimination(potentials, queries)
+      self.assertEqual(
+          counter["n"],
+          after_precompile,
+          "bulk_variable_elimination must reuse (no recompile)",
+      )
+      self.assertEqual(len(ans.cliques), len(queries))

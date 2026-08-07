@@ -41,6 +41,8 @@ from .factor import Factor
 
 _EINSUM_LETTERS = list(string.ascii_lowercase) + list(string.ascii_uppercase)
 
+_COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
 
 class MarginalOracle(Protocol):
   """Callable signature for stateless marginal oracle functions.
@@ -670,6 +672,37 @@ def variable_elimination(
   return unnormalized.normalize(total, log=True).exp().project(clique)
 
 
+def precompile_bulk_variable_elimination(
+    domain: Domain,
+    potential_cliques: Sequence[tuple[str, ...]],
+    marginal_queries: list[tuple[str, ...]],
+    *,
+    constraints: Sequence[Constraint] = (),
+) -> concurrent.futures.Future:
+  """Warm the JIT cache for ``bulk_variable_elimination`` asynchronously.
+
+  Fire and forget. Only requires domain and clique structure.
+
+  Args:
+    domain: The Domain of the graphical model.
+    potential_cliques: The cliques that potentials are defined over.
+    marginal_queries: A list of cliques to obtain marginals for.
+    constraints: Structural constraints.
+  """
+  abstract_potentials = CliqueVector.abstract(domain, potential_cliques)
+  abstract_potentials = jax.eval_shape(
+      lambda p, c: _fold_constraints(p, c)[0], abstract_potentials, constraints
+  )
+
+  jitted = jax.jit(variable_elimination, static_argnums=(1,))
+
+  def _compile_all():
+    for query in marginal_queries:
+      jitted.lower(abstract_potentials, query, 1.0).compile()
+
+  return _COMPILE_POOL.submit(_compile_all)
+
+
 def bulk_variable_elimination(
     potentials: CliqueVector,
     marginal_queries: list[tuple[str, ...]],
@@ -700,19 +733,16 @@ def bulk_variable_elimination(
   potentials, _ = _fold_constraints(potentials, constraints)
   jitted = jax.jit(variable_elimination, static_argnums=(1,))
 
-  # Async + parallel precompilation.
-  def _precompile(query):
-    return query, jitted.lower(potentials, query, total).compile()
+  def _evaluate(query):
+    return query, jitted(potentials, query, total)
 
-  with concurrent.futures.ThreadPoolExecutor() as executor:
-    futures = [executor.submit(_precompile, cl) for cl in marginal_queries]
+  futures = [_COMPILE_POOL.submit(_evaluate, cl) for cl in marginal_queries]
+  results = {}
+  for future in concurrent.futures.as_completed(futures):
+    query, result = future.result()
+    results[query] = result
 
-    results = {}
-    for future in concurrent.futures.as_completed(futures):
-      query, compiled_fn = future.result()
-      results[query] = compiled_fn(potentials, total)
-
-    return CliqueVector(potentials.domain, marginal_queries, results)
+  return CliqueVector(potentials.domain, marginal_queries, results)
 
 
 def calculate_many_marginals(
