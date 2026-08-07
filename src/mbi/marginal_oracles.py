@@ -621,7 +621,6 @@ def einsum_marginals(
   )
 
 
-@jax.jit(static_argnames=["clique", "evidence", "constraints"])
 def variable_elimination(
     potentials: CliqueVector,
     clique: Clique,
@@ -695,9 +694,11 @@ def precompile_bulk_variable_elimination(
       lambda p, c: _fold_constraints(p, c)[0], abstract_potentials, constraints
   )
 
+  jitted = jax.jit(variable_elimination, static_argnums=(1,))
+
   def _compile_all():
     for query in marginal_queries:
-      variable_elimination.lower(abstract_potentials, query, 1.0).compile()
+      jitted.lower(abstract_potentials, query, 1.0).compile()
 
   return _COMPILE_POOL.submit(_compile_all)
 
@@ -730,8 +731,10 @@ def bulk_variable_elimination(
     A CliqueVector with the marginals computed over the specified cliques.
   """
   potentials, _ = _fold_constraints(potentials, constraints)
+  jitted = jax.jit(variable_elimination, static_argnums=(1,))
+
   def _evaluate(query):
-    return query, variable_elimination(potentials, query, total)
+    return query, jitted(potentials, query, total)
 
   futures = [_COMPILE_POOL.submit(_evaluate, cl) for cl in marginal_queries]
   results = {}
