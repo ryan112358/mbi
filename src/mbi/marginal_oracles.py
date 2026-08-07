@@ -27,6 +27,8 @@ from collections.abc import Callable, Sequence
 from typing import Protocol
 
 import jax
+import frozendict
+import jax
 import jax.numpy as jnp
 import networkx as nx
 
@@ -690,15 +692,13 @@ def precompile_bulk_variable_elimination(
     constraints: Structural constraints.
   """
   abstract_potentials = CliqueVector.abstract(domain, potential_cliques)
-  abstract_potentials = jax.eval_shape(
-      lambda p, c: _fold_constraints(p, c)[0], abstract_potentials, constraints
-  )
-
-  jitted = jax.jit(variable_elimination, static_argnums=(1,))
+  abstract_constraints = jax.eval_shape(lambda x: x, tuple(constraints))
 
   def _compile_all():
     for query in marginal_queries:
-      jitted.lower(abstract_potentials, query, 1.0).compile()
+      getattr(variable_elimination, '__wrapped__', variable_elimination).lower(
+          abstract_potentials, query, 1.0, None, constraints=abstract_constraints
+      ).compile()
 
   return _COMPILE_POOL.submit(_compile_all)
 
@@ -730,11 +730,9 @@ def bulk_variable_elimination(
   Returns:
     A CliqueVector with the marginals computed over the specified cliques.
   """
-  potentials, _ = _fold_constraints(potentials, constraints)
-  jitted = jax.jit(variable_elimination, static_argnums=(1,))
-
+  constraints = tuple(constraints)
   def _evaluate(query):
-    return query, jitted(potentials, query, total)
+    return query, variable_elimination(potentials, query, total, None, constraints=constraints)
 
   futures = [_COMPILE_POOL.submit(_evaluate, cl) for cl in marginal_queries]
   results = {}
@@ -742,7 +740,8 @@ def bulk_variable_elimination(
     query, result = future.result()
     results[query] = result
 
-  return CliqueVector(potentials.domain, marginal_queries, results)
+  out_domain = _fold_constraints(potentials, constraints)[0].domain
+  return CliqueVector(out_domain, marginal_queries, results)
 
 
 def calculate_many_marginals(
