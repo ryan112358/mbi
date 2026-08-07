@@ -623,11 +623,12 @@ def einsum_marginals(
   )
 
 
+@jax.jit(static_argnames=("clique", "evidence"))
 def variable_elimination(
     potentials: CliqueVector,
-    clique: Clique,
-    total: jax.Array | float = 1,
-    evidence: dict[Attribute, int] | None = None,
+    clique: tuple[str, ...],
+    total: float = 1.0,
+    evidence: frozendict.frozendict | None = None,
     *,
     constraints: Sequence[Constraint] = (),
 ) -> Factor:
@@ -696,7 +697,7 @@ def precompile_bulk_variable_elimination(
 
   def _compile_all():
     for query in marginal_queries:
-      getattr(variable_elimination, '__wrapped__', variable_elimination).lower(
+      variable_elimination.lower(
           abstract_potentials, query, 1.0, None, constraints=abstract_constraints
       ).compile()
 
