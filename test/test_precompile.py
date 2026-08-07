@@ -292,12 +292,12 @@ def _count_variable_elimination_traces():
 
   orig = oracles.variable_elimination
 
-  def spy(*args, **kwargs):
+  def spy(potentials, clique, total=1.0, evidence=None, *, constraints=()):
     counter["n"] += 1
-    return orig(*args, **kwargs)
+    return orig(potentials, clique, total, evidence, constraints=constraints)
 
   try:
-    oracles.variable_elimination = spy
+    oracles.variable_elimination = jax.jit(spy, static_argnames=['clique', 'evidence', 'constraints'])
     yield counter
   finally:
     oracles.variable_elimination = orig
