@@ -29,7 +29,6 @@ from typing import Protocol
 import jax
 import jax.numpy as jnp
 import networkx as nx
-from frozendict import frozendict
 
 from . import junction_tree
 from .clique_utils import Clique, clique_mapping
@@ -621,12 +620,12 @@ def einsum_marginals(
   )
 
 
-@jax.jit(static_argnames=("clique", "evidence"))
+@jax.jit(static_argnames=("clique",))
 def variable_elimination(
     potentials: CliqueVector,
     clique: tuple[str, ...],
     total: float = 1.0,
-    evidence: frozendict | None = None,
+    evidence: dict[Attribute, int | jax.Array] | None = None,
     *,
     constraints: Sequence[Constraint] = (),
 ) -> Factor:
@@ -646,7 +645,7 @@ def variable_elimination(
   """
   potentials, _ = _fold_constraints(potentials, constraints)
   clique = tuple(clique)
-  evidence_dict = evidence if evidence is not None else frozendict()
+  evidence_dict = evidence if evidence is not None else {}
   if set(clique) & set(evidence_dict.keys()):
     raise ValueError("Evidence attributes cannot be in the query clique.")
 
@@ -654,9 +653,8 @@ def variable_elimination(
   psi = dict(zip(range(k), potentials.tables.values()))
 
   if evidence_dict:
-    evidence_dict_obj = dict(evidence_dict)
     for i in list(psi.keys()):
-      psi[i] = psi[i].slice(evidence_dict_obj)
+      psi[i] = psi[i].slice(evidence_dict)
 
   domain = potentials.active_domain.marginalize(list(evidence_dict.keys()))
   cliques = [psi[i].domain.attributes for i in psi] + [clique]
@@ -694,7 +692,7 @@ def precompile_bulk_variable_elimination(
   abstract_potentials = CliqueVector.abstract(domain, potential_cliques)
   abstract_constraints = jax.eval_shape(lambda x: x, tuple(constraints))
 
-  jitted = jax.jit(variable_elimination, static_argnames=("clique", "evidence"))
+  jitted = jax.jit(variable_elimination, static_argnames=("clique",))
 
   def _compile_all():
     for query in marginal_queries:
@@ -733,7 +731,7 @@ def bulk_variable_elimination(
     A CliqueVector with the marginals computed over the specified cliques.
   """
   constraints = tuple(constraints)
-  jitted = jax.jit(variable_elimination, static_argnames=("clique", "evidence"))
+  jitted = jax.jit(variable_elimination, static_argnames=("clique",))
 
   def _evaluate(query):
     return query, jitted(

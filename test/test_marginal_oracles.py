@@ -4,7 +4,6 @@ import unittest
 
 import jax.numpy as jnp
 import numpy as np
-from frozendict import frozendict
 from parameterized import parameterized
 
 from mbi import marginal_oracles
@@ -165,7 +164,7 @@ class TestMarginalOracles(unittest.TestCase):
     theta = CliqueVector.random(_DOMAIN, model_cliques)
     evidence_attr = _DOMAIN.attributes[0]
     evidence_val = 0
-    evidence = frozendict({evidence_attr: evidence_val})
+    evidence = {evidence_attr: evidence_val}
 
     if evidence_attr in query_clique:
       with self.assertRaises(ValueError):

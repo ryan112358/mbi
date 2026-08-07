@@ -26,7 +26,6 @@ dependencies = [
     "jaxlib>=0.9.0",
     "chex",
     "optax",
-    "frozendict",
 ]
 
 [project.urls]
