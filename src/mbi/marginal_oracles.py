@@ -699,11 +699,7 @@ def precompile_bulk_variable_elimination(
   def _compile_all():
     for query in marginal_queries:
       jitted.lower(
-          abstract_potentials,
-          query,
-          1.0,
-          None,
-          constraints=abstract_constraints,
+          abstract_potentials, query, constraints=abstract_constraints
       ).compile()
 
   return _COMPILE_POOL.submit(_compile_all)
