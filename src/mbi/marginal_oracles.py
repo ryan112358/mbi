@@ -26,7 +26,6 @@ import warnings
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
-import jax
 import frozendict
 import jax
 import jax.numpy as jnp
@@ -36,8 +35,7 @@ from . import junction_tree
 from .clique_utils import Clique, clique_mapping
 from .clique_vector import CliqueVector
 from .constraint import Constraint
-from .domain import Attribute
-from .domain import Domain
+from .domain import Attribute, Domain
 from .einsum import custom_einsum
 from .factor import Factor
 
@@ -696,10 +694,15 @@ def precompile_bulk_variable_elimination(
   abstract_constraints = jax.eval_shape(lambda x: x, tuple(constraints))
 
   jitted = jax.jit(variable_elimination, static_argnames=("clique", "evidence"))
+
   def _compile_all():
     for query in marginal_queries:
       jitted.lower(
-          abstract_potentials, query, 1.0, None, constraints=abstract_constraints
+          abstract_potentials,
+          query,
+          1.0,
+          None,
+          constraints=abstract_constraints,
       ).compile()
 
   return _COMPILE_POOL.submit(_compile_all)
@@ -734,8 +737,11 @@ def bulk_variable_elimination(
   """
   constraints = tuple(constraints)
   jitted = jax.jit(variable_elimination, static_argnames=("clique", "evidence"))
+
   def _evaluate(query):
-    return query, jitted(potentials, query, total, None, constraints=constraints)
+    return query, jitted(
+        potentials, query, total, None, constraints=constraints
+    )
 
   futures = [_COMPILE_POOL.submit(_evaluate, cl) for cl in marginal_queries]
   results = {}
