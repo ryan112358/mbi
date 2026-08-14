@@ -703,7 +703,8 @@ def precompile_bulk_variable_elimination(
           constraints=abstract_constraints,
       ).compile()
 
-  return _COMPILE_POOL.submit(_compile_all)
+  from ._future import RobustFuture
+  return RobustFuture(_COMPILE_POOL.submit(_compile_all))
 
 
 def bulk_variable_elimination(

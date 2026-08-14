@@ -113,7 +113,8 @@ def precompile(
           total=rows,
       ).compile()
 
-  return _COMPILE_POOL.submit(_compile_all)
+  from .._future import RobustFuture
+  return RobustFuture(_COMPILE_POOL.submit(_compile_all))
 
 
 def synthetic_data(

@@ -14,6 +14,7 @@ Pull requests are welcome to add support for other approximate oracles.
 
 from __future__ import annotations
 
+import concurrent.futures
 import functools
 import itertools
 from collections.abc import Sequence
@@ -24,6 +25,8 @@ import jax
 import jax.numpy as jnp
 import networkx as nx
 from scipy.cluster.hierarchy import DisjointSet
+
+_COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 from . import estimation
 from . import marginal_loss
@@ -375,7 +378,7 @@ class ApproxMirrorDescent:
       measurements: list[LinearMeasurement] | None = None,
       *,
       extra_cliques: list[tuple[str, ...]] | None = None,
-  ) -> None:
+  ) -> concurrent.futures.Future:
     """Warm up the JIT cache for ``estimate``.
 
     Args:
@@ -400,7 +403,9 @@ class ApproxMirrorDescent:
     abstract_state = jax.eval_shape(self._init, potentials, 1.0)
 
     # lower().compile() populates the jit cache without executing.
-    self._step.lower(self, abstract_state, 1.0, loss_fn).compile()
+    lowered = self._step.lower(self, abstract_state, 1.0, loss_fn)
+    from ._future import RobustFuture
+    return RobustFuture(_COMPILE_POOL.submit(lowered.compile))
 
 
 def mirror_descent(

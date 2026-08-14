@@ -249,7 +249,8 @@ class Estimator(ABC):
     lowered = self._multi_step.lower(
         self, abstract_state, loss_fn, 1.0, abstract_constraints
     )
-    return _COMPILE_POOL.submit(lowered.compile)
+    from ._future import RobustFuture
+    return RobustFuture(_COMPILE_POOL.submit(lowered.compile))
 
 
 def minimum_variance_unbiased_total(
