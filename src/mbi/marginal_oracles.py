@@ -31,6 +31,7 @@ import jax.numpy as jnp
 import networkx as nx
 
 from . import junction_tree
+from ._future import RobustFuture
 from .clique_utils import Clique, clique_mapping
 from .clique_vector import CliqueVector
 from .constraint import Constraint
@@ -703,7 +704,7 @@ def precompile_bulk_variable_elimination(
           constraints=abstract_constraints,
       ).compile()
 
-  return _COMPILE_POOL.submit(_compile_all)
+  return RobustFuture(_COMPILE_POOL.submit(_compile_all))
 
 
 def bulk_variable_elimination(

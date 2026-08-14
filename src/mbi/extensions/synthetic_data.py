@@ -16,12 +16,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from .. import junction_tree, marginal_oracles
+from .._future import RobustFuture
 from ..clique_utils import Clique, clique_mapping
 from ..clique_vector import CliqueVector
 from ..constraint import Constraint
 from ..dataset import Dataset
-from ..domain import Attribute
-from ..domain import Domain
+from ..domain import Attribute, Domain
 from ..factor import Factor
 from ..markov_random_field import MarkovRandomField
 
@@ -113,7 +113,7 @@ def precompile(
           total=rows,
       ).compile()
 
-  return _COMPILE_POOL.submit(_compile_all)
+  return RobustFuture(_COMPILE_POOL.submit(_compile_all))
 
 
 def synthetic_data(
