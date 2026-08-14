@@ -15,28 +15,28 @@ Pull requests are welcome to add support for other approximate oracles.
 from __future__ import annotations
 
 import concurrent.futures
+import dataclasses
 import functools
 import itertools
 from collections.abc import Sequence
 from typing import Any, NamedTuple, Protocol
 
-import dataclasses
 import jax
 import jax.numpy as jnp
 import networkx as nx
 from scipy.cluster.hierarchy import DisjointSet
 
-_COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
+from . import estimation, marginal_loss
 from ._future import RobustFuture
-from . import estimation
-from . import marginal_loss
 from .clique_utils import Clique
 from .clique_vector import CliqueVector
 from .domain import Domain
 from .factor import Factor
 from .marginal_loss import LinearMeasurement
 
+
+_COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 # pylint: disable
 
 

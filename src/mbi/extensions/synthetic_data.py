@@ -10,19 +10,18 @@ import logging
 import time
 from collections.abc import Sequence
 from typing import Any
-from .._future import RobustFuture
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from .. import junction_tree, marginal_oracles
+from .._future import RobustFuture
 from ..clique_utils import Clique, clique_mapping
 from ..clique_vector import CliqueVector
 from ..constraint import Constraint
 from ..dataset import Dataset
-from ..domain import Attribute
-from ..domain import Domain
+from ..domain import Attribute, Domain
 from ..factor import Factor
 from ..markov_random_field import MarkovRandomField
 
@@ -113,7 +112,6 @@ def precompile(
           parent_sizes=cp.parent_sizes,
           total=rows,
       ).compile()
-
 
   return RobustFuture(_COMPILE_POOL.submit(_compile_all))
 

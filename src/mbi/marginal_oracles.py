@@ -25,13 +25,13 @@ import string
 import warnings
 from collections.abc import Callable, Sequence
 from typing import Protocol
-from ._future import RobustFuture
 
 import jax
 import jax.numpy as jnp
 import networkx as nx
 
 from . import junction_tree
+from ._future import RobustFuture
 from .clique_utils import Clique, clique_mapping
 from .clique_vector import CliqueVector
 from .constraint import Constraint
@@ -703,7 +703,6 @@ def precompile_bulk_variable_elimination(
           total=1.0,
           constraints=abstract_constraints,
       ).compile()
-
 
   return RobustFuture(_COMPILE_POOL.submit(_compile_all))
 

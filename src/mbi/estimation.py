@@ -16,15 +16,13 @@ support the cliques of the marginal-based loss function can be used here.
 from __future__ import annotations
 
 import concurrent.futures
+import dataclasses
 import functools
 import math
-
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple, cast
-from ._future import RobustFuture
 
-import dataclasses
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -32,7 +30,13 @@ import optax
 from jax.typing import ArrayLike
 
 from . import marginal_loss, marginal_oracles
-from ._api import Model, Projectable  # noqa: F401  # pylint: disable=unused-import
+# pylint: disable=unused-import
+from ._api import (
+    Model,  # noqa: F401
+    Projectable,  # noqa: F401
+)
+# pylint: enable=unused-import
+from ._future import RobustFuture
 from .clique_vector import CliqueVector
 from .constraint import Constraint
 from .domain import Domain
