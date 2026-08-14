@@ -10,6 +10,7 @@ class RobustFuture(concurrent.futures.Future):
   """
 
   def __init__(self, wrapped_future: concurrent.futures.Future):
+    """Initialize a RobustFuture wrapping another future."""
     super().__init__()
     self._wrapped_future = wrapped_future
 
