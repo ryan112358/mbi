@@ -28,6 +28,7 @@ from scipy.cluster.hierarchy import DisjointSet
 
 _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
+from ._future import RobustFuture
 from . import estimation
 from . import marginal_loss
 from .clique_utils import Clique
@@ -404,7 +405,7 @@ class ApproxMirrorDescent:
 
     # lower().compile() populates the jit cache without executing.
     lowered = self._step.lower(self, abstract_state, 1.0, loss_fn)
-    from ._future import RobustFuture
+
     return RobustFuture(_COMPILE_POOL.submit(lowered.compile))
 
 

@@ -25,6 +25,7 @@ import string
 import warnings
 from collections.abc import Callable, Sequence
 from typing import Protocol
+from ._future import RobustFuture
 
 import jax
 import jax.numpy as jnp
@@ -703,7 +704,7 @@ def precompile_bulk_variable_elimination(
           constraints=abstract_constraints,
       ).compile()
 
-  from ._future import RobustFuture
+
   return RobustFuture(_COMPILE_POOL.submit(_compile_all))
 
 

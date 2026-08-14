@@ -10,6 +10,7 @@ import logging
 import time
 from collections.abc import Sequence
 from typing import Any
+from .._future import RobustFuture
 
 import jax
 import jax.numpy as jnp
@@ -113,7 +114,7 @@ def precompile(
           total=rows,
       ).compile()
 
-  from .._future import RobustFuture
+
   return RobustFuture(_COMPILE_POOL.submit(_compile_all))
 
 

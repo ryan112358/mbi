@@ -22,6 +22,7 @@ import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple, cast
+from ._future import RobustFuture
 
 import dataclasses
 import jax
@@ -249,7 +250,7 @@ class Estimator(ABC):
     lowered = self._multi_step.lower(
         self, abstract_state, loss_fn, 1.0, abstract_constraints
     )
-    from ._future import RobustFuture
+
     return RobustFuture(_COMPILE_POOL.submit(lowered.compile))
 
 
