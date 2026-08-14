@@ -189,6 +189,14 @@ class Dataset:
   def project(self, cols: Attribute | Sequence[Attribute]) -> Factor:
     """Project dataset onto a subset of columns."""
     if isinstance(cols, (str, int)):
+
+      warnings.warn(
+          "Passing a single integer or string to project() is deprecated."
+          " Please pass a tuple or sequence instead (e.g., `(col,)` instead of"
+          " `col`).",
+          DeprecationWarning,
+          stacklevel=2,
+      )
       cols = [cols]
 
     domain = self.domain.project(cols)
@@ -364,6 +372,14 @@ class JaxDataset:
   def project(self, attrs: Attribute | Sequence[Attribute]) -> Factor:
     """Project dataset onto a subset of columns."""
     if isinstance(attrs, (str, int)):
+
+      warnings.warn(
+          "Passing a single integer or string to project() is deprecated."
+          " Please pass a tuple or sequence instead (e.g., `(col,)` instead of"
+          " `col`).",
+          DeprecationWarning,
+          stacklevel=2,
+      )
       attrs = [attrs]
 
     domain = self.domain.project(attrs)
