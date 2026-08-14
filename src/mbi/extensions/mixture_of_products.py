@@ -11,7 +11,8 @@ This is a cleaned-up, optimized replacement for
 
 from __future__ import annotations
 
-
+import dataclasses
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
@@ -21,13 +22,10 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-import dataclasses
-
-
-from ..estimation import Estimator
 from ..clique_vector import CliqueVector
 from ..dataset import Dataset
 from ..domain import Attribute, Domain
+from ..estimation import Estimator
 from ..factor import Factor
 
 
@@ -71,9 +69,9 @@ class MixtureOfProducts:
         col: jax.nn.softmax(self._logits[col], axis=1) for col in self._logits
     }
 
-  def project(self, attrs) -> Factor:
+  def project(self, attrs: Attribute | Sequence[Attribute]) -> Factor:
     """Compute the marginal over ``attrs`` via einsum."""
-    if isinstance(attrs, str):
+    if isinstance(attrs, (str, int)):
       attrs = (attrs,)
     attrs = tuple(attrs)
     d = len(attrs)
@@ -84,9 +82,9 @@ class MixtureOfProducts:
     values = jnp.einsum(formula, *components) * self.total / self.num_components
     return Factor(self.domain.project(attrs), values)
 
-  def supports(self, attrs) -> bool:
+  def supports(self, attrs: Attribute | Sequence[Attribute]) -> bool:
     """Any subset of domain attributes is supported."""
-    if isinstance(attrs, str):
+    if isinstance(attrs, (str, int)):
       attrs = (attrs,)
     return all(a in self.domain.attributes for a in attrs)
 
