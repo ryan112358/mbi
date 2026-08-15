@@ -9,18 +9,18 @@ and performing arithmetic operations on these collections.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import operator
 import warnings
 from collections.abc import Sequence
 
-import dataclasses
-from jax.typing import ArrayLike
 import jax
 import jax.numpy as jnp
+from jax.typing import ArrayLike
 
 from .clique_utils import Clique, reverse_clique_mapping
-from .domain import Domain
+from .domain import Attribute, Domain
 from .factor import Factor, Projectable
 
 
@@ -109,11 +109,18 @@ class CliqueVector:
       return None
     return min(candidates, key=self.domain.size)
 
-  def supports(self, clique: Clique) -> bool:
+  def supports(self, clique: Attribute | Sequence[Attribute]) -> bool:
     """Checks if the given clique is supported (is a subset of any clique in the vector)."""
+    if isinstance(clique, (str, int)):
+      clique = (clique,)
+    clique = tuple(clique)
     return self.parent(clique) is not None
 
-  def project(self, clique: Clique, log: bool = False) -> Factor:
+  def project(
+      self, clique: Attribute | Sequence[Attribute], log: bool = False
+  ) -> Factor:
+    if isinstance(clique, (str, int)):
+      clique = (clique,)
     clique = tuple(clique)
     if clique in self.tables:
       return self[clique]
