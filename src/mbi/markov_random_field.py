@@ -10,6 +10,7 @@ generating synthetic data.
 from collections.abc import Sequence
 
 import chex
+import jax
 import numpy as np
 from jax.typing import ArrayLike
 
@@ -49,11 +50,32 @@ class MarkovRandomField:
   marginals: CliqueVector
   total: ArrayLike = 1
   constraints: tuple[Constraint, ...] = ()
+  _evidence: dict[Attribute, int | jax.Array] | None = None
+
+  def slice(
+      self, evidence: dict[Attribute, int | jax.Array]
+  ) -> "MarkovRandomField":
+    new_evidence = dict(self._evidence) if self._evidence is not None else {}
+    new_evidence.update(evidence)
+    return self.replace(_evidence=new_evidence)
 
   def project(self, attrs: Attribute | Sequence[Attribute]) -> Factor:
     if isinstance(attrs, (str, int)):
       attrs = (attrs,)
     attrs = tuple(attrs)
+    if self._evidence:
+      if set(attrs) & set(self._evidence.keys()):
+        raise ValueError("Evidence attributes cannot be in the query clique.")
+      query_and_ev = attrs + tuple(k for k in self._evidence if k not in attrs)
+      if self.marginals.supports(query_and_ev):
+        return (
+            self.marginals.project(query_and_ev)
+            .slice(self._evidence)
+            .normalize(self.total)
+        )
+      return marginal_oracles.variable_elimination(
+          self.potentials, attrs, float(self.total), evidence=self._evidence  # pyrefly: ignore[bad-argument-type]
+      )
     if self.marginals.supports(attrs):
       return self.marginals.project(attrs)
     return marginal_oracles.variable_elimination(
