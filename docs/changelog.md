@@ -1,6 +1,13 @@
 # Changelog
 
-This page documents the history of changes for each version of `private-pgm`.
+This page documents the history of changes for each version of `mbi`.
+
+## Version 2.0.0 - 09/2026
+
+* Major version bump reflecting the removal of deprecated APIs and parameters.
+* Standardized the `warm_start` parameter in all estimators (now natively accepts `MarkovRandomField`, `MixtureOfProducts`, or raw `CliqueVector`).
+* Removed stale compatibility properties (`CliqueVector.arrays` and `Domain.attrs`) and the `gaussian_noise_scale` function.
+* Added `extensions` and `junction_tree` modules to the API documentation.
 
 ## Version 1.0 - 11/2024
 
@@ -19,4 +26,4 @@ Currently, not all functionality that was previously supported been integrated i
 
 ## Version 0.1.0 (Initial Release)
 
-* Initial release of `private-pgm`.
+* Initial release of `mbi`.

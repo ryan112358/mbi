@@ -19,7 +19,24 @@ Top-Level Classes
    MarginalOracle
    MarkovRandomField
    Estimator
+   WeightedQuery
+   SlicedQuery
+   Clique
+   Constraint
+   ModelSummary
+   Model
    
+
+Top-Level Functions
+-------------------
+.. autosummary::
+   :toctree: _autosummary_output
+   :nosignatures:
+
+   save
+   load
+   summarize
+   set_log_fn
 
 Modules
 -------
@@ -32,4 +49,6 @@ Modules
    estimation
    approximate_oracles
    callbacks
+   junction_tree
+   extensions
 
