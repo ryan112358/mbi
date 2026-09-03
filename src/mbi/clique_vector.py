@@ -12,7 +12,6 @@ from __future__ import annotations
 import dataclasses
 import functools
 import operator
-import warnings
 from collections.abc import Sequence
 
 import jax
@@ -52,16 +51,6 @@ class CliqueVector:
       raise ValueError("Cliques must be equal to keys of tables.")
     if len(self.cliques) != len(set(self.cliques)):
       raise ValueError("Cliques must be unique.")
-
-  @property
-  def arrays(self) -> dict[Clique, Factor]:
-    """Deprecated: use ``tables`` instead."""
-    warnings.warn(
-        "CliqueVector.arrays is deprecated, use .tables instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return self.tables
 
   @classmethod
   def zeros(cls, domain: Domain, cliques: Sequence[Clique]) -> CliqueVector:

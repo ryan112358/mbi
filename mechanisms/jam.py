@@ -1,3 +1,5 @@
+import mbi
+
 """
 Implementation of JAM (Joint Adaptive Measurements) for DP Synthetic Data.
 Combines private and public measurements through iterative selection.
@@ -294,7 +296,7 @@ class JAM(Mechanism):
                 domain,
                 measurements,
                 iters=self.optim_iters,
-                potentials=potentials,
+                warm_start=potentials,
             )
             model_size = junction_tree.hypothetical_model_size(
                 domain, model.cliques
@@ -316,7 +318,7 @@ class JAM(Mechanism):
             domain,
             measurements,
             iters=self.optim_iters,
-            potentials=final_potentials,
+            warm_start=model,
         )
 
         synth = final_model.synthetic_data(rows=npriv)

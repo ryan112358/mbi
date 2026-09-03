@@ -51,6 +51,22 @@ _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 CALLBACK_EVERY = 50
 
 
+def _extract_potentials(
+    warm_start: Model | CliqueVector | None,
+    domain: Domain,
+    cliques: Sequence[tuple[int | str, ...]],
+) -> CliqueVector:
+  """Extracts and expands potentials for warm-starting optimization."""
+  if warm_start is None:
+    return CliqueVector.zeros(domain, cliques)
+  w_pot = (
+      warm_start
+      if isinstance(warm_start, CliqueVector)
+      else getattr(warm_start, "potentials")
+  )
+  return w_pot.expand(cliques)
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class Estimator(ABC):
   """An object that estimates a Model from a marginal-based loss function.
@@ -87,7 +103,9 @@ class Estimator(ABC):
       domain: Domain,
       loss_fn: MarginalLossFn,
       known_total: float,
-      **kwargs: Any,
+      *,
+      warm_start: Model | CliqueVector | None = None,
+      constraints: Sequence[Constraint] = (),
   ) -> Any:
     """Initialize the optimization state."""
 
@@ -139,10 +157,9 @@ class Estimator(ABC):
       constraints: Sequence[Constraint] = (),
       iters: int = 1000,
       callback_fn: Callable | None = None,
-      warm_start: Model | None = None,
+      warm_start: Model | CliqueVector | None = None,
       tol: float | None = None,
       patience: int = 2,
-      **kwargs: Any,
   ) -> Model:
     """Estimate a Model from noisy marginal measurements.
 
@@ -174,24 +191,12 @@ class Estimator(ABC):
           constraints=constraints,
       )
 
-    if "potentials" in kwargs:
-      import warnings
-
-      warnings.warn(
-          "Passing potentials= directly is deprecated. Use"
-          " warm_start=model instead, where model is a previously"
-          " estimated Model.",
-          DeprecationWarning,
-          stacklevel=2,
-      )
-
     state = self._init(
         domain,
         loss_fn,
         known_total,
         constraints=constraints,
         warm_start=warm_start,
-        **kwargs,
     )
     # De-alias so that donate_argnames in _multi_step is safe.
     state = jax.tree.map(jnp.copy, state)
@@ -284,9 +289,8 @@ def minimum_variance_unbiased_total(
   estimates, variances = np.array(estimates), np.array(variances)
   if len(estimates) == 0:
     return 1.0
-  else:
-    weights = 1.0 / variances
-    return max(1.0, float(np.average(estimates, weights=weights)))
+  weights = 1.0 / variances
+  return max(1.0, float(np.average(estimates, weights=weights)))
 
 
 def _initialize(domain, loss_fn, known_total, potentials):
@@ -410,17 +414,11 @@ class MirrorDescent(Estimator):
       loss_fn: marginal_loss.MarginalLossFn,
       known_total: float,
       *,
-      potentials: CliqueVector | None = None,
       warm_start=None,
       constraints=(),
   ) -> MirrorDescentState:
     """Initialize the optimization state."""
-    if warm_start is not None and potentials is None:
-      potentials = warm_start.potentials
-    if potentials is None:
-      potentials = CliqueVector.zeros(domain, loss_fn.cliques)
-    else:
-      potentials = potentials.expand(loss_fn.cliques)
+    potentials = _extract_potentials(warm_start, domain, loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
     )
@@ -510,17 +508,11 @@ class DualAveraging(Estimator):
       loss_fn: marginal_loss.MarginalLossFn,
       known_total: float,
       *,
-      potentials: CliqueVector | None = None,
       warm_start=None,
       constraints=(),
   ) -> DualAveragingState:
     """Initialize the optimization state."""
-    if warm_start is not None and potentials is None:
-      potentials = warm_start.potentials
-    if potentials is None:
-      potentials = CliqueVector.zeros(domain, loss_fn.cliques)
-    else:
-      potentials = potentials.expand(loss_fn.cliques)
+    potentials = _extract_potentials(warm_start, domain, loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
     )
@@ -604,17 +596,11 @@ class InteriorGradient(Estimator):
       loss_fn: marginal_loss.MarginalLossFn,
       known_total: float,
       *,
-      potentials: CliqueVector | None = None,
       warm_start=None,
       constraints=(),
   ) -> InteriorGradientState:
     """Initialize the optimization state."""
-    if warm_start is not None and potentials is None:
-      potentials = warm_start.potentials
-    if potentials is None:
-      potentials = CliqueVector.zeros(domain, loss_fn.cliques)
-    else:
-      potentials = potentials.expand(loss_fn.cliques)
+    potentials = _extract_potentials(warm_start, domain, loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
     )
@@ -686,16 +672,10 @@ class LBFGS(Estimator):
       loss_fn,
       known_total,
       *,
-      potentials=None,
       warm_start=None,
       constraints=(),
   ):
-    if warm_start is not None and potentials is None:
-      potentials = warm_start.potentials
-    if potentials is None:
-      potentials = CliqueVector.zeros(domain, loss_fn.cliques)
-    else:
-      potentials = potentials.expand(loss_fn.cliques)
+    potentials = _extract_potentials(warm_start, domain, loss_fn.cliques)
     optimizer = optax.lbfgs(
         memory_size=1,
         linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
@@ -804,16 +784,10 @@ class UniversalAcceleratedMethod(Estimator):
       loss_fn,
       known_total,
       *,
-      potentials=None,
       warm_start=None,
       constraints=(),
   ):
-    if warm_start is not None and potentials is None:
-      potentials = warm_start.potentials
-    if potentials is None:
-      potentials = CliqueVector.zeros(domain, loss_fn.cliques)
-    else:
-      potentials = potentials.expand(loss_fn.cliques)
+    potentials = _extract_potentials(warm_start, domain, loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
     )

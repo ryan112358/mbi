@@ -1,3 +1,4 @@
+import mbi
 import itertools
 import math
 import unittest
@@ -131,7 +132,13 @@ class TestEstimation(unittest.TestCase):
     potentials = CliqueVector.zeros(_DOMAIN, [_DOMAIN.attributes])
     loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
     model = estimation.MirrorDescent().estimate(
-        _DOMAIN, loss_fn, known_total=1.0, potentials=potentials, iters=250
+        _DOMAIN,
+        loss_fn,
+        known_total=1.0,
+        warm_start=mbi.MarkovRandomField(
+            potentials=potentials, marginals=potentials, total=1.0
+        ),
+        iters=250,
     )
 
     for M in measurements:
@@ -356,28 +363,6 @@ class TestEstimation(unittest.TestCase):
     # Model 2 should have the expanded clique set.
     self.assertTrue(
         set(cliques2).issubset({_DOMAIN.canonical(c) for c in model2.cliques})
-    )
-
-  def test_warm_start_legacy_potentials(self):
-    """Legacy potentials= kwarg still works for backwards compatibility."""
-    cliques = [("a", "b"), ("b", "c")]
-    measurements = fake_measurements(cliques)
-    loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
-
-    est = estimation.MirrorDescent()
-    model1 = est.estimate(_DOMAIN, loss_fn, known_total=1.0, iters=50)
-
-    # Warm-start via legacy potentials= kwarg.
-    model2 = est.estimate(
-        _DOMAIN,
-        loss_fn,
-        known_total=1.0,
-        iters=50,
-        potentials=model1.potentials,
-    )
-
-    np.testing.assert_allclose(
-        model2.project(("a",)).datavector().sum(), 1.0, atol=1e-4
     )
 
   def test_warm_start_mixture_of_products(self):

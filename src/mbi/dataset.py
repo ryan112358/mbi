@@ -8,11 +8,8 @@ and weighted records.
 
 from __future__ import annotations
 
-import csv
 import dataclasses
-import json
 import math
-import warnings
 from collections.abc import Mapping, Sequence
 
 import jax
@@ -138,53 +135,6 @@ class Dataset:
         for attr, n in zip(domain.attributes, domain.shape)
     }
     return Dataset(data, domain)
-
-  @staticmethod
-  def load(path: str, domain: str | Domain) -> Dataset:
-    """Load data from a CSV file.
-
-    .. deprecated::
-        ``Dataset.load`` will be removed in a future release.
-        Load the CSV yourself, convert columns to a
-        ``dict[str, np.ndarray]``, and pass it to ``Dataset`` directly.
-
-    Args:
-        path: Path to csv file.
-        domain: Path to json file encoding the domain, or a Domain.
-    """
-    warnings.warn(
-        "Dataset.load is deprecated. Load your data, convert columns "
-        "to a dict of numpy arrays, and instantiate Dataset directly.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    if isinstance(domain, str):
-      with open(domain, "r", encoding="utf-8") as f:
-        config = json.load(f)
-      domain_obj = Domain(config.keys(), config.values())
-    else:
-      domain_obj = domain
-
-    with open(path, "r", encoding="utf-8") as f:
-      reader = csv.reader(f)
-      header = next(reader)
-      header_map = {name: i for i, name in enumerate(header)}
-
-      if not set(domain_obj.attributes) <= set(header):
-        raise ValueError("data must contain domain attributes")
-
-      indices = [header_map[str(attr)] for attr in domain_obj.attributes]
-      rows = []
-      for row in reader:
-        try:
-          mapped_row = [int(float(row[i])) for i in indices]
-        except ValueError:
-          mapped_row = [int(row[i]) for i in indices]
-        rows.append(mapped_row)
-
-    arr = np.array(rows)
-    data = {attr: arr[:, i] for i, attr in enumerate(domain_obj.attributes)}
-    return Dataset(data, domain_obj)
 
   def project(self, cols: Attribute | Sequence[Attribute]) -> Factor:
     """Project dataset onto a subset of columns."""
