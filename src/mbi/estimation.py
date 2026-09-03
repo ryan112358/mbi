@@ -62,7 +62,7 @@ def _extract_potentials(
   w_pot = (
       warm_start
       if isinstance(warm_start, CliqueVector)
-      else warm_start.potentials
+      else getattr(warm_start, "potentials")
   )
   return w_pot.expand(cliques)
 
