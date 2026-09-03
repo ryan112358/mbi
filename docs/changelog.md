@@ -4,10 +4,28 @@ This page documents the history of changes for each version of `mbi`.
 
 ## Version 2.0.0 - 09/2026
 
-* Major version bump reflecting the removal of deprecated APIs and parameters.
-* Standardized the `warm_start` parameter in all estimators (now natively accepts `MarkovRandomField`, `MixtureOfProducts`, or raw `CliqueVector`).
-* Removed stale compatibility properties (`CliqueVector.arrays` and `Domain.attrs`) and the `gaussian_noise_scale` function.
-* Added `extensions` and `junction_tree` modules to the API documentation.
+This release introduces significant optimizations by decoupling the primary data engine from pandas, alongside several new algorithmic extensions, extensive API modernization, and quality-of-life updates.
+
+**New Features & Algorithms**
+* Introduced the Joint Adaptive Measurements (`JAM`) mechanism for DP synthetic data generation, available in the codebase as an example workflow.
+* Added native dataset compression and decompression capabilities (`Dataset.compress` and `Dataset.decompress`).
+* Bolstered belief propagation with support for vector-valued and single-row evidence in `variable_elimination`.
+* Implemented multidimensional `Factor.slice()` optimized with native tuple indexing.
+
+**Performance & Core Stability**
+* Removed the `pandas` dependency internally from `src/mbi/`, completely overhauling `Dataset` and `synthetic_data` logic to leverage highly optimized NumPy 1-D arrays and `bincount` operations natively.
+* Switched the default `einsum` engine to `'auto'`.
+* Fixed calibration boundaries in `JAM` sensitivity parameters (adjusted from 2 to 4).
+* Shipped unit tests for verifying `junction_tree` clique graph consistencies.
+
+**API Modernization & Cleanup**
+* Standardized the `warm_start` parameter in all estimators. It now cleanly and natively accepts full objects (`MarkovRandomField`, `MixtureOfProducts`, or raw `CliqueVector`).
+* Deprecated and dropped `**kwargs` and stale parameters across the library.
+* Stripped out outdated backward compatibility properties (`CliqueVector.arrays`, `Domain.attrs`) and the deprecated `gaussian_noise_scale` method.
+
+**Documentation & Linting**
+* Fully configured scalable Sphinx API documentation generation, integrating native `autosummary` for the new `extensions` and `junction_tree` modules.
+* Formalized continuous integration checking Pyre typing, Pyink PEP-8 formatting, and `docs/` HTML compilation tests.
 
 ## Version 1.0 - 11/2024
 
