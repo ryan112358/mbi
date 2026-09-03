@@ -116,6 +116,7 @@ class TestMarkovRandomField(unittest.TestCase):
         " A=1s. This indicates linear indexing stride mismatch.",
     )
 
+
 def _create_random_model(domain, cliques, N):
   """Creates a random MRF with given cliques and total count N."""
   potentials = {}
