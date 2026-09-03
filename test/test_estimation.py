@@ -132,7 +132,13 @@ class TestEstimation(unittest.TestCase):
     potentials = CliqueVector.zeros(_DOMAIN, [_DOMAIN.attributes])
     loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
     model = estimation.MirrorDescent().estimate(
-        _DOMAIN, loss_fn, known_total=1.0, warm_start=mbi.MarkovRandomField(potentials=potentials, marginals=potentials, total=1.0), iters=250
+        _DOMAIN,
+        loss_fn,
+        known_total=1.0,
+        warm_start=mbi.MarkovRandomField(
+            potentials=potentials, marginals=potentials, total=1.0
+        ),
+        iters=250,
     )
 
     for M in measurements:
