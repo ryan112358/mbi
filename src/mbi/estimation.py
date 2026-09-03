@@ -51,11 +51,10 @@ _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 CALLBACK_EVERY = 50
 
 
-
 def _extract_potentials(
     warm_start: Model | CliqueVector | None,
     domain: Domain,
-    cliques: Sequence[tuple[str, ...]],
+    cliques: Sequence[tuple[int | str, ...]],
 ) -> CliqueVector:
   """Extracts and expands potentials for warm-starting optimization."""
   if warm_start is None:
@@ -66,6 +65,7 @@ def _extract_potentials(
       else warm_start.potentials
   )
   return w_pot.expand(cliques)
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class Estimator(ABC):
