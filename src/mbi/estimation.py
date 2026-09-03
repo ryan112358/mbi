@@ -87,7 +87,6 @@ class Estimator(ABC):
       domain: Domain,
       loss_fn: MarginalLossFn,
       known_total: float,
-      **kwargs: Any,
   ) -> Any:
     """Initialize the optimization state."""
 
@@ -142,7 +141,6 @@ class Estimator(ABC):
       warm_start: Model | None = None,
       tol: float | None = None,
       patience: int = 2,
-      **kwargs: Any,
   ) -> Model:
     """Estimate a Model from noisy marginal measurements.
 
@@ -191,7 +189,6 @@ class Estimator(ABC):
         known_total,
         constraints=constraints,
         warm_start=warm_start,
-        **kwargs,
     )
     # De-alias so that donate_argnames in _multi_step is safe.
     state = jax.tree.map(jnp.copy, state)
@@ -410,17 +407,14 @@ class MirrorDescent(Estimator):
       loss_fn: marginal_loss.MarginalLossFn,
       known_total: float,
       *,
-      potentials: CliqueVector | None = None,
       warm_start=None,
       constraints=(),
   ) -> MirrorDescentState:
     """Initialize the optimization state."""
-    if warm_start is not None and potentials is None:
-      potentials = warm_start.potentials
-    if potentials is None:
+    if warm_start is None:
       potentials = CliqueVector.zeros(domain, loss_fn.cliques)
     else:
-      potentials = potentials.expand(loss_fn.cliques)
+      potentials = warm_start.potentials.expand(loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
     )
@@ -510,17 +504,14 @@ class DualAveraging(Estimator):
       loss_fn: marginal_loss.MarginalLossFn,
       known_total: float,
       *,
-      potentials: CliqueVector | None = None,
       warm_start=None,
       constraints=(),
   ) -> DualAveragingState:
     """Initialize the optimization state."""
-    if warm_start is not None and potentials is None:
-      potentials = warm_start.potentials
-    if potentials is None:
+    if warm_start is None:
       potentials = CliqueVector.zeros(domain, loss_fn.cliques)
     else:
-      potentials = potentials.expand(loss_fn.cliques)
+      potentials = warm_start.potentials.expand(loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
     )
@@ -604,17 +595,14 @@ class InteriorGradient(Estimator):
       loss_fn: marginal_loss.MarginalLossFn,
       known_total: float,
       *,
-      potentials: CliqueVector | None = None,
       warm_start=None,
       constraints=(),
   ) -> InteriorGradientState:
     """Initialize the optimization state."""
-    if warm_start is not None and potentials is None:
-      potentials = warm_start.potentials
-    if potentials is None:
+    if warm_start is None:
       potentials = CliqueVector.zeros(domain, loss_fn.cliques)
     else:
-      potentials = potentials.expand(loss_fn.cliques)
+      potentials = warm_start.potentials.expand(loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
     )
@@ -686,16 +674,13 @@ class LBFGS(Estimator):
       loss_fn,
       known_total,
       *,
-      potentials=None,
       warm_start=None,
       constraints=(),
   ):
-    if warm_start is not None and potentials is None:
-      potentials = warm_start.potentials
-    if potentials is None:
+    if warm_start is None:
       potentials = CliqueVector.zeros(domain, loss_fn.cliques)
     else:
-      potentials = potentials.expand(loss_fn.cliques)
+      potentials = warm_start.potentials.expand(loss_fn.cliques)
     optimizer = optax.lbfgs(
         memory_size=1,
         linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
@@ -804,16 +789,13 @@ class UniversalAcceleratedMethod(Estimator):
       loss_fn,
       known_total,
       *,
-      potentials=None,
       warm_start=None,
       constraints=(),
   ):
-    if warm_start is not None and potentials is None:
-      potentials = warm_start.potentials
-    if potentials is None:
+    if warm_start is None:
       potentials = CliqueVector.zeros(domain, loss_fn.cliques)
     else:
-      potentials = potentials.expand(loss_fn.cliques)
+      potentials = warm_start.potentials.expand(loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
     )

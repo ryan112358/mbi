@@ -123,7 +123,33 @@ class TestMarkovRandomField(unittest.TestCase):
     logic derived from the Adult dataset reproduction case.
     """
     try:
-      data = Dataset.load("data/adult.csv", "data/adult-domain.json")
+      with open("data/adult-domain.json", "r", encoding="utf-8") as f:
+        config = __import__("json").load(f)
+      domain = Domain(config.keys(), config.values())
+
+      rows = []
+      import csv
+
+      with open("data/adult.csv", "r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        header_map = {name: i for i, name in enumerate(header)}
+        indices = [header_map[str(attr)] for attr in domain.attributes]
+        for row in reader:
+          try:
+            mapped_row = [int(float(row[i])) for i in indices]
+          except ValueError:
+            mapped_row = [int(row[i]) for i in indices]
+          rows.append(mapped_row)
+
+      import numpy as np
+
+      arr = np.array(rows)
+      dataset_data = {
+          attr: arr[:, i] for i, attr in enumerate(domain.attributes)
+      }
+      data = Dataset(dataset_data, domain)
+
     except FileNotFoundError:
       # Skip if data is not present (e.g. in CI environment without data folder)
       return

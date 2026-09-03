@@ -99,10 +99,6 @@ class Mechanism:
 
         return keys[self.prng.choice(p.size, p=p)]
 
-    def gaussian_noise_scale(self, l2_sensitivity, epsilon, delta):
-        """Return the Gaussian noise necessary to attain (epsilon, delta)-DP"""
-        raise ValueError('Temporarily Deprecated due to broken dependency')
-
     def laplace_noise_scale(self, l1_sensitivity, epsilon):
         """Return the Laplace noise necessary to attain epsilon-DP"""
         if self.bounded:

@@ -53,16 +53,6 @@ class CliqueVector:
     if len(self.cliques) != len(set(self.cliques)):
       raise ValueError("Cliques must be unique.")
 
-  @property
-  def arrays(self) -> dict[Clique, Factor]:
-    """Deprecated: use ``tables`` instead."""
-    warnings.warn(
-        "CliqueVector.arrays is deprecated, use .tables instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return self.tables
-
   @classmethod
   def zeros(cls, domain: Domain, cliques: Sequence[Clique]) -> CliqueVector:
     """Creates a CliqueVector initialized with zero factors for each clique."""

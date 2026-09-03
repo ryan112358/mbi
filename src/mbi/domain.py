@@ -222,20 +222,6 @@ class Domain:
       return math.prod(self.shape)
     return self.project(attributes).size()
 
-  @property
-  def attrs(self) -> tuple[Attribute, ...]:
-    """Alias for the `attributes` tuple.
-
-    .. deprecated::
-        Use :attr:`attributes` instead.
-    """
-    warnings.warn(
-        "Domain.attrs is deprecated. Use Domain.attributes instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return self.attributes
-
   def supports(self, attrs: Attribute | Sequence[Attribute]) -> bool:
     if isinstance(attrs, (str, int)):
       attrs = [attrs]
