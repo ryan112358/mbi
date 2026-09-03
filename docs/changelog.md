@@ -20,6 +20,7 @@ This release introduces significant optimizations by decoupling the primary data
 
 **API Modernization & Cleanup**
 * Standardized the `warm_start` parameter in all estimators. It now cleanly and natively accepts full objects (`MarkovRandomField`, `MixtureOfProducts`, or raw `CliqueVector`).
+* **Unified Estimator API**: Relaxed and generalized the `Estimator` Protocol, providing a single, unified `estimate(loss_fn, ...)` signature across all implementations.
 * Deprecated and dropped `**kwargs` and stale parameters across the library.
 * Stripped out outdated backward compatibility properties (`CliqueVector.arrays`, `Domain.attrs`) and the deprecated `gaussian_noise_scale` method.
 
