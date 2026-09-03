@@ -14,3 +14,6 @@ Contributions to this repository are welcome and encouraged.
 >* Calculation of Lipschitz constant for L2 losses
 >* We did not refactor other marginal-based estimation algorithms in terms of the current design.  [PublicInference](https://ppai21.github.io/files/26-paper.pdf) and [MixtureInference](https://arxiv.org/abs/2103.06641), are still implemented in terms of the old API, and are in the experimental subpackage.  
 
+
+## Documentation First 
+We prioritize maintaining high-quality, rich documentation on ReadTheDocs. All PRs adding new API surface, extensions, or classes must include comprehensive docstrings and test examples that successfully compile via Sphinx. When adding new modules, please make sure they are surfaced correctly in Sphinx `autosummary` hooks.
