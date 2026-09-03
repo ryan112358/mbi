@@ -296,11 +296,7 @@ class JAM(Mechanism):
                 domain,
                 measurements,
                 iters=self.optim_iters,
-                warm_start=mbi.MarkovRandomField(
-                    potentials=potentials, marginals=potentials, total=1.0
-                )
-                if potentials is not None
-                else None,
+                warm_start=potentials,
             )
             model_size = junction_tree.hypothetical_model_size(
                 domain, model.cliques
