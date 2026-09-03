@@ -19,13 +19,7 @@ Top-Level Classes
    MarginalOracle
    MarkovRandomField
    Estimator
-   WeightedQuery
-   SlicedQuery
-   Clique
    Constraint
-   ModelSummary
-   Model
-   
 
 Top-Level Functions
 -------------------
