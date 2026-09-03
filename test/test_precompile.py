@@ -48,6 +48,7 @@ from mbi import (
     marginal_loss,
     marginal_oracles,
 )
+
 # ``mbi.extensions.__init__`` re-exports the ``synthetic_data`` *function*, which
 # shadows the submodule of the same name under normal ``import ... as`` (that
 # resolves via the parent package attribute). Fetch the module object directly so

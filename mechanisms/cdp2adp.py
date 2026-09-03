@@ -22,7 +22,6 @@ limitations under the License.
 import math
 import matplotlib.pyplot as plt
 
-
 # *********************************************************************
 # Now we move on to concentrated DP
 

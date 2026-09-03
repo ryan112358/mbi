@@ -14,7 +14,6 @@ from mbi.dataset import Dataset, JaxDataset
 from mbi.extensions.reweighted_dataset import ReweightedDatasetEstimator
 from mbi.factor import Factor
 
-
 np.random.seed(42)  # Avoid flaky tests
 
 

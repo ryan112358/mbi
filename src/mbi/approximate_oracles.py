@@ -35,7 +35,6 @@ from .domain import Domain
 from .factor import Factor
 from .marginal_loss import LinearMeasurement
 
-
 _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 # pylint: disable
 
