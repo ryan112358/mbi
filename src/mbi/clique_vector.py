@@ -12,7 +12,6 @@ from __future__ import annotations
 import dataclasses
 import functools
 import operator
-import warnings
 from collections.abc import Sequence
 
 import jax

@@ -8,7 +8,6 @@ various operations like projection, marginalization, and merging of domains.
 
 import functools
 import math
-import warnings
 from collections.abc import Iterator, Sequence
 from typing import Any, TypeAlias
 

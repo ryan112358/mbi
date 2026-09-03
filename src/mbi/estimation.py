@@ -87,6 +87,9 @@ class Estimator(ABC):
       domain: Domain,
       loss_fn: MarginalLossFn,
       known_total: float,
+      *,
+      warm_start: Model | None = None,
+      constraints: Sequence[Constraint] = (),
   ) -> Any:
     """Initialize the optimization state."""
 
@@ -170,17 +173,6 @@ class Estimator(ABC):
           marginals=oracle(potentials, known_total),
           total=known_total,
           constraints=constraints,
-      )
-
-    if "potentials" in kwargs:
-      import warnings
-
-      warnings.warn(
-          "Passing potentials= directly is deprecated. Use"
-          " warm_start=model instead, where model is a previously"
-          " estimated Model.",
-          DeprecationWarning,
-          stacklevel=2,
       )
 
     state = self._init(
@@ -281,9 +273,8 @@ def minimum_variance_unbiased_total(
   estimates, variances = np.array(estimates), np.array(variances)
   if len(estimates) == 0:
     return 1.0
-  else:
-    weights = 1.0 / variances
-    return max(1.0, float(np.average(estimates, weights=weights)))
+  weights = 1.0 / variances
+  return max(1.0, float(np.average(estimates, weights=weights)))
 
 
 def _initialize(domain, loss_fn, known_total, potentials):
