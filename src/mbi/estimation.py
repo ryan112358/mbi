@@ -405,7 +405,11 @@ class MirrorDescent(Estimator):
     if warm_start is None:
       potentials = CliqueVector.zeros(domain, loss_fn.cliques)
     else:
-      w_pot = warm_start if isinstance(warm_start, CliqueVector) else warm_start.potentials
+      w_pot = (
+          warm_start
+          if isinstance(warm_start, CliqueVector)
+          else warm_start.potentials
+      )
       potentials = w_pot.expand(loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
@@ -503,7 +507,11 @@ class DualAveraging(Estimator):
     if warm_start is None:
       potentials = CliqueVector.zeros(domain, loss_fn.cliques)
     else:
-      w_pot = warm_start if isinstance(warm_start, CliqueVector) else warm_start.potentials
+      w_pot = (
+          warm_start
+          if isinstance(warm_start, CliqueVector)
+          else warm_start.potentials
+      )
       potentials = w_pot.expand(loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
@@ -595,7 +603,11 @@ class InteriorGradient(Estimator):
     if warm_start is None:
       potentials = CliqueVector.zeros(domain, loss_fn.cliques)
     else:
-      w_pot = warm_start if isinstance(warm_start, CliqueVector) else warm_start.potentials
+      w_pot = (
+          warm_start
+          if isinstance(warm_start, CliqueVector)
+          else warm_start.potentials
+      )
       potentials = w_pot.expand(loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
@@ -674,7 +686,11 @@ class LBFGS(Estimator):
     if warm_start is None:
       potentials = CliqueVector.zeros(domain, loss_fn.cliques)
     else:
-      w_pot = warm_start if isinstance(warm_start, CliqueVector) else warm_start.potentials
+      w_pot = (
+          warm_start
+          if isinstance(warm_start, CliqueVector)
+          else warm_start.potentials
+      )
       potentials = w_pot.expand(loss_fn.cliques)
     optimizer = optax.lbfgs(
         memory_size=1,
@@ -790,7 +806,11 @@ class UniversalAcceleratedMethod(Estimator):
     if warm_start is None:
       potentials = CliqueVector.zeros(domain, loss_fn.cliques)
     else:
-      w_pot = warm_start if isinstance(warm_start, CliqueVector) else warm_start.potentials
+      w_pot = (
+          warm_start
+          if isinstance(warm_start, CliqueVector)
+          else warm_start.potentials
+      )
       potentials = w_pot.expand(loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
