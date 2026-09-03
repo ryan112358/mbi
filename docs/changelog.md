@@ -8,6 +8,7 @@ This release introduces significant optimizations by decoupling the primary data
 
 **New Features & Algorithms**
 * Introduced the Joint Adaptive Measurements (`JAM`) mechanism for DP synthetic data generation, available in the codebase as an example workflow.
+* Added explicit Ahead-of-Time JIT compilation capabilities for generative modeling via `synthetic_data.precompile`.
 * Added native dataset compression and decompression capabilities (`Dataset.compress` and `Dataset.decompress`).
 * Bolstered belief propagation with support for vector-valued and single-row evidence in `variable_elimination`.
 * Implemented multidimensional `Factor.slice()` optimized with native tuple indexing.
