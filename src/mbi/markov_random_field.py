@@ -112,7 +112,7 @@ class MarkovRandomField:
       if method == "sample":
         probas = counts / counts.sum()
         return np.random.choice(options, total, True, probas)
-      counts *= total / counts.sum()
+      counts = counts * (total / counts.sum())
       frac, integ = np.modf(counts)
       integ = integ.astype(int)
       extra = total - integ.sum()

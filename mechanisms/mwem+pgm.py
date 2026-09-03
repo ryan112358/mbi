@@ -12,7 +12,6 @@ _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from cdp2adp import cdp_rho
 import argparse
 
-
 """
 This file contains an implementation of MWEM+PGM that is designed specifically for marginal query workloads.
 Unlike mwem.py, which selects a single query in each round, this implementation selects an entire marginal 

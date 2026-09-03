@@ -17,7 +17,6 @@ from mbi.extensions.message_passing import shafer_shenoy as ext_shafer_shenoy
 from mbi.marginal_oracles import message_passing_shafer_shenoy
 from parameterized import parameterized
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

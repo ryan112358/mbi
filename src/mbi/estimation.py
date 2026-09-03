@@ -30,11 +30,13 @@ import optax
 from jax.typing import ArrayLike
 
 from . import marginal_loss, marginal_oracles
+
 # pylint: disable=unused-import
 from ._api import (
     Model,  # noqa: F401
     Projectable,  # noqa: F401
 )
+
 # pylint: enable=unused-import
 from ._future import RobustFuture
 from .clique_vector import CliqueVector
