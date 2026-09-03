@@ -1,3 +1,5 @@
+import mbi
+
 """Implementation of AIM: An Adaptive and Iterative Mechanism for DP Synthetic Data.
 
 Note that with the default settings, AIM can take many hours to run.  You can configure
@@ -176,7 +178,11 @@ class AIM(Mechanism):
                 data.domain,
                 measurements,
                 iters=self.max_iters,
-                potentials=potentials,
+                warm_start=mbi.MarkovRandomField(
+                    potentials=potentials, marginals=potentials, total=1.0
+                )
+                if potentials is not None
+                else None,
             )
             w = model.project(cl).datavector()
             # print('Selected',cl,'Size',n,'Budget Used',rho_used/self.rho)
@@ -190,7 +196,11 @@ class AIM(Mechanism):
             data.domain,
             measurements,
             iters=self.max_iters,
-            potentials=potentials,
+            warm_start=mbi.MarkovRandomField(
+                potentials=potentials, marginals=potentials, total=1.0
+            )
+            if potentials is not None
+            else None,
         )
         synth = model.synthetic_data(rows=num_synth_rows)
 

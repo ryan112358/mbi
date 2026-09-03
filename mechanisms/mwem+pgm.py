@@ -140,7 +140,7 @@ def mwem_pgm(
             domain,
             measurements,
             known_total=total,
-            potentials=est.potentials,
+            warm_start=est,
             callback_fn=callbacks.default(measurements, data),
         )
         cliques.append(ax)
