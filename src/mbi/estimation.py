@@ -52,6 +52,22 @@ CALLBACK_EVERY = 50
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+def _extract_potentials(
+    warm_start: Model | CliqueVector | None,
+    domain: Domain,
+    cliques: Sequence[tuple[str, ...]],
+) -> CliqueVector:
+  """Extracts and expands potentials for warm-starting optimization."""
+  if warm_start is None:
+    return CliqueVector.zeros(domain, cliques)
+  w_pot = (
+      warm_start
+      if isinstance(warm_start, CliqueVector)
+      else warm_start.potentials
+  )
+  return w_pot.expand(cliques)
+
+
 class Estimator(ABC):
   """An object that estimates a Model from a marginal-based loss function.
 
@@ -402,15 +418,7 @@ class MirrorDescent(Estimator):
       constraints=(),
   ) -> MirrorDescentState:
     """Initialize the optimization state."""
-    if warm_start is None:
-      potentials = CliqueVector.zeros(domain, loss_fn.cliques)
-    else:
-      w_pot = (
-          warm_start
-          if isinstance(warm_start, CliqueVector)
-          else warm_start.potentials
-      )
-      potentials = w_pot.expand(loss_fn.cliques)
+    potentials = _extract_potentials(warm_start, domain, loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
     )
@@ -504,15 +512,7 @@ class DualAveraging(Estimator):
       constraints=(),
   ) -> DualAveragingState:
     """Initialize the optimization state."""
-    if warm_start is None:
-      potentials = CliqueVector.zeros(domain, loss_fn.cliques)
-    else:
-      w_pot = (
-          warm_start
-          if isinstance(warm_start, CliqueVector)
-          else warm_start.potentials
-      )
-      potentials = w_pot.expand(loss_fn.cliques)
+    potentials = _extract_potentials(warm_start, domain, loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
     )
@@ -600,15 +600,7 @@ class InteriorGradient(Estimator):
       constraints=(),
   ) -> InteriorGradientState:
     """Initialize the optimization state."""
-    if warm_start is None:
-      potentials = CliqueVector.zeros(domain, loss_fn.cliques)
-    else:
-      w_pot = (
-          warm_start
-          if isinstance(warm_start, CliqueVector)
-          else warm_start.potentials
-      )
-      potentials = w_pot.expand(loss_fn.cliques)
+    potentials = _extract_potentials(warm_start, domain, loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
     )
@@ -683,15 +675,7 @@ class LBFGS(Estimator):
       warm_start=None,
       constraints=(),
   ):
-    if warm_start is None:
-      potentials = CliqueVector.zeros(domain, loss_fn.cliques)
-    else:
-      w_pot = (
-          warm_start
-          if isinstance(warm_start, CliqueVector)
-          else warm_start.potentials
-      )
-      potentials = w_pot.expand(loss_fn.cliques)
+    potentials = _extract_potentials(warm_start, domain, loss_fn.cliques)
     optimizer = optax.lbfgs(
         memory_size=1,
         linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
@@ -803,15 +787,7 @@ class UniversalAcceleratedMethod(Estimator):
       warm_start=None,
       constraints=(),
   ):
-    if warm_start is None:
-      potentials = CliqueVector.zeros(domain, loss_fn.cliques)
-    else:
-      w_pot = (
-          warm_start
-          if isinstance(warm_start, CliqueVector)
-          else warm_start.potentials
-      )
-      potentials = w_pot.expand(loss_fn.cliques)
+    potentials = _extract_potentials(warm_start, domain, loss_fn.cliques)
     marginal_oracle = self._oracle(
         loss_fn.cliques, domain, constraints=constraints
     )
