@@ -99,11 +99,23 @@ def maximal_subset(cliques: Sequence[Clique]) -> list[Clique]:
   Returns:
     A new list containing a maximal subset of non-nested cliques.
   """
-  cliques = sorted(cliques, key=len, reverse=True)
-  result = []
-  for cl in cliques:
-    if not any(set(cl) <= set(cl2) for cl2 in result):
-      result.append(cl)
+  result: list[Clique] = []
+  maximal_sets: list[frozenset[str | int]] = []
+  seen: set[frozenset[str | int]] = set()
+
+  for _, group in itertools.groupby(
+      sorted(cliques, key=len, reverse=True), key=len
+  ):
+    curr_sets = []
+    for cl in group:
+      s = frozenset(cl)
+      if s not in seen:
+        seen.add(s)
+        if not any(s <= m for m in maximal_sets):
+          result.append(cl)
+          curr_sets.append(s)
+    maximal_sets.extend(curr_sets)
+
   return result
 
 

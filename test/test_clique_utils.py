@@ -1,5 +1,5 @@
 import unittest
-from mbi.clique_utils import clique_mapping, reverse_clique_mapping
+from mbi.clique_utils import clique_mapping, maximal_subset, reverse_clique_mapping
 from mbi.domain import Domain
 
 
@@ -70,6 +70,24 @@ class TestCliqueUtils(unittest.TestCase):
           'clique_mapping or reverse_clique_mapping raised TypeError,'
           ' likely due to missing domain argument support'
       )
+
+  def test_maximal_subset(self):
+    cliques = [('A', 'B'), ('B',), ('C',), ('B', 'A')]
+    result = maximal_subset(cliques)
+    self.assertEqual(result, [('A', 'B'), ('C',)])
+
+  def test_maximal_subset_edge_cases(self):
+    self.assertEqual(maximal_subset([]), [])
+    self.assertEqual(maximal_subset([()]), [()])
+    self.assertEqual(maximal_subset([('A',), ('A',)]), [('A',)])
+    self.assertEqual(
+        maximal_subset([('A', 'B', 'C'), ('A', 'B'), ('B', 'C'), ('D',)]),
+        [('A', 'B', 'C'), ('D',)],
+    )
+    self.assertEqual(
+        maximal_subset([('A', 1), (1,), ('A',), (2,)]),
+        [('A', 1), (2,)],
+    )
 
 
 if __name__ == '__main__':
