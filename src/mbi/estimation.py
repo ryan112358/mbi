@@ -51,7 +51,7 @@ _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 CALLBACK_EVERY = 50
 
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
+
 def _extract_potentials(
     warm_start: Model | CliqueVector | None,
     domain: Domain,
@@ -67,7 +67,7 @@ def _extract_potentials(
   )
   return w_pot.expand(cliques)
 
-
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class Estimator(ABC):
   """An object that estimates a Model from a marginal-based loss function.
 
