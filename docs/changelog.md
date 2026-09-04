@@ -4,30 +4,19 @@ This page documents the history of changes for each version of `mbi`.
 
 ## Version 2.0.0 - 09/2026
 
-This release introduces significant optimizations by decoupling the primary data engine from pandas, alongside several new algorithmic extensions, extensive API modernization, and quality-of-life updates.
-
-**New Features & Algorithms**
-* Introduced the Joint Adaptive Measurements (`JAM`) mechanism for DP synthetic data generation, available in the codebase as an example workflow.
-* Added explicit Ahead-of-Time JIT compilation capabilities for generative modeling via `synthetic_data.precompile`.
-* Added native dataset compression and decompression capabilities (`Dataset.compress` and `Dataset.decompress`).
-* Bolstered belief propagation with support for vector-valued and single-row evidence in `variable_elimination`.
-* Implemented multidimensional `Factor.slice()` optimized with native tuple indexing.
-
-**Performance & Core Stability**
-* Removed the `pandas` dependency internally from `src/mbi/`, completely overhauling `Dataset` and `synthetic_data` logic to leverage highly optimized NumPy 1-D arrays and `bincount` operations natively.
-* Switched the default `einsum` engine to `'auto'`.
-* Fixed calibration boundaries in `JAM` sensitivity parameters (adjusted from 2 to 4).
-* Shipped unit tests for verifying `junction_tree` clique graph consistencies.
-
-**API Modernization & Cleanup**
-* Standardized the `warm_start` parameter in all estimators. It now cleanly and natively accepts full objects (`MarkovRandomField`, `MixtureOfProducts`, or raw `CliqueVector`).
-* **Unified Estimator API**: Relaxed and generalized the `Estimator` Protocol, providing a single, unified `estimate(loss_fn, ...)` signature across all implementations.
-* Deprecated and dropped `**kwargs` and stale parameters across the library.
-* Stripped out outdated backward compatibility properties (`CliqueVector.arrays`, `Domain.attrs`) and the deprecated `gaussian_noise_scale` method.
-
-**Documentation & Linting**
-* Fully configured scalable Sphinx API documentation generation, integrating native `autosummary` for the new `extensions` and `junction_tree` modules.
-* Formalized continuous integration checking Pyre typing, Pyink PEP-8 formatting, and `docs/` HTML compilation tests.
+* New unified Estimator API & optimizers. MBI introduced an Estimator class replacing legacy ad-hoc estimation functions. Optimizers including MirrorDescent, DualAveraging, InteriorGradient, and LBFGS now share a common estimation lifecycle and benefit from shared components and a unified API. Key features include:
+    * Warm-starting (warm_start=model): Initialize optimization from a previously estimated model, automatically expanding potentials to cover newly observed cliques.
+    * Tolerance-based early stopping (tol, patience): Terminate estimation early when relative loss improvement plateaus.
+    * Analytic Lipschitz computation: Automatically computes exact L2 Lipschitz constants directly from measurement metadata to tune step sizes without manual parameter sweeps.
+    * New estimator models: Added MixtureOfProductsEstimator (i.e., [Relaxed Projection](https://arxiv.org/html/2103.06641v2)) and ReweightedDatasetEstimator (from [PMW^{pub}](https://proceedings.mlr.press/v139/liu21w/liu21w.pdf)) in mbi.extensions.
+* Structural constraints (possible/impossible values & functional dependencies). A new first-class Constraint dataclass allows declaring exact domain validity rules in three flexible ways: valid / invalid possible combinations or functional dependencies. Constraints are surfaced throughout the API and automatically converted into log-space potentials (0.0 for valid, -inf for invalid) where needed.
+* Library-wide ahead-of-time precompilation. Ahead-of-time compilation has been systematically introduced across the core library (estimation, inference, data generation, and marginal computation) to mitigate JIT tracing latency. Some mechanisms (e.g., AIM) built on top of MBI require compiling a large number of different programs, and compilation time can be a significant overhead.
+* Serialization (save / load). Added native numpy-based serialization for MarkovRandomField, LinearMeasurement, and CliqueVector, ensuring models and intermediates can be checkpointed and restored reliably.
+* Domain compression & query filtering: Added LinearMeasurement.compress() and Dataset.compress() for domain reduction, plus DatavectorQuery.use_for_total_estimation to exclude auxiliary queries from total count estimation.
+* Modernization & code quality.
+    * Migrated internal structures from attrs to standard Python dataclasses.
+    * Deprecated Domain.attrs in favor of Domain.attributes.
+    * Migrated from pytype to pyrefly for static analysis checks, and improved type safety across the library.
 
 ## Version 1.0 - 11/2024
 
