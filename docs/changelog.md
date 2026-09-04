@@ -12,7 +12,7 @@ This page documents the history of changes for each version of `mbi`.
 * Structural constraints (possible/impossible values & functional dependencies). A new first-class Constraint dataclass allows declaring exact domain validity rules in three flexible ways: valid / invalid possible combinations or functional dependencies. Constraints are surfaced throughout the API and automatically converted into log-space potentials (0.0 for valid, -inf for invalid) where needed.
 * Library-wide ahead-of-time precompilation. Ahead-of-time compilation has been systematically introduced across the core library (estimation, inference, data generation, and marginal computation) to mitigate JIT tracing latency. Some mechanisms (e.g., AIM) built on top of MBI require compiling a large number of different programs, and compilation time can be a significant overhead.
 * Serialization (save / load). Added native numpy-based serialization for MarkovRandomField, LinearMeasurement, and CliqueVector, ensuring models and intermediates can be checkpointed and restored reliably.
-* Domain compression & query filtering: Added LinearMeasurement.compress() and Dataset.compress() for domain reduction, plus DatavectorQuery.use_for_total_estimation to exclude auxiliary queries from total count estimation.
+* Domain compression: Added LinearMeasurement.compress() and Dataset.compress() for domain reduction.
 * Modernization & code quality.
     * Migrated internal structures from attrs to standard Python dataclasses.
     * Deprecated Domain.attrs in favor of Domain.attributes.
