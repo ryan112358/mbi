@@ -29,6 +29,8 @@ def set_log_fn(fn):
 
 def log(*args, **kwargs):
   """Log a message using the configured log function."""
+  if _log_fn is print:
+    kwargs.setdefault("flush", True)
   _log_fn(*args, **kwargs)
 
 
@@ -88,6 +90,7 @@ def default(
     measurements: list[LinearMeasurement],
     domain: Domain,
     data: Projectable | None = None,
+    include_primal_feasibility: bool | None = None,
 ) -> Callback:
   """Creates a default Callback with standard loss functions."""
   loss_fns = {
@@ -119,8 +122,16 @@ def default(
         ground_truth, domain, norm="l1", normalize=True
     )
 
-  loss_fns["Primal Feas"] = marginal_loss.MarginalLossFn(
-      cliques=(), loss_fn=_primal_feasibility_loss
-  )
+  if include_primal_feasibility is None:
+    # Computing primal feasibility has O(|cliques|^2) complexity and creates a
+    # massive unrolled graph when jitted with many cliques or attributes.
+    include_primal_feasibility = (
+        len(measurements) <= 50 and len(domain.attributes) <= 30
+    )
+
+  if include_primal_feasibility:
+    loss_fns["Primal Feas"] = marginal_loss.MarginalLossFn(
+        cliques=(), loss_fn=_primal_feasibility_loss
+    )
 
   return Callback(loss_fns)

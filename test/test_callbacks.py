@@ -3,6 +3,7 @@
 import unittest
 
 from mbi import callbacks, estimation
+import numpy as np
 
 
 class TestCallbackStepNumbering(unittest.TestCase):
@@ -25,6 +26,23 @@ class TestCallbackStepNumbering(unittest.TestCase):
     steps = [row[0] for row in cb.summary["data"]]
     every = estimation.CALLBACK_EVERY
     self.assertEqual(steps, [0, every, 2 * every, 3 * every])
+
+  def test_default_include_primal_feasibility(self):
+    domain = callbacks.Domain(["a", "b"], [2, 2])
+    measurements = [
+        callbacks.LinearMeasurement(np.array([10.0, 10.0]), ("a",), 1.0)
+    ]
+    cb = callbacks.default(measurements, domain)
+    self.assertIn("Primal Feas", cb.loss_fns)
+
+    cb_no_pf = callbacks.default(
+        measurements, domain, include_primal_feasibility=False
+    )
+    self.assertNotIn("Primal Feas", cb_no_pf.loss_fns)
+
+    large_measurements = measurements * 51
+    cb_large = callbacks.default(large_measurements, domain)
+    self.assertNotIn("Primal Feas", cb_large.loss_fns)
 
 
 if __name__ == "__main__":
