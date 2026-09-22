@@ -77,6 +77,7 @@ def _compress_labels(domain, mapping, new_domain_config, labels=None):
   return tuple(lc[a] for a in new_domain_config)
 
 
+@jax.tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True, eq=False)
 class Dataset:
   """A discrete tabular dataset backed by a dictionary of 1D numpy arrays.
@@ -88,7 +89,7 @@ class Dataset:
   """
 
   data: Mapping[Attribute, np.ndarray]
-  domain: Domain
+  domain: Domain = jax.tree.static()
   weights: np.ndarray | None = dataclasses.field(default=None)
 
   def __post_init__(self):
