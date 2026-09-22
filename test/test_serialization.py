@@ -8,6 +8,7 @@ import pytest
 
 from mbi import (
     CliqueVector,
+    Dataset,
     DatavectorQuery,
     Domain,
     Factor,
@@ -135,6 +136,29 @@ class TestLinearMeasurements:
         np.asarray(ms[1].query(f)),
         atol=1e-7,
     )
+
+
+class TestDataset:
+
+  def test_roundtrip(self, domain):
+    data = Dataset.synthetic(domain, 100)
+    loaded = _roundtrip(data)
+
+    assert loaded.domain == data.domain
+    assert loaded.records == data.records
+    for attr in domain.attributes:
+      np.testing.assert_array_equal(loaded.data[attr], data.data[attr])
+
+  def test_roundtrip_with_weights(self, domain):
+    weights = np.random.rand(100)
+    data = Dataset(Dataset.synthetic(domain, 100).data, domain, weights=weights)
+    loaded = _roundtrip(data)
+
+    assert loaded.domain == data.domain
+    assert loaded.records == data.records
+    for attr in domain.attributes:
+      np.testing.assert_array_equal(loaded.data[attr], data.data[attr])
+    np.testing.assert_allclose(loaded.weights, data.weights, atol=1e-6)
 
 
 class TestInvalidLeaves:
