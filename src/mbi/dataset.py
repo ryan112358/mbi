@@ -45,7 +45,7 @@ def _validate_data(data: Mapping[Attribute, np.ndarray], domain: Domain):
       raise ValueError("All columns must have the same length.")
 
 
-def _validate_mapping(map_array: np.ndarray, attr: str):
+def _validate_mapping(map_array: np.ndarray, attr: Attribute):
   if map_array.ndim != 1:
     raise ValueError(f"Mapping for {attr} must be 1D array")
   if not np.issubdtype(map_array.dtype, np.integer):
@@ -179,8 +179,8 @@ class Dataset:
 
   def compress(
       self,
-      mapping: dict[str, np.ndarray],
-      labels: dict[str, tuple] | None = None,
+      mapping: Mapping[Attribute, np.ndarray],
+      labels: Mapping[Attribute, tuple] | None = None,
   ) -> Dataset:
     """Compress the dataset by mapping domain elements to a smaller domain.
 
@@ -224,7 +224,7 @@ class Dataset:
     )
     return Dataset(new_data, new_domain, self.weights)
 
-  def decompress(self, mapping: dict[str, np.ndarray]) -> Dataset:
+  def decompress(self, mapping: Mapping[Attribute, np.ndarray]) -> Dataset:
     """Decompress the dataset by reversing the mapping.
 
     Since the mapping is surjective, the reverse mapping is one-to-many.

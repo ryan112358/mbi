@@ -35,7 +35,7 @@ _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 def precompile(
     domain: Domain,
-    cliques: list[Clique],
+    cliques: Sequence[Clique],
     rows: int,
     constraints: Sequence[Constraint] = (),
 ) -> concurrent.futures.Future:

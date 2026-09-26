@@ -39,6 +39,7 @@ from ._api import (
 
 # pylint: enable=unused-import
 from ._future import RobustFuture
+from .clique_utils import Clique
 from .clique_vector import CliqueVector
 from .constraint import Constraint
 from .domain import Domain
@@ -54,7 +55,7 @@ CALLBACK_EVERY = 50
 def _extract_potentials(
     warm_start: Model | CliqueVector | None,
     domain: Domain,
-    cliques: Sequence[tuple[int | str, ...]],
+    cliques: Sequence[Clique],
 ) -> CliqueVector:
   """Extracts and expands potentials for warm-starting optimization."""
   if warm_start is None:
@@ -152,7 +153,7 @@ class Estimator(ABC):
   def estimate(
       self,
       domain: Domain,
-      loss_fn: MarginalLossFn | list[LinearMeasurement],
+      loss_fn: MarginalLossFn | Sequence[LinearMeasurement],
       known_total: float | None = None,
       constraints: Sequence[Constraint] = (),
       iters: int = 1000,
@@ -173,7 +174,7 @@ class Estimator(ABC):
     ``patience`` consecutive blocks (default: run the full ``iters``).
     """
     constraints = tuple(constraints)
-    if isinstance(loss_fn, list):
+    if isinstance(loss_fn, Sequence):
       if known_total is None:
         known_total = minimum_variance_unbiased_total(loss_fn)
       loss_fn = marginal_loss.from_linear_measurements(loss_fn, domain)
@@ -229,9 +230,9 @@ class Estimator(ABC):
   def precompile(
       self,
       domain: Domain,
-      measurements: list[LinearMeasurement] | None = None,
+      measurements: Sequence[LinearMeasurement] | None = None,
       *,
-      extra_cliques: list[tuple[str, ...]] | None = None,
+      extra_cliques: Sequence[Clique] | None = None,
       constraints: Sequence[Constraint] = (),
   ) -> concurrent.futures.Future:
     """Warm up the JIT cache for ``estimate`` asynchronously.
@@ -266,7 +267,7 @@ class Estimator(ABC):
 
 
 def minimum_variance_unbiased_total(
-    measurements: list[LinearMeasurement],
+    measurements: Sequence[LinearMeasurement],
 ) -> float:
   """Estimates the total count from measurements with identity queries."""
   # find the minimum variance estimate of the total given the measurements
