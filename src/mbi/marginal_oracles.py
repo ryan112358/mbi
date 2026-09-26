@@ -675,8 +675,8 @@ def variable_elimination(
 
 def precompile_bulk_variable_elimination(
     domain: Domain,
-    potential_cliques: Sequence[tuple[str, ...]],
-    marginal_queries: list[tuple[str, ...]],
+    potential_cliques: Sequence[Clique],
+    marginal_queries: Sequence[Clique],
     *,
     constraints: Sequence[Constraint] = (),
 ) -> concurrent.futures.Future:
@@ -709,7 +709,7 @@ def precompile_bulk_variable_elimination(
 
 def bulk_variable_elimination(
     potentials: CliqueVector,
-    marginal_queries: list[tuple[str, ...]],
+    marginal_queries: Sequence[Clique],
     total: float = 1.0,
     *,
     constraints: Sequence[Constraint] = (),
@@ -754,7 +754,7 @@ def bulk_variable_elimination(
 
 def calculate_many_marginals(
     potentials: CliqueVector,
-    marginal_queries: list[Clique],
+    marginal_queries: Sequence[Clique],
     total: float = 1.0,
     belief_propagation_oracle: MarginalOracle = message_passing_stable,
     *,

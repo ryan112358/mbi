@@ -10,7 +10,7 @@ included.
 """
 
 import dataclasses
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, SupportsFloat, cast
 
 import jax
@@ -21,7 +21,7 @@ import optax
 
 from .clique_utils import Clique, clique_mapping, maximal_subset
 from .clique_vector import CliqueVector
-from .domain import Domain
+from .domain import Attribute, Domain
 from .factor import Factor
 
 
@@ -119,7 +119,7 @@ class LinearMeasurement:
     object.__setattr__(self, "clique", tuple(self.clique))
 
   def compress(
-      self, mapping: dict[str, np.ndarray], domain: Domain
+      self, mapping: Mapping[Attribute, np.ndarray], domain: Domain
   ) -> "LinearMeasurement":
     """Compress this measurement by merging domain values.
 
@@ -253,7 +253,7 @@ def _normalized_l1_loss(
 
 def calculate_l2_lipschitz(
     domain: Domain,
-    cliques: list[Clique],
+    cliques: Sequence[Clique],
     loss_fn: Callable[[CliqueVector], ArrayLike],
 ) -> float:
   """Estimate the Lipschitz constant of L(x) = || f(x) - y ||_2^2 where f is a linear function.
@@ -333,7 +333,7 @@ def calculate_l2_lipschitz_from_metadata(
 
 
 def from_linear_measurements(
-    measurements: list[LinearMeasurement],
+    measurements: Sequence[LinearMeasurement],
     domain: Domain,
     norm: str = "l2",
     normalize: bool = False,

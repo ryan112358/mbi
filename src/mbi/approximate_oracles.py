@@ -332,7 +332,7 @@ class ApproxMirrorDescent:
   def estimate(
       self,
       domain: Domain,
-      loss_fn: marginal_loss.MarginalLossFn | list[LinearMeasurement],
+      loss_fn: marginal_loss.MarginalLossFn | Sequence[LinearMeasurement],
       *,
       known_total: float | None = None,
       potentials: CliqueVector | None = None,
@@ -375,9 +375,9 @@ class ApproxMirrorDescent:
   def precompile(
       self,
       domain: Domain,
-      measurements: list[LinearMeasurement] | None = None,
+      measurements: Sequence[LinearMeasurement] | None = None,
       *,
-      extra_cliques: list[tuple[str, ...]] | None = None,
+      extra_cliques: Sequence[Clique] | None = None,
   ) -> concurrent.futures.Future:
     """Warm up the JIT cache for ``estimate``.
 
