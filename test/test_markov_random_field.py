@@ -15,6 +15,63 @@ from mbi import (
 
 class TestMarkovRandomField(unittest.TestCase):
 
+  def test_slice_and_project(self):
+    import jax
+    import jax.numpy as jnp
+
+    domain = Domain(["A", "B", "C", "D"], [2, 2, 2, 2])
+    marginals = CliqueVector(
+        domain,
+        [("A", "B"), ("B", "C", "D")],
+        {
+            ("A", "B"): Factor.ones(domain.project(("A", "B"))),
+            ("B", "C", "D"): Factor.ones(domain.project(("B", "C", "D"))),
+        },
+    )
+    potentials = CliqueVector(
+        domain,
+        [("A", "B"), ("B", "C", "D")],
+        {
+            ("A", "B"): Factor.ones(domain.project(("A", "B"))),
+            ("B", "C", "D"): Factor.ones(domain.project(("B", "C", "D"))),
+        },
+    )
+    # Potentials are unnormalized ones (log=0), meaning uniform distribution
+    mrf = MarkovRandomField(
+        potentials=potentials, marginals=marginals, total=100.0
+    )
+
+    # 1. Test slice accumulation
+    mrf_sliced = mrf.slice({"D": 0})
+    self.assertEqual(mrf_sliced._evidence, {"D": 0})
+    mrf_sliced_more = mrf_sliced.slice({"C": 1})
+    self.assertEqual(mrf_sliced_more._evidence, {"D": 0, "C": 1})
+
+    # 2. Test fast path projection from marginals
+    ans_marginal = mrf_sliced.project(("B", "C"))
+    self.assertEqual(ans_marginal.domain.attributes, ("B", "C"))
+    # Factor.ones normalized to 100 on B, C (domain 2x2 = 4) gives 25.0 each
+    self.assertTrue(np.allclose(ans_marginal.values, 25.0))
+
+    # 3. Test fallback variable elimination projection
+    ans_ve = mrf_sliced.project(("A", "C"))
+    self.assertEqual(ans_ve.domain.attributes, ("A", "C"))
+    self.assertTrue(np.allclose(ans_ve.values, 25.0))
+
+    # 4. Test error on overlapping query and evidence
+    with self.assertRaises(ValueError):
+      mrf_sliced.project(("C", "D"))
+
+    # 5. Test JAX JIT compilation
+    @jax.jit
+    def jitted_predict(d):
+      return mrf.slice({"D": d}).project(("A", "C")).values
+
+    val0 = jitted_predict(0)
+    val1 = jitted_predict(1)
+    self.assertTrue(jnp.allclose(val0, 25.0))
+    self.assertTrue(jnp.allclose(val1, 25.0))
+
   def test_synthetic_data_accuracy(self):
     domain = Domain(["A", "B"], [10, 10])
     factor = Factor.random(domain).normalize(1.0)
