@@ -153,9 +153,11 @@ class CliqueVector:
   ) -> CliqueVector:
     """Slices each factor by fixing evidence attributes to scalar values.
 
-    Cliques that become empty after removing the evidence attributes are
-    dropped, and cliques that collide onto the same reduced attribute tuple are
-    summed.
+    If the original CliqueVector represents the log-space potentials of a
+    Graphical Model, the returned CliqueVector represents the conditional
+    log-space potentials over the remaining attributes given the evidence.
+    Cliques fully contained in ``evidence`` are dropped, and cliques that
+    collide onto the same reduced attribute tuple are summed.
 
     Args:
         evidence: Mapping from attribute names to observed integer values.
