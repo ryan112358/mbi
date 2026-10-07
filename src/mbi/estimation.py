@@ -523,7 +523,7 @@ class DualAveraging(Estimator):
     )  # upper bound on entropy
     Q = 0  # upper bound on variance of stochastic gradients
     gamma = Q / D
-    L = loss_fn.lipschitz / known_total
+    L = loss_fn.lipschitz
 
     w = v = marginal_oracle(potentials, known_total)
     gbar = CliqueVector.zeros(domain, loss_fn.cliques)
