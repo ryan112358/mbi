@@ -158,6 +158,20 @@ class TestEstimation(unittest.TestCase):
       actual = model.project(M.clique).datavector()
       np.testing.assert_allclose(actual, expected, atol=1e-2)
 
+  def test_dual_averaging_large_total(self):
+    cliques = [("a", "b"), ("b", "c"), ("c", "d")]
+    total = 1e6
+    measurements = [
+        marginal_loss.LinearMeasurement(m.noisy_measurement * total, m.clique)
+        for m in fake_measurements(cliques)
+    ]
+    model = estimation.DualAveraging().estimate(
+        _DOMAIN, measurements, known_total=total, iters=250
+    )
+    for m in measurements:
+      actual = model.project(m.clique).datavector()
+      np.testing.assert_allclose(actual, m.noisy_measurement, atol=1e-4 * total)
+
   @parameterized.expand(itertools.product(_CLIQUE_SETS))
   def test_interior_gradient(self, cliques):
     measurements = fake_measurements(cliques)
