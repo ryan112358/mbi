@@ -119,7 +119,7 @@ class LinearMeasurement:
     object.__setattr__(self, "clique", tuple(self.clique))
 
   def compress(
-      self, mapping: Mapping[Attribute, np.ndarray], domain: Domain
+      self, mapping: Mapping[Any, np.ndarray], domain: Domain
   ) -> "LinearMeasurement":
     """Compress this measurement by merging domain values.
 

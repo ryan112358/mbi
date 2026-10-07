@@ -8,6 +8,7 @@ and weighted records.
 
 from __future__ import annotations
 
+from typing import Any
 import dataclasses
 import math
 from collections.abc import Mapping, Sequence
@@ -32,7 +33,7 @@ def _validate_column_meta(data: np.ndarray, attr: Attribute):
     )
 
 
-def _validate_data(data: Mapping[Attribute, np.ndarray], domain: Domain):
+def _validate_data(data: Mapping[Any, np.ndarray], domain: Domain):
   if set(data.keys()) != set(domain.attributes):
     raise ValueError("Keys in data dictionary must match domain attributes")
   n = None
@@ -88,7 +89,7 @@ class Dataset:
       weights: Optional per-row weights (defaults to all ones).
   """
 
-  data: Mapping[Attribute, np.ndarray]
+  data: Mapping[Any, np.ndarray]
   domain: Domain = jax.tree.static()
   weights: np.ndarray | None = dataclasses.field(default=None)
 
@@ -179,8 +180,8 @@ class Dataset:
 
   def compress(
       self,
-      mapping: Mapping[Attribute, np.ndarray],
-      labels: Mapping[Attribute, tuple] | None = None,
+      mapping: Mapping[Any, np.ndarray],
+      labels: Mapping[Any, tuple] | None = None,
   ) -> Dataset:
     """Compress the dataset by mapping domain elements to a smaller domain.
 
@@ -224,7 +225,7 @@ class Dataset:
     )
     return Dataset(new_data, new_domain, self.weights)
 
-  def decompress(self, mapping: Mapping[Attribute, np.ndarray]) -> Dataset:
+  def decompress(self, mapping: Mapping[Any, np.ndarray]) -> Dataset:
     """Decompress the dataset by reversing the mapping.
 
     Since the mapping is surjective, the reverse mapping is one-to-many.
