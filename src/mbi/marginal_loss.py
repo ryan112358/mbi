@@ -401,8 +401,13 @@ def primal_feasibility(mu: CliqueVector) -> ArrayLike:
 
 def mle_loss_fn(marginals: CliqueVector) -> "MarginalLossFn":
   """MLE loss: ``-marginals.dot(mu.log())``."""
+
+  def _loss(mu: CliqueVector, target: CliqueVector) -> ArrayLike:
+    safe_mu = jax.tree.map(lambda m, t: jnp.where(t != 0, m, 1.0), mu, target)
+    return -1 * target.dot(safe_mu.log())
+
   return MarginalLossFn(
       cliques=marginals.cliques,
-      loss_fn=lambda mu, target: -target.dot(mu.log()),
+      loss_fn=_loss,
       data=marginals,
   )

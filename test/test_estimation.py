@@ -352,6 +352,48 @@ class TestEstimation(unittest.TestCase):
       estimation.LBFGS,
       estimation.UniversalAcceleratedMethod,
   ])
+  def test_estimator_with_structural_zero_constraints(self, estimator_cls):
+    """Estimators handle structural zeros inside cliques and unreachable values."""
+    from mbi import Constraint
+
+    domain = Domain(["a", "b", "c"], [3, 3, 3])
+    c1 = Constraint(
+        domain=domain.project(("a", "b")), invalid=np.array([[0, 1], [1, 0]])
+    )
+    c2 = Constraint(
+        domain=domain.project(("b", "c")), mapping=np.array([0, 0, 1])
+    )
+    cliques = [("a", "b"), ("b", "c")]
+
+    P = Factor.ones(domain) * c1.potential.exp() * c2.potential.exp()
+    P = P / P.sum()
+    measurements = [
+        marginal_loss.LinearMeasurement(P.project(cl).datavector(), cl)
+        for cl in cliques
+    ]
+    model = estimator_cls().estimate(
+        domain,
+        measurements,
+        known_total=1.0,
+        iters=100,
+        constraints=[c1, c2],
+    )
+
+    ab = model.project(("a", "b")).datavector().reshape(3, 3)
+    bc = model.project(("b", "c")).datavector().reshape(3, 3)
+    self.assertTrue(np.all(np.isfinite(ab)))
+    self.assertTrue(np.all(np.isfinite(bc)))
+    np.testing.assert_allclose(ab.sum(), 1.0, atol=1e-4)
+    np.testing.assert_allclose(ab[0, 1] + ab[1, 0], 0.0, atol=1e-6)
+    np.testing.assert_allclose(bc[:, 2], 0.0, atol=1e-6)
+
+  @parameterized.expand([
+      estimation.MirrorDescent,
+      estimation.DualAveraging,
+      estimation.InteriorGradient,
+      estimation.LBFGS,
+      estimation.UniversalAcceleratedMethod,
+  ])
   def test_warm_start_expanding_cliques(self, estimator_cls):
     """Warm-starting with new cliques produces a valid model."""
     cliques1 = [("a", "b")]

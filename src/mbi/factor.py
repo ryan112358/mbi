@@ -13,6 +13,15 @@ import numpy as np
 from .domain import Attribute, Domain
 
 
+def _safe_logsumexp(a: jax.Array, axis: tuple[int, ...]) -> jax.Array:
+  # Double-where keeps the backward softmax finite (0 instead of exp(-inf - -inf))
+  # when a constraint forces an entire slice along `axis` to -inf.
+  all_neg_inf = jnp.isneginf(jnp.max(a, axis=axis, keepdims=True))
+  safe_a = jnp.where(all_neg_inf, 0.0, a)
+  lse = jax.scipy.special.logsumexp(safe_a, axis=axis)
+  return jnp.where(jnp.squeeze(all_neg_inf, axis=axis), -jnp.inf, lse)
+
+
 @jax.tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)  # pytype: disable=invalid-function-definition
 class Factor:
@@ -114,7 +123,7 @@ class Factor:
 
   def logsumexp(self, attrs: Sequence[Attribute] | None = None) -> Factor:
     """Computes the log-sum-exp along specified attribute axes."""
-    return self._aggregate(jax.scipy.special.logsumexp, attrs)
+    return self._aggregate(_safe_logsumexp, attrs)
 
   def project(
       self, attrs: Attribute | Sequence[Attribute], log: bool = False
