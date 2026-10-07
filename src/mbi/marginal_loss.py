@@ -404,7 +404,7 @@ def mle_loss_fn(marginals: CliqueVector) -> "MarginalLossFn":
 
   def _loss(mu: CliqueVector, target: CliqueVector) -> ArrayLike:
     safe_mu = jax.tree.map(lambda m, t: jnp.where(t != 0, m, 1.0), mu, target)
-    return -target.dot(safe_mu.log())
+    return -1 * target.dot(safe_mu.log())
 
   return MarginalLossFn(
       cliques=marginals.cliques,
