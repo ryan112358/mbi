@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 from jax.typing import ArrayLike
 import jax
@@ -135,7 +135,7 @@ class Factor:
     result = self.logsumexp(marginalized) if log else self.sum(marginalized)
     return result.transpose(attrs)
 
-  def slice(self, evidence: dict[Attribute, int | jax.Array]) -> "Factor":
+  def slice(self, evidence: Mapping[Attribute, int | jax.Array]) -> "Factor":
     """Slice the factor by fixing attributes to scalar values.
 
     Args:

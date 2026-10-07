@@ -264,5 +264,112 @@ class TestSyntheticDataConstraints(unittest.TestCase):
     self.assertEqual(np.sum(synth["b"] != mapping[synth["a"]]), 0)
 
 
+class TestMarkovRandomFieldCondition(unittest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    self.domain = Domain(["A", "B", "C", "D"], [3, 4, 2, 3])
+    self.cliques = [("A", "B"), ("B", "C"), ("C", "D"), ("A", "C")]
+    self.model = _create_random_model(self.domain, self.cliques, N=1000)
+
+  def test_condition_matches_variable_elimination(self):
+    evidence = {"A": 1}
+    cond = self.model.condition(evidence)
+    self.assertEqual(cond.domain, self.domain.marginalize(["A"]))
+    self.assertEqual(cond.potentials.cliques, cond.marginals.cliques)
+    for cl in [("B",), ("B", "C"), ("C", "D"), ("B", "D")]:
+      actual = cond.project(cl).datavector()
+      expected = marginal_oracles.variable_elimination(
+          self.model.potentials,
+          cl,
+          total=float(cond.total),
+          evidence=evidence,
+      ).datavector()
+      np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+
+  def test_condition_default_total_supported_and_unsupported(self):
+    # Supported evidence: single attribute in a clique.
+    totals_a = [float(self.model.condition({"A": v}).total) for v in range(3)]
+    expected_a = self.model.project(("A",)).datavector()
+    np.testing.assert_allclose(totals_a, expected_a, rtol=1e-5)
+    self.assertAlmostEqual(sum(totals_a), 1000.0, places=3)
+
+    # Unsupported multi-clique evidence: (A, D) is not in any single clique.
+    self.assertFalse(self.model.marginals.supports(("A", "D")))
+    cond_ad = self.model.condition({"A": 2, "D": 1})
+    expected_ad = float(
+        self.model.project(("A", "D")).slice({"A": 2, "D": 1}).values
+    )
+    self.assertAlmostEqual(float(cond_ad.total), expected_ad, places=4)
+
+  def test_condition_explicit_total(self):
+    cond = self.model.condition({"A": 0}, total=250.0)
+    self.assertAlmostEqual(float(cond.total), 250.0, places=5)
+    self.assertAlmostEqual(float(cond.project(("B",)).sum()), 250.0, places=4)
+
+  def test_condition_unknown_attribute_raises(self):
+    with self.assertRaises(ValueError):
+      self.model.condition({"Z": 0})
+
+  def test_condition_with_constraints(self):
+    domain = Domain(["a", "b", "c"], [4, 2, 3])
+    mapping = np.array([0, 0, 1, 1])
+    constraint = Constraint(domain=domain.project(("a", "b")), mapping=mapping)
+    potentials = CliqueVector.zeros(domain, [("a", "b"), ("b", "c")])
+    marginals = marginal_oracles.message_passing_shafer_shenoy(
+        potentials, 100.0, constraints=(constraint,)
+    )
+    model = MarkovRandomField(
+        potentials=potentials,
+        marginals=marginals,
+        total=100.0,
+        constraints=(constraint,),
+    )
+    cond = model.condition({"a": 2})
+    b_marg = np.asarray(cond.project(("b",)).datavector())
+    self.assertAlmostEqual(float(b_marg[0]), 0.0, places=6)
+    self.assertAlmostEqual(float(b_marg[1]), float(cond.total), places=5)
+
+
+class TestConditionalSyntheticData(unittest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    self.domain = Domain(["A", "B", "C"], [3, 4, 2])
+    self.cliques = [("A", "B"), ("B", "C")]
+    self.model = _create_random_model(self.domain, self.cliques, N=2000)
+
+  def test_synthetic_data_with_evidence_round(self):
+    evidence = {"A": 2}
+    synth = self.model.synthetic_data(
+        rows=1000, method="round", evidence=evidence
+    )
+    self.assertEqual(synth.domain, self.domain)
+    self.assertEqual(synth.records, 1000)
+    np.testing.assert_array_equal(synth.to_dict()["A"], np.full(1000, 2))
+
+    cond = self.model.condition(evidence, total=1000)
+    actual_bc = synth.project(("B", "C")).datavector()
+    expected_bc = cond.project(("B", "C")).datavector()
+    np.testing.assert_allclose(actual_bc, expected_bc, atol=2.0 + 1e-5)
+
+  def test_synthetic_data_with_evidence_default_rows(self):
+    evidence = {"A": 1}
+    cond = self.model.condition(evidence)
+    synth = self.model.synthetic_data(method="round", evidence=evidence)
+    self.assertEqual(synth.records, max(1, int(cond.total)))
+    np.testing.assert_array_equal(
+        synth.to_dict()["A"], np.full(synth.records, 1)
+    )
+
+  def test_synthetic_data_all_attributes_conditioned(self):
+    evidence = {"A": 1, "B": 3, "C": 0}
+    synth = self.model.synthetic_data(rows=25, evidence=evidence)
+    self.assertEqual(synth.domain, self.domain)
+    self.assertEqual(synth.records, 25)
+    for attr, val in evidence.items():
+      np.testing.assert_array_equal(synth.to_dict()[attr], np.full(25, val))
+
+
 if __name__ == "__main__":
   unittest.main()

@@ -9,10 +9,10 @@ and performing arithmetic operations on these collections.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 import dataclasses
 import functools
 import operator
-from collections.abc import Sequence
 
 import jax
 import jax.numpy as jnp
@@ -147,6 +147,39 @@ class CliqueVector:
     """Computes a new CliqueVector by projecting this one onto a smaller set of cliques."""
     tables = {cl: self.project(cl, log=log) for cl in cliques}
     return CliqueVector(self.domain, cliques, tables)
+
+  def slice(
+      self, evidence: Mapping[Attribute, int | jax.Array]
+  ) -> CliqueVector:
+    """Slices each factor by fixing evidence attributes to scalar values.
+
+    Cliques that become empty after removing the evidence attributes are
+    dropped, and cliques that collide onto the same reduced attribute tuple are
+    summed.
+
+    Args:
+        evidence: Mapping from attribute names to observed integer values.
+
+    Returns:
+        A new CliqueVector defined over the reduced domain.
+    """
+    if not evidence:
+      return self
+    ev_attrs = [a for a in evidence if a in self.domain.attributes]
+    reduced_domain = self.domain.marginalize(ev_attrs)
+    cliques: list[Clique] = []
+    tables: dict[Clique, Factor] = {}
+    for cl in self.cliques:
+      new_cl = tuple(a for a in cl if a not in evidence)
+      if not new_cl:
+        continue
+      sliced = self[cl].slice(evidence)
+      if new_cl in tables:
+        tables[new_cl] = tables[new_cl] + sliced
+      else:
+        cliques.append(new_cl)
+        tables[new_cl] = sliced
+    return CliqueVector(reduced_domain, cliques, tables)
 
   def normalize(
       self, total: jax.Array | float = 1, log: bool = True
