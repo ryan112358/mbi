@@ -7,11 +7,16 @@ number of records). It also offers methods for querying marginals and
 generating synthetic data.
 """
 
-from collections.abc import Sequence
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+import dataclasses
 
 import chex
-import numpy as np
+import jax
+import jax.numpy as jnp
 from jax.typing import ArrayLike
+import numpy as np
 
 from . import junction_tree, marginal_oracles
 from .clique_utils import Clique
@@ -21,6 +26,39 @@ from .dataset import Dataset
 from .domain import Attribute
 from .domain import Domain
 from .factor import Factor
+
+
+@jax.jit
+def _condition_jit(
+    potentials: CliqueVector,
+    evidence: dict[Attribute, jax.Array],
+    total: jax.Array,
+    parent_marginal: Factor | None,
+    constraints: tuple[Constraint, ...],
+) -> tuple[CliqueVector, CliqueVector, jax.Array]:
+  # Slice log-potentials on the evidence and run belief propagation over the
+  # reduced domain inside a single JIT boundary so varying evidence values
+  # reuse the compiled executable.
+  if parent_marginal is not None:
+    ev_attrs = tuple(evidence.keys())
+    total = parent_marginal.project(ev_attrs).slice(evidence).values
+  sliced_constraints = tuple(
+      c for c in constraints if set(c.domain.attributes) & set(evidence)
+  )
+  rem_constraints = tuple(
+      c for c in constraints if not (set(c.domain.attributes) & set(evidence))
+  )
+  potentials, _ = marginal_oracles._fold_constraints(
+      potentials, sliced_constraints
+  )
+  sliced = potentials.slice(evidence)
+  if constraints:
+    marginals = marginal_oracles.message_passing_shafer_shenoy(
+        sliced, 1.0, constraints=rem_constraints
+    )
+  else:
+    marginals = marginal_oracles.message_passing_stable(sliced, 1.0)
+  return sliced, marginals * total, total
 
 
 @chex.dataclass(frozen=True, kw_only=False)
@@ -57,28 +95,102 @@ class MarkovRandomField:
     if self.marginals.supports(attrs):
       return self.marginals.project(attrs)
     return marginal_oracles.variable_elimination(
-        self.potentials, attrs, float(self.total)  # pyrefly: ignore[bad-argument-type]
+        self.potentials,
+        attrs,
+        float(self.total),  # pyrefly: ignore[bad-argument-type]
+        constraints=self.constraints,
     )
 
   def supports(self, attrs: Attribute | Sequence[Attribute]) -> bool:
     return self.marginals.domain.supports(attrs)
 
+  def condition(
+      self,
+      evidence: Mapping[Attribute, int | jax.Array],
+      total: ArrayLike | None = None,
+  ) -> MarkovRandomField:
+    """Conditions the model on observed scalar attribute values.
+
+    Args:
+        evidence: Mapping from attribute names to observed integer values.
+        total: Total count for the conditioned model. If None, defaults to the
+          expected conditional count ``self.total * P(evidence)``.
+
+    Returns:
+        A new MarkovRandomField defined over the reduced domain.
+    """
+    unknown = set(evidence) - set(self.domain.attributes)
+    if unknown:
+      raise ValueError(f"Unknown evidence attributes: {unknown}.")
+    if not evidence:
+      if total is None:
+        return self
+      scale = jnp.asarray(total, dtype=float) / jnp.asarray(
+          self.total, dtype=float
+      )
+      return dataclasses.replace(
+          self, marginals=self.marginals * scale, total=total
+      )
+    ev_jax = {k: jnp.asarray(v, dtype=jnp.int32) for k, v in evidence.items()}
+    ev_attrs = tuple(ev_jax.keys())
+    parent_marginal = None
+    if total is not None:
+      cond_total = jnp.asarray(total, dtype=float)
+    elif self.marginals.supports(ev_attrs):
+      parent_cl = self.marginals.parent(ev_attrs)
+      assert parent_cl is not None
+      parent_marginal = self.marginals[parent_cl]
+      cond_total = jnp.asarray(0.0)
+    else:
+      cond_total = self.project(ev_attrs).slice(ev_jax).values
+    sliced_potentials, cond_marginals, cond_total = _condition_jit(
+        self.potentials, ev_jax, cond_total, parent_marginal, self.constraints
+    )
+    rem_constraints = tuple(
+        c
+        for c in self.constraints
+        if not (set(c.domain.attributes) & set(evidence))
+    )
+    return MarkovRandomField(
+        potentials=sliced_potentials,
+        marginals=cond_marginals,
+        total=cond_total if total is None else total,
+        constraints=rem_constraints,
+    )
+
   def synthetic_data(
-      self, rows: int | None = None, method: str = "round"
+      self,
+      rows: int | None = None,
+      method: str = "round",
+      evidence: Mapping[Attribute, int | jax.Array] | None = None,
   ) -> Dataset:
     """Generates synthetic data based on the learned model's marginals.
 
     Args:
-        rows: The number of rows to generate. If not provided, uses the
-              model total, which is usually estimated automatically.
-        method: Specification for strategy to use to generate records.
-                - "round" for randomized rounding
-                - "sample" for i.i.d sampling
+        rows: The number of rows to generate. If not provided, uses the model
+          total, which is usually estimated automatically.
+        method: Specification for strategy to use to generate records. - "round"
+          for randomized rounding - "sample" for i.i.d sampling
+        evidence: Optional mapping from attribute names to fixed integer values
+          to condition on before generating the remaining attributes.
 
     Returns:
         A synthetic dataset whose marginals should closely match those of the
         model.
     """
+    if evidence:
+      cond_model = self.condition(evidence, total=rows)
+      data = (
+          cond_model.synthetic_data(rows=rows, method=method).to_dict()
+          if len(cond_model.domain) > 0
+          else {}
+      )
+      n_rows = max(1, int(rows or cond_model.total))  # pyrefly: ignore[bad-argument-type]
+      for attr, val in evidence.items():
+        dtype = np.min_scalar_type(self.domain[attr])
+        data[attr] = np.full(n_rows, int(val), dtype=dtype)
+      return Dataset(data, self.domain)
+
     total = max(1, int(rows or self.total))  # pyrefly: ignore[bad-argument-type]
     domain = self.domain
     jtree, elimination_order = junction_tree.make_junction_tree(
@@ -92,15 +204,9 @@ class MarkovRandomField:
     cliques = [set(cl) for cl in jtree.nodes]
 
     potentials = self.potentials.expand(list(jtree.nodes))
-    if self.constraints:
-      # Shafer-Shenoy handles the -inf constraint potentials that HUGIN can't.
-      marginals = marginal_oracles.message_passing_shafer_shenoy(
-          potentials, self.total, constraints=self.constraints
-      )
-    else:
-      marginals = marginal_oracles.message_passing_stable(
-          potentials, self.total
-      )
+    marginals = marginal_oracles.message_passing_shafer_shenoy(
+        potentials, self.total, jtree=jtree, constraints=self.constraints
+    )
 
     def synthetic_col(counts, total):
       """Generates a synthetic column by sampling or rounding based on counts and total."""
@@ -125,6 +231,8 @@ class MarkovRandomField:
 
     data = {}
     order = elimination_order[::-1]
+    if not order:
+      return Dataset(data, domain)
     col = order[0]
     marg = marginals.project((col,)).datavector(flatten=False)
     data[col] = synthetic_col(marg, total)
