@@ -567,7 +567,9 @@ class DualAveraging(Estimator):
     # reasonable initial guess rather than exactly continuing.
     loss = marginal_loss.mle_loss_fn(state.w)
     est = LBFGS(marginal_oracle=self.marginal_oracle)
-    mrf = est.estimate(state.w.domain, loss, known_total, constraints)
+    mrf = est.estimate(
+        state.w.domain, loss, known_total, constraints, iters=25000, tol=1e-6
+    )
     return cast(MarkovRandomField, mrf)
 
 
@@ -644,7 +646,9 @@ class InteriorGradient(Estimator):
   ) -> MarkovRandomField:
     loss = marginal_loss.mle_loss_fn(state.x)
     est = LBFGS(marginal_oracle=self.marginal_oracle)
-    mrf = est.estimate(state.x.domain, loss, known_total, constraints)
+    mrf = est.estimate(
+        state.x.domain, loss, known_total, constraints, iters=25000, tol=1e-6
+    )
     return cast(MarkovRandomField, mrf)
 
 
@@ -757,7 +761,7 @@ class UniversalAcceleratedMethod(Estimator):
   and `Roulet & d'Aspremont (2017) <https://arxiv.org/pdf/1702.03828>`_.
 
   Attributes:
-      marginal_oracle: The function to compute marginals from potentials.
+  marginal_oracle: The function to compute marginals from potentials.
           If ``None`` (default), uses ``default_oracle()`` to auto-select.
       max_iter_search: Max inner line-search iterations per step.
       target_acc: Target accuracy (set > 0 for non-smooth objectives).
@@ -902,4 +906,6 @@ class UniversalAcceleratedMethod(Estimator):
     marginals = state.x * known_total
     loss = marginal_loss.mle_loss_fn(marginals)
     est = LBFGS(marginal_oracle=self.marginal_oracle)
-    return est.estimate(marginals.domain, loss, known_total, constraints)
+    return est.estimate(
+        marginals.domain, loss, known_total, constraints, iters=25000, tol=1e-6
+    )
