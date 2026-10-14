@@ -650,8 +650,9 @@ class InteriorGradient(Estimator):
   ) -> MarkovRandomField:
     loss = marginal_loss.mle_loss_fn(state.x)
     est = LBFGS(marginal_oracle=self.marginal_oracle)
-    kwargs = self.finalize_kwargs
-    mrf = est.estimate(state.x.domain, loss, known_total, constraints, **kwargs)
+    mrf = est.estimate(
+        state.x.domain, loss, known_total, constraints, iters=25000, tol=1e-6
+    )
     return cast(MarkovRandomField, mrf)
 
 
@@ -764,7 +765,6 @@ class UniversalAcceleratedMethod(Estimator):
   and `Roulet & d'Aspremont (2017) <https://arxiv.org/pdf/1702.03828>`_.
 
   Attributes:
-      finalize_kwargs: dict = dataclasses.field(default_factory=lambda: {"iters": 25000, "tol": 1e-6})
   marginal_oracle: The function to compute marginals from potentials.
           If ``None`` (default), uses ``default_oracle()`` to auto-select.
       max_iter_search: Max inner line-search iterations per step.
