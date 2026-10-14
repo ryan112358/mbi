@@ -502,7 +502,7 @@ class DualAveraging(Estimator):
 
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
   finalize_kwargs: dict = dataclasses.field(
-      default_factory=lambda: {"iters": 10000, "tol": 1e-5}
+      default_factory=lambda: {"iters": 25000, "tol": 1e-6}
   )
   mesh: jax.sharding.Mesh | None = None
 
@@ -593,7 +593,7 @@ class InteriorGradient(Estimator):
 
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
   finalize_kwargs: dict = dataclasses.field(
-      default_factory=lambda: {"iters": 10000, "tol": 1e-5}
+      default_factory=lambda: {"iters": 25000, "tol": 1e-6}
   )
   mesh: jax.sharding.Mesh | None = None
 
@@ -764,7 +764,7 @@ class UniversalAcceleratedMethod(Estimator):
   and `Roulet & d'Aspremont (2017) <https://arxiv.org/pdf/1702.03828>`_.
 
   Attributes:
-      finalize_kwargs: dict = dataclasses.field(default_factory=lambda: {"iters": 10000, "tol": 1e-5})
+      finalize_kwargs: dict = dataclasses.field(default_factory=lambda: {"iters": 25000, "tol": 1e-6})
   marginal_oracle: The function to compute marginals from potentials.
           If ``None`` (default), uses ``default_oracle()`` to auto-select.
       max_iter_search: Max inner line-search iterations per step.
