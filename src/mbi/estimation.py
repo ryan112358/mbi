@@ -501,6 +501,9 @@ class DualAveraging(Estimator):
   """
 
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
+  finalize_kwargs: dict = dataclasses.field(
+      default_factory=lambda: {"iters": 10000, "tol": 1e-5}
+  )
   mesh: jax.sharding.Mesh | None = None
 
   def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
@@ -589,6 +592,9 @@ class InteriorGradient(Estimator):
   """
 
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
+  finalize_kwargs: dict = dataclasses.field(
+      default_factory=lambda: {"iters": 10000, "tol": 1e-5}
+  )
   mesh: jax.sharding.Mesh | None = None
 
   def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
@@ -644,7 +650,8 @@ class InteriorGradient(Estimator):
   ) -> MarkovRandomField:
     loss = marginal_loss.mle_loss_fn(state.x)
     est = LBFGS(marginal_oracle=self.marginal_oracle)
-    mrf = est.estimate(state.x.domain, loss, known_total, constraints)
+    kwargs = self.finalize_kwargs
+    mrf = est.estimate(state.x.domain, loss, known_total, constraints, **kwargs)
     return cast(MarkovRandomField, mrf)
 
 
@@ -757,7 +764,8 @@ class UniversalAcceleratedMethod(Estimator):
   and `Roulet & d'Aspremont (2017) <https://arxiv.org/pdf/1702.03828>`_.
 
   Attributes:
-      marginal_oracle: The function to compute marginals from potentials.
+      finalize_kwargs: dict = dataclasses.field(default_factory=lambda: {"iters": 10000, "tol": 1e-5})
+  marginal_oracle: The function to compute marginals from potentials.
           If ``None`` (default), uses ``default_oracle()`` to auto-select.
       max_iter_search: Max inner line-search iterations per step.
       target_acc: Target accuracy (set > 0 for non-smooth objectives).
@@ -902,4 +910,7 @@ class UniversalAcceleratedMethod(Estimator):
     marginals = state.x * known_total
     loss = marginal_loss.mle_loss_fn(marginals)
     est = LBFGS(marginal_oracle=self.marginal_oracle)
-    return est.estimate(marginals.domain, loss, known_total, constraints)
+    kwargs = self.finalize_kwargs
+    return est.estimate(
+        marginals.domain, loss, known_total, constraints, **kwargs
+    )
