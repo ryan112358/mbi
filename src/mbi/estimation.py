@@ -501,9 +501,6 @@ class DualAveraging(Estimator):
   """
 
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
-  finalize_kwargs: dict = dataclasses.field(
-      default_factory=lambda: {"iters": 25000, "tol": 1e-6}
-  )
   mesh: jax.sharding.Mesh | None = None
 
   def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
@@ -592,9 +589,6 @@ class InteriorGradient(Estimator):
   """
 
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
-  finalize_kwargs: dict = dataclasses.field(
-      default_factory=lambda: {"iters": 25000, "tol": 1e-6}
-  )
   mesh: jax.sharding.Mesh | None = None
 
   def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
@@ -910,7 +904,6 @@ class UniversalAcceleratedMethod(Estimator):
     marginals = state.x * known_total
     loss = marginal_loss.mle_loss_fn(marginals)
     est = LBFGS(marginal_oracle=self.marginal_oracle)
-    kwargs = self.finalize_kwargs
     return est.estimate(
-        marginals.domain, loss, known_total, constraints, **kwargs
+        marginals.domain, loss, known_total, constraints, iters=25000, tol=1e-6
     )
