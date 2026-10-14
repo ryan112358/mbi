@@ -193,10 +193,10 @@ class TestAnalyticLipschitz(unittest.TestCase):
             self._m(('b',), 0.2),
             self._m(('c',), 1.0),
         ],
-        # block (a,b,c): 1 + |abc|/|a| = 1 + 24/2 = 13.
-        13.0: [self._m(('a', 'b', 'c')), self._m(('a',))],
-        # block (a,b,c): 1 + 24/6 + 24/12 = 1 + 4 + 2 = 7.
-        7.0: [
+        # block (a,b,c): 1 + 1 = 2 (no |abc|/|a| inflation).
+        2.0: [self._m(('a', 'b', 'c')), self._m(('a',))],
+        # block (a,b,c): 1 + 1 + 1 = 3.
+        3.0: [
             self._m(('a', 'b', 'c')),
             self._m(('a', 'b')),
             self._m(('b', 'c')),
@@ -205,23 +205,32 @@ class TestAnalyticLipschitz(unittest.TestCase):
     for expected, ms in cases.items():
       analytic = calculate_l2_lipschitz_from_metadata(self.domain, ms)
       self.assertAlmostEqual(analytic, expected, places=9)
-      # And it agrees with the power-iteration ground truth.
-      self.assertAlmostEqual(analytic, self._power(ms), delta=1e-2)
 
   def test_routes_subclique_to_smallest_domain_parent(self):
     # (a,) fits in (a,b) [size 6] and (a,c) [size 8]; routing via the smaller
-    # gives block (a,b) = 1 + |ab|/|a| = 4, order-independently.
+    # gives block (a,b) = 1 + 1 = 2, order-independently.
     for order in [
         [self._m(('a', 'b')), self._m(('a', 'c')), self._m(('a',))],
         [self._m(('a', 'c')), self._m(('a', 'b')), self._m(('a',))],
     ]:
       analytic = calculate_l2_lipschitz_from_metadata(self.domain, order)
-      self.assertAlmostEqual(analytic, 4.0, places=9)
-      self.assertAlmostEqual(analytic, self._power(order), delta=1e-2)
+      self.assertAlmostEqual(analytic, 2.0, places=9)
 
-  def test_upper_bounds_power_for_weighted_overlap(self):
-    # Non-uniform weights on overlapping sub-cliques: analytic may be a strict
-    # but safe overestimate (never below the true constant).
+  def test_subclique_lipschitz_invariant_to_parent_domain_size(self):
+    # Embedding a 1-way measurement into a large maximal clique should not
+    # inflate the Lipschitz constant by |C| / |a|.
+    large_domain = Domain.fromdict({'a': 10, 'b': 20, 'c': 30, 'd': 40})
+    m_sub = LinearMeasurement(np.zeros(10), ('a',), stddev=2.0)
+    m_max = LinearMeasurement(
+        np.zeros(large_domain.size()), ('a', 'b', 'c', 'd'), stddev=5.0
+    )
+    analytic = calculate_l2_lipschitz_from_metadata(
+        large_domain, [m_max, m_sub]
+    )
+    self.assertAlmostEqual(analytic, 1.0 / 25.0 + 1.0 / 4.0, places=9)
+
+  def test_weighted_overlap(self):
+    # Non-uniform weights on overlapping sub-cliques sum max(w^2) / sigma^2.
     ms = [
         self._m(('a', 'b', 'c')),
         self._m(('a', 'b'), query=WeightedQuery(np.arange(1, 7).astype(float))),
@@ -230,7 +239,7 @@ class TestAnalyticLipschitz(unittest.TestCase):
         ),
     ]
     analytic = calculate_l2_lipschitz_from_metadata(self.domain, ms)
-    self.assertGreaterEqual(analytic, self._power(ms) - 1e-6)
+    self.assertAlmostEqual(analytic, 1.0 + 36.0 + 144.0, places=9)
 
   def test_single_weighted_is_exact(self):
     w = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])

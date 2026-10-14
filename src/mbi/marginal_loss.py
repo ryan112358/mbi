@@ -296,20 +296,17 @@ def calculate_l2_lipschitz_from_metadata(
 ) -> float | None:
   """Lipschitz constant of the (unnormalized) l2 loss gradient from metadata.
 
-  The loss is quadratic, so its gradient's Lipschitz constant is lambda_max of a
-  Hessian that is block-diagonal by maximal clique::
+  All gradient-based estimators in ``mbi`` (``MirrorDescent``,
+  ``DualAveraging``, ``InteriorGradient``, ``UniversalAcceleratedMethod``)
+  perform entropic mirror updates on the marginal polytope, where the KL
+  Bregman divergence is strongly convex in the L1 norm and the dual norm on
+  potentials/gradients is L_inf.  For a marginalization operator P_{c_M}
+  that sums a maximal-clique table C down to sub-clique c_M, ||P_{c_M} v||_1
+  <= ||v||_1 and ||P_{c_M}^T u||_inf = ||u||_inf, so marginalization has
+  (1, inf) operator norm 1 (independent of |C| / |c_M|).  Bounding each
+  maximal-clique block by the sum of its routed measurement norms gives::
 
-      H = sum_M (1 / sigma_M^2) (Q_M P_{c_M})^T (Q_M P_{c_M})
-
-  where P_{c_M} marginalizes a maximal-clique table down to clique c_M, with
-  ||P_c||^2 = |C| / |c| (the product of the summed-out domain sizes). Bounding
-  each block by the sum of its terms' norms gives::
-
-      L <= max_C sum_{M->C} ||Q_M||^2 / sigma_M^2 * |C| / |c_M|.
-
-  The uniform vector is the top eigenvector of every marginalization operator,
-  so this is *exact* when all queries are identity marginals (the common case)
-  and a safe overestimate otherwise (a larger L only shrinks the step size).
+      L <= max_C sum_{M->C} ||Q_M||^2 / sigma_M^2.
 
   Returns None if any query's operator norm is unknown (e.g. a nonlinear or
   user-supplied callable query), signalling the caller to fall back to the
@@ -325,9 +322,8 @@ def calculate_l2_lipschitz_from_metadata(
     if q_norm_sq is None:
       return None
     containing = routing[m.clique]
-    proj_norm_sq = domain.size(containing) / domain.size(m.clique)
     stddev = max(float(m.stddev), 1e-12)
-    contribution = q_norm_sq / stddev**2 * proj_norm_sq
+    contribution = q_norm_sq / stddev**2
     blocks[containing] = blocks.get(containing, 0.0) + contribution
   return max(blocks.values()) if blocks else 1.0
 
