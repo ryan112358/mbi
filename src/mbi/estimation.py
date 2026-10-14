@@ -567,7 +567,9 @@ class DualAveraging(Estimator):
     # reasonable initial guess rather than exactly continuing.
     loss = marginal_loss.mle_loss_fn(state.w)
     est = LBFGS(marginal_oracle=self.marginal_oracle)
-    mrf = est.estimate(state.w.domain, loss, known_total, constraints)
+    mrf = est.estimate(
+        state.w.domain, loss, known_total, constraints, iters=25000, tol=1e-6
+    )
     return cast(MarkovRandomField, mrf)
 
 
