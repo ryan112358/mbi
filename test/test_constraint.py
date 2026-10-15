@@ -8,7 +8,7 @@ import unittest
 
 import jax.numpy as jnp
 import numpy as np
-from mbi import CliqueVector, Constraint, Domain, Factor
+from mbi import CliqueVector, Constraint, Domain, Factor, LinearMeasurement, relax_constraints
 from mbi.extensions.message_passing import coarsen
 from mbi.extensions.message_passing import implicit as ext_implicit
 from mbi.extensions.message_passing import project_to_coarse
@@ -703,6 +703,74 @@ class TestComplexTopologies(unittest.TestCase):
     """Two embedded cliques sharing (fine, coarse) as the separator."""
     domain = Domain(['A', 'Ap', 'B', 'C'], [6, 3, 4, 5])
     self._check(domain, [('A', 'Ap', 'B'), ('A', 'Ap', 'C')])
+
+
+class TestRelaxConstraints(unittest.TestCase):
+
+  @parameterized.expand([
+      ('valid', dict(valid=np.array([[0, 0], [0, 1], [1, 1]]))),
+      ('invalid', dict(invalid=np.array([[0, 2], [1, 0], [1, 2]]))),
+      ('mapping', dict(mapping=np.array([0, 1]))),
+  ])
+  def test_relaxes_only_contradicted_cells(self, _name, kwargs):
+    dom = Domain(('a', 'b'), (2, 3))
+    c = Constraint(dom, **kwargs)
+    counts = np.zeros((2, 3))
+    counts[0, 2] = 11.0  # > 5.0 * 2.0 -> relaxed
+    counts[1, 0] = 9.0  # <= 5.0 * 2.0 -> stays forbidden
+    m = LinearMeasurement(counts.ravel(), clique=('a', 'b'), stddev=2.0)
+
+    (relaxed_c,) = relax_constraints([c], [m], threshold=5.0)
+    vals = np.asarray(relaxed_c.potential.values)
+    self.assertEqual(vals[0, 2], 0.0)
+    self.assertEqual(vals[1, 0], -np.inf)
+    self.assertEqual(vals[1, 2], -np.inf)
+    self.assertFalse(relaxed_c.is_deterministic)
+
+  def test_none_or_unmeasured_unchanged(self):
+    dom = Domain(('a', 'b'), (2, 3))
+    c = Constraint(dom, invalid=np.array([[0, 2]]))
+    m_ab = LinearMeasurement(np.full(6, 100.0), ('a', 'b'), stddev=1.0)
+    m_a = LinearMeasurement(np.full(2, 100.0), ('a',), stddev=1.0)
+
+    (res_none,) = relax_constraints([c], [m_ab], threshold=None)
+    self.assertIs(res_none, c)
+    (res_unmeasured,) = relax_constraints([c], [m_a], threshold=5.0)
+    self.assertIs(res_unmeasured, c)
+
+  def test_transposed_clique_and_all_cells(self):
+    dom = Domain(('a', 'b'), (2, 3))
+    c = Constraint(dom, invalid=np.array([[0, 2], [1, 0]]))
+    counts_ba = np.zeros((3, 2))
+    counts_ba[2, 0] = 10.0  # (0, 2) in ('a', 'b')
+    m1 = LinearMeasurement(counts_ba.ravel(), ('b', 'a'), stddev=2.0)
+    (c1,) = relax_constraints([c], [m1], threshold=3.0)
+    np.testing.assert_array_equal(
+        np.isneginf(c1.potential.values),
+        [[False, False, False], [True, False, False]],
+    )
+
+    counts_ba[0, 1] = 10.0  # (1, 0) in ('a', 'b')
+    m2 = LinearMeasurement(counts_ba.ravel(), ('b', 'a'), stddev=2.0)
+    (c2,) = relax_constraints([c1], [m2], threshold=3.0)
+    np.testing.assert_array_equal(c2.potential.values, np.zeros((2, 3)))
+
+  @parameterized.expand([(0,), (1,), (2,)])
+  def test_random_3way_relaxation(self, seed):
+    rng = np.random.default_rng(seed)
+    dom = Domain(('a', 'b', 'c'), (2, 3, 4))
+    mask = rng.random(dom.shape) < 0.4
+    c = Constraint(dom, invalid=np.argwhere(mask))
+
+    counts_cab = rng.normal(loc=5.0, scale=5.0, size=(4, 2, 3))
+    m = LinearMeasurement(counts_cab.ravel(), ('c', 'a', 'b'), stddev=1.5)
+
+    (relaxed_c,) = relax_constraints([c], [m], threshold=4.0)
+    counts_abc = np.moveaxis(counts_cab, (0, 1, 2), (2, 0, 1))
+    expected_invalid = mask & ~(counts_abc > 4.0 * 1.5)
+    np.testing.assert_array_equal(
+        np.isneginf(relaxed_c.potential.values), expected_invalid
+    )
 
 
 if __name__ == '__main__':
