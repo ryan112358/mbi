@@ -29,7 +29,9 @@ measurements = [
 ]
 
 # Estimate a graphical model
-model = estimation.MirrorDescent().estimate(domain, measurements, iters=1000)
+model = estimation.UniversalAcceleratedMethod().estimate(
+    domain, measurements, iters=1000
+)
 
 # Use the model
 synthetic_data = model.synthetic_data(rows=1000)
@@ -41,7 +43,10 @@ age_sex_marginal = model.project(("age", "sex")).datavector()
 All estimators share the same `Estimator` API:
 
 ```python
-# Mirror Descent (recommended)
+# Universal Accelerated Method (recommended)
+model = estimation.UniversalAcceleratedMethod().estimate(domain, measurements)
+
+# Mirror Descent
 model = estimation.MirrorDescent().estimate(domain, measurements)
 
 # Dual Averaging

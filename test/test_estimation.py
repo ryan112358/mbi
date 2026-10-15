@@ -182,6 +182,18 @@ class TestEstimation(unittest.TestCase):
     for M in measurements:
       expected = M.noisy_measurement
       actual = model.project(M.clique).datavector()
+      np.testing.assert_allclose(actual, expected, atol=1e-2)
+
+  @parameterized.expand(itertools.product(_CLIQUE_SETS))
+  def test_universal_accelerated_method(self, cliques):
+    measurements = fake_measurements(cliques)
+    est = estimation.UniversalAcceleratedMethod()
+    self.assertTrue(est.linesearch)
+    model = est.estimate(_DOMAIN, measurements, known_total=1.0, iters=250)
+    for M in measurements:
+      expected = M.noisy_measurement
+      actual = model.project(M.clique).datavector()
+      np.testing.assert_allclose(actual, expected, atol=1e-2)
 
   @parameterized.expand(itertools.product(_CLIQUE_SETS))
   def test_mle(self, cliques):
