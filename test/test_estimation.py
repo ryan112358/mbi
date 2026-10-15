@@ -448,3 +448,30 @@ class TestEstimation(unittest.TestCase):
     )
     loss2 = loss_fn(model2)
     self.assertLessEqual(float(loss2), float(loss1) + 1e-6)
+
+  def test_universal_accelerated_linesearch_precision_floor(self):
+    """UAM(linesearch=True) does not collapse stepsize at the float64 floor."""
+    cliques = [("a", "b"), ("b", "c"), ("c", "d")]
+    total = 1e6
+    rng = np.random.default_rng(0)
+    P = Factor.random(_DOMAIN)
+    P = total * P / P.sum()
+    measurements = [
+        marginal_loss.LinearMeasurement(
+            P.project(cl).datavector()
+            + rng.normal(0.0, 100.0, size=_DOMAIN.size(cl)),
+            cl,
+            stddev=1.0,
+        )
+        for cl in cliques
+    ]
+    loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
+    est = estimation.UniversalAcceleratedMethod(linesearch=True)
+    state = est._init(_DOMAIN, loss_fn, total)
+    for _ in range(6):
+      state = est._multi_step(state, loss_fn, total)
+    self.assertGreater(float(state.stepsize), 1e-18)
+    for cl in cliques:
+      actual = (state.x * total).project(cl).datavector()
+      expected = P.project(cl).datavector()
+      np.testing.assert_allclose(actual, expected, atol=500.0)

@@ -797,17 +797,18 @@ class UniversalAcceleratedMethod(Estimator):
         loss_fn.cliques, domain, constraints=constraints
     )
     # Project onto unit simplex (total=1) for numerical stability.
-    x = z = marginal_oracle(potentials, 1.0)
+    x = marginal_oracle(potentials, 1.0)
+    z = jax.tree.map(jnp.copy, x)
     # f_scaled(p) = loss_fn(N*p) has Lipschitz-continuous gradient with
     # constant N² * L, where L = loss_fn.lipschitz.  The initial stepsize
     # is the inverse of this smoothness estimate.
     L = loss_fn.lipschitz
-    stepsize = 1.0 / (known_total * known_total * L)
+    stepsize = jnp.asarray(1.0 / (known_total * known_total * L))
     return _AcceleratedStepSearchState(
         x=x,
         z=z,
         u=potentials,
-        prev_stepsize=stepsize,
+        prev_stepsize=jnp.copy(stepsize),
         stepsize=stepsize,
         prev_theta=jnp.asarray(-1.0),
         accept=jnp.asarray(False),
@@ -868,7 +869,10 @@ class UniversalAcceleratedMethod(Estimator):
         taylor_approx = (
             value_y + grad_y.dot(x - y) + 0.5 * smooth_estim * sq_norm_diff
         )
-        accept = new_value <= (taylor_approx + 0.5 * target_acc * theta)
+        tol_eps = 1e-12 * jnp.maximum(jnp.abs(value_y), 1.0)
+        accept = new_value <= (
+            taylor_approx + 0.5 * target_acc * theta + tol_eps
+        )
         new_stepsize = 1.1 * stepsize
       else:
         accept = True

@@ -303,10 +303,12 @@ def calculate_l2_lipschitz_from_metadata(
   potentials/gradients is L_inf.  For a marginalization operator P_{c_M}
   that sums a maximal-clique table C down to sub-clique c_M, ||P_{c_M} v||_1
   <= ||v||_1 and ||P_{c_M}^T u||_inf = ||u||_inf, so marginalization has
-  (1, inf) operator norm 1 (independent of |C| / |c_M|).  Bounding each
-  maximal-clique block by the sum of its routed measurement norms gives::
+  (1, inf) operator norm 1 (independent of |C| / |c_M|).  Bounding both
+  intra-clique sums and cross-clique hub coupling across shared attributes
+  in the junction tree gives::
 
-      L <= max_C sum_{M->C} ||Q_M||^2 / sigma_M^2.
+      L <= max(max_C sum_{M->C} ||Q_M||^2 / sigma_M^2,
+               max_a sum_{M: a in c_M} ||Q_M||^2 / sigma_M^2).
 
   Returns None if any query's operator norm is unknown (e.g. a nonlinear or
   user-supplied callable query), signalling the caller to fall back to the
@@ -317,6 +319,7 @@ def calculate_l2_lipschitz_from_metadata(
   routing = clique_mapping(maximal, cliques, domain)
 
   blocks: dict[Clique, float] = {}
+  attr_blocks: dict[Any, float] = {}
   for m in measurements:
     q_norm_sq = _query_op_norm_sq(m.query)
     if q_norm_sq is None:
@@ -325,7 +328,11 @@ def calculate_l2_lipschitz_from_metadata(
     stddev = max(float(m.stddev), 1e-12)
     contribution = q_norm_sq / stddev**2
     blocks[containing] = blocks.get(containing, 0.0) + contribution
-  return max(blocks.values()) if blocks else 1.0
+    for attr in m.clique:
+      attr_blocks[attr] = attr_blocks.get(attr, 0.0) + contribution
+  max_block = max(blocks.values()) if blocks else 1.0
+  max_attr = max(attr_blocks.values()) if attr_blocks else 0.0
+  return max(max_block, max_attr)
 
 
 def from_linear_measurements(
