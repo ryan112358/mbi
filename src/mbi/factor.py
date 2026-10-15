@@ -103,37 +103,45 @@ class Factor:
     return Factor(domain, values)
 
   # Functions that aggregate along some subset of axes
-  def _aggregate(
+  def aggregate(
       self, fn: Callable, attrs: Sequence[Attribute] | None = None
   ) -> Factor:
-    """Helper for aggregating values along specified attribute axes."""
+    """Aggregates values along specified attribute axes using ``fn``."""
+    if fn is jax.scipy.special.logsumexp:
+      fn = _safe_logsumexp
     attrs = self.domain.attributes if attrs is None else attrs
     axes = self.domain.axes(attrs)
+    if not axes:
+      return self
     values = fn(self.values, axis=axes)
     newdom = self.domain.marginalize(attrs)
     return Factor(newdom, values)
 
   def max(self, attrs: Sequence[Attribute] | None = None) -> Factor:
     """Computes the maximum value along specified attribute axes."""
-    return self._aggregate(jnp.max, attrs)
+    return self.aggregate(jnp.max, attrs)
 
   def sum(self, attrs: Sequence[Attribute] | None = None) -> Factor:
     """Computes the sum along specified attribute axes."""
-    return self._aggregate(jnp.sum, attrs)
+    return self.aggregate(jnp.sum, attrs)
 
   def logsumexp(self, attrs: Sequence[Attribute] | None = None) -> Factor:
     """Computes the log-sum-exp along specified attribute axes."""
-    return self._aggregate(_safe_logsumexp, attrs)
+    return self.aggregate(_safe_logsumexp, attrs)
 
   def project(
-      self, attrs: Attribute | Sequence[Attribute], log: bool = False
+      self,
+      attrs: Attribute | Sequence[Attribute],
+      log: bool = False,
+      reduction_fn: Callable | None = None,
   ) -> "Factor":
-    """Computes the marginal distribution by summing/logsumexp'ing out other attributes."""
+    """Computes the marginal distribution by aggregating out other attributes."""
     if isinstance(attrs, (str, int)):
       attrs = (attrs,)
+    if reduction_fn is None:
+      reduction_fn = _safe_logsumexp if log else jnp.sum
     marginalized = self.domain.marginalize(attrs).attributes
-    result = self.logsumexp(marginalized) if log else self.sum(marginalized)
-    return result.transpose(attrs)
+    return self.aggregate(reduction_fn, marginalized).transpose(attrs)
 
   def slice(self, evidence: dict[Attribute, int | jax.Array]) -> "Factor":
     """Slice the factor by fixing attributes to scalar values.
@@ -234,6 +242,9 @@ class Factor:
 
   def __rmul__(self, other: ArrayLike) -> Factor:
     return self * other
+
+  def __neg__(self) -> Factor:
+    return self * -1
 
   def dot(self, other: Factor) -> ArrayLike:
     if self.domain != other.domain:

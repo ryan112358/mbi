@@ -111,6 +111,7 @@ def make_junction_tree(
     domain: Domain,
     cliques: Collection[Clique],
     elimination_order: list[Attribute] | int | None = None,
+    connected: bool = False,
 ) -> tuple[nx.Graph, list[Attribute]]:
   """Create a junction tree."""
   cliques = [tuple(cl) for cl in cliques]
@@ -140,6 +141,9 @@ def make_junction_tree(
     if wgt > 0:
       complete.add_edge(c1, c2, weight=-wgt)
   spanning = nx.minimum_spanning_tree(complete)
+  if connected:
+    roots = [next(iter(c)) for c in nx.connected_components(spanning)]
+    spanning.add_edges_from(itertools.pairwise(roots))
   return spanning, elimination_order
 
 
