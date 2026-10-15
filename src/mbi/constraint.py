@@ -7,6 +7,7 @@ be folded into graphical model potentials via :meth:`Constraint.as_potential`.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 
 import jax
@@ -16,6 +17,7 @@ import numpy as np
 from .domain import Attribute
 from .domain import Domain
 from .factor import Factor
+from .marginal_loss import LinearMeasurement
 
 
 def _validate_combos(arr, n_attrs, name):
@@ -101,3 +103,28 @@ class Constraint:
       idx = tuple(invalid[:, i] for i in range(invalid.shape[1]))
       values = jnp.zeros(self.domain.shape).at[idx].set(-jnp.inf)
     return Factor(self.domain, values)
+
+
+def relax_constraints(
+    constraints: Sequence[Constraint],
+    measurements: Sequence[LinearMeasurement],
+    threshold: float | None = 5.0,
+) -> tuple[Constraint, ...]:
+  """Relaxes forbidden cells when noisy counts exceed threshold * stddev."""
+  if threshold is None:
+    return tuple(constraints)
+  result = []
+  for c in constraints:
+    attrs = c.domain.attributes
+    invalid = np.isneginf(c.potential.values)
+    relaxed = np.zeros(c.domain.shape, dtype=bool)
+    for m in measurements:
+      if set(m.clique) == set(attrs):
+        m_shape = c.domain.project(m.clique).shape
+        vals = np.asarray(m.noisy_measurement).reshape(m_shape)
+        counts = np.moveaxis(vals, range(len(attrs)), c.domain.axes(m.clique))
+        relaxed |= invalid & (counts > threshold * m.stddev)
+    if np.any(relaxed):
+      c = Constraint(c.domain, invalid=np.argwhere(invalid & ~relaxed))
+    result.append(c)
+  return tuple(result)

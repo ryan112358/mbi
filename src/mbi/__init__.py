@@ -37,7 +37,7 @@ from .estimation import Estimator
 from .extensions import message_passing
 from .clique_utils import Clique
 from .clique_vector import CliqueVector
-from .constraint import Constraint
+from .constraint import Constraint, relax_constraints
 from .dataset import Dataset
 from .domain import Domain
 from .factor import Factor
@@ -49,6 +49,7 @@ from ._serialization import save, load
 
 __all__ = [
     "Constraint",
+    "relax_constraints",
     "Domain",
     "Dataset",
     "Factor",
