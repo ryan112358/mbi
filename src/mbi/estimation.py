@@ -2,11 +2,11 @@
 
 This module provides a flexible set of optimization algorithms, each sharing the
 the same API.  The supported algorithms are:
-1. Mirror Descent [our recommended algorithm]
-2. L-BFGS (using back-belief propagation)
-3. Regularized Dual Averaging
-4. Interior Gradient
-5. Universal accelerated mirror descent
+1. Universal accelerated mirror descent [our recommended algorithm]
+2. Mirror Descent
+3. L-BFGS (using back-belief propagation)
+4. Regularized Dual Averaging
+5. Interior Gradient
 
 Each algorithm can be given an initial set of potentials, or can automatically
 intialize the potentials to zero for you.  Any CliqueVector of potentials that
@@ -761,27 +761,19 @@ class UniversalAcceleratedMethod(Estimator):
   and `Roulet & d'Aspremont (2017) <https://arxiv.org/pdf/1702.03828>`_.
 
   Attributes:
-  marginal_oracle: The function to compute marginals from potentials.
+      marginal_oracle: The function to compute marginals from potentials.
           If ``None`` (default), uses ``default_oracle()`` to auto-select.
       max_iter_search: Max inner line-search iterations per step.
       target_acc: Target accuracy (set > 0 for non-smooth objectives).
-      norm: Norm measuring smoothness (1 or 2).
-      linesearch: Whether to use adaptive line-search.  Disabled by default
-          because the acceptance condition uses the CliqueVector L2 norm
-          which double-counts overlapping variables, causing the linesearch
-          to accept overly large stepsizes and stall convergence.
+      norm: Retained for backwards compatibility.
+      linesearch: Whether to use adaptive line-search (enabled by default).
   """
 
-  # TODO: Fix the linesearch acceptance condition to use the correct norm
-  # that accounts for variable overlap in the junction tree.  The current
-  # CliqueVector L2 norm double-counts variables that appear in multiple
-  # cliques, making the quadratic upper bound too loose.  Once fixed,
-  # linesearch can be re-enabled as the default.
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
   max_iter_search: int = 30
   target_acc: float = 0.0
   norm: int = 2
-  linesearch: bool = False
+  linesearch: bool = True
 
   def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
       self,
@@ -797,17 +789,18 @@ class UniversalAcceleratedMethod(Estimator):
         loss_fn.cliques, domain, constraints=constraints
     )
     # Project onto unit simplex (total=1) for numerical stability.
-    x = z = marginal_oracle(potentials, 1.0)
+    x = marginal_oracle(potentials, 1.0)
+    z = jax.tree.map(jnp.copy, x)
     # f_scaled(p) = loss_fn(N*p) has Lipschitz-continuous gradient with
     # constant N² * L, where L = loss_fn.lipschitz.  The initial stepsize
     # is the inverse of this smoothness estimate.
     L = loss_fn.lipschitz
-    stepsize = 1.0 / (known_total * known_total * L)
+    stepsize = jnp.asarray(1.0 / (known_total * known_total * L))
     return _AcceleratedStepSearchState(
         x=x,
         z=z,
         u=potentials,
-        prev_stepsize=stepsize,
+        prev_stepsize=jnp.copy(stepsize),
         stepsize=stepsize,
         prev_theta=jnp.asarray(-1.0),
         accept=jnp.asarray(False),
@@ -825,7 +818,6 @@ class UniversalAcceleratedMethod(Estimator):
 
     max_iter_search = self.max_iter_search
     target_acc = self.target_acc
-    norm = self.norm
     use_linesearch = self.linesearch
 
     # Wrap loss to operate on unit simplex: f_scaled(p) = loss_fn(N*p).
@@ -853,22 +845,18 @@ class UniversalAcceleratedMethod(Estimator):
 
       if use_linesearch:
         new_value = scaled_loss(x)
-        if norm == 1:
-          sq_norm_diff = optax.tree.norm(
-              optax.tree.sub(x, y), ord=1, squared=True
-          )
-        elif norm == 2:
-          sq_norm_diff = optax.tree.norm(
-              optax.tree_utils.tree_sub(x, y),
-              ord=2,
-              squared=True,
-          )
-        else:
-          raise ValueError(f"norm={norm} not supported")
-        taylor_approx = (
-            value_y + grad_y.dot(x - y) + 0.5 * smooth_estim * sq_norm_diff
+        # Since u - carry.u = -(stepsize / theta) * grad_y and
+        # x - y = theta * (z - carry.z), the symmetrized KL divergence of the
+        # joint MRF satisfies theta^2 * D_sym_KL(P_z, P_prev_z) =
+        # theta^2 * <u - carry.u, z - carry.z> = -stepsize * <grad_y, x - y>.
+        # Using 0.5 * smooth_estim * theta^2 * D_sym_KL = -0.5 * grad_y.dot(x - y)
+        # measures curvature on the true joint distribution without
+        # double-counting overlapping variables across cliques.
+        taylor_approx = value_y + 0.5 * grad_y.dot(x - y)
+        tol_eps = 1e-12 * jnp.maximum(jnp.abs(value_y), 1.0)
+        accept = new_value <= (
+            taylor_approx + 0.5 * target_acc * theta + tol_eps
         )
-        accept = new_value <= (taylor_approx + 0.5 * target_acc * theta)
         new_stepsize = 1.1 * stepsize
       else:
         accept = True

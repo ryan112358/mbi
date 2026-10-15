@@ -207,14 +207,35 @@ class TestAnalyticLipschitz(unittest.TestCase):
       self.assertAlmostEqual(analytic, expected, places=9)
 
   def test_routes_subclique_to_smallest_domain_parent(self):
-    # (a,) fits in (a,b) [size 6] and (a,c) [size 8]; routing via the smaller
-    # gives block (a,b) = 1 + 1 = 2, order-independently.
+    # (a,) fits in (a,b) [size 6] and (a,c) [size 8]; attribute 'a' appears in
+    # all three measurements, giving attribute-overlap sum 1 + 1 + 1 = 3,
+    # order-independently.
     for order in [
         [self._m(('a', 'b')), self._m(('a', 'c')), self._m(('a',))],
         [self._m(('a', 'c')), self._m(('a', 'b')), self._m(('a',))],
     ]:
       analytic = calculate_l2_lipschitz_from_metadata(self.domain, order)
-      self.assertAlmostEqual(analytic, 2.0, places=9)
+      self.assertAlmostEqual(analytic, 3.0, places=9)
+
+  def test_maximal_clique_sum_exceeds_single_attribute_overlap(self):
+    # On a single 3-way clique (a, b, c) with 2-way measurements (a, b),
+    # (b, c), (a, c), each attribute appears in 2 measurements (sum = 2),
+    # while the maximal clique (a, b, c) routes all 3 measurements (sum = 3).
+    ms = [
+        self._m(('a', 'b', 'c')),
+        self._m(('a', 'b')),
+        self._m(('b', 'c')),
+        self._m(('a', 'c')),
+    ]
+    analytic = calculate_l2_lipschitz_from_metadata(self.domain, ms)
+    self.assertAlmostEqual(analytic, 4.0, places=9)
+
+  def test_cross_clique_attribute_overlap_exceeds_maximal_clique_sum(self):
+    # Star graph with hub 'a' shared across (a, b) and (a, c): each maximal
+    # clique has weight 1, while hub attribute 'a' has overlap sum 2.
+    ms = [self._m(('a', 'b')), self._m(('a', 'c'))]
+    analytic = calculate_l2_lipschitz_from_metadata(self.domain, ms)
+    self.assertAlmostEqual(analytic, 2.0, places=9)
 
   def test_subclique_lipschitz_invariant_to_parent_domain_size(self):
     # Embedding a 1-way measurement into a large maximal clique should not
@@ -271,7 +292,7 @@ class TestAnalyticLipschitz(unittest.TestCase):
         side_effect=AssertionError('power iteration should not run'),
     ):
       lf = from_linear_measurements(ms, self.domain)
-    self.assertAlmostEqual(lf.lipschitz, 1.0, places=9)
+    self.assertAlmostEqual(lf.lipschitz, 2.0, places=9)
 
   def test_from_linear_measurements_falls_back_for_unknown_query(self):
     # An unknown callable query has no declared operator norm, so from_metadata
