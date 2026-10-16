@@ -258,6 +258,27 @@ class TestMarginalOracles(unittest.TestCase):
           mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
       )
 
+  @parameterized.expand(
+      itertools.product(
+          _SCHEDULES + [_implicit_fused],
+          _CLIQUE_SETS,
+      )
+  )
+  def test_max_reduction_matches_brute_force(self, oracle, cliques, total=10.0):
+    """Max-marginal reduction matches brute-force max-marginals across cliques."""
+    theta = CliqueVector.random(_DOMAIN, cliques)
+    mu1 = oracle(theta, total, reduction_fn=jnp.max)
+    mu2 = marginal_oracles.brute_force_marginals(
+        theta, total, reduction_fn=jnp.max
+    )
+    self.assertEqual(mu1.domain, _DOMAIN)
+    self.assertEqual(mu1.cliques, tuple(cliques))
+    np.testing.assert_allclose(mu1.max(), mu2.max(), atol=1e-5)
+    for cl in cliques:
+      np.testing.assert_allclose(
+          mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
+      )
+
 
 class TestDefaultOracle(unittest.TestCase):
 
@@ -462,3 +483,27 @@ class TestConstrainedOracles(unittest.TestCase):
           )
         # All marginals should be non-negative.
         self.assertTrue((vals >= -1e-6).all(), f"negative in {cl}")
+
+  @parameterized.expand(_FOLDING_ORACLES)
+  def test_max_reduction_with_constraints(self, oracle):
+    """Max-marginal reduction respects structural constraints."""
+    cliques = [("A", "B"), ("Ap", "C")]
+    constraints = _CONSTRAINT_CONFIGS[0]
+    theta = CliqueVector.random(_CDOMAIN, cliques)
+    mu = oracle(theta, 5.0, constraints=constraints, reduction_fn=jnp.max)
+    folded_cliques = list(theta.cliques)
+    arrays = dict(theta.tables)
+    for c in constraints:
+      cl = theta.domain.canonical(c.clique)
+      pot = c.potential.transpose(cl)
+      arrays[cl] = arrays[cl] + pot if cl in arrays else pot
+      if cl not in folded_cliques:
+        folded_cliques.append(cl)
+    folded = CliqueVector(theta.domain, folded_cliques, arrays)
+    baseline = marginal_oracles.brute_force_marginals(
+        folded, 5.0, reduction_fn=jnp.max
+    )
+    for cl in cliques:
+      np.testing.assert_allclose(
+          mu[cl].datavector(), baseline[cl].datavector(), atol=1e-4
+      )

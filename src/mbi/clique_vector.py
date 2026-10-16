@@ -12,7 +12,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import operator
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -106,7 +106,10 @@ class CliqueVector:
     return self.parent(clique) is not None
 
   def project(
-      self, clique: Attribute | Sequence[Attribute], log: bool = False
+      self,
+      clique: Attribute | Sequence[Attribute],
+      log: bool = False,
+      reduction_fn: Callable | None = None,
   ) -> Factor:
     if isinstance(clique, (str, int)):
       clique = (clique,)
@@ -115,7 +118,7 @@ class CliqueVector:
       return self[clique]
     parent = self.parent(clique)
     if parent is not None:
-      return self[parent].project(clique, log=log)
+      return self[parent].project(clique, log=log, reduction_fn=reduction_fn)
     raise ValueError(f"Cannot project onto unsupported clique {clique}.")
 
   def expand(self, cliques: Sequence[Clique]) -> CliqueVector:
@@ -179,6 +182,16 @@ class CliqueVector:
   def __sub__(self, other: ArrayLike | CliqueVector) -> CliqueVector:
     """Subtracts another CliqueVector or a constant from this vector elementwise."""
     return self + -1 * other
+
+  def __neg__(self) -> CliqueVector:
+    """Negates each factor in the vector."""
+    return self * -1
+
+  def max(self) -> jax.Array:
+    """Computes the maximum scalar value across all factors in the vector."""
+    if not self.cliques:
+      return jnp.asarray(0.0)
+    return jnp.max(jnp.stack([f.max().values for f in self.tables.values()]))
 
   def exp(self) -> CliqueVector:
     """Applies elementwise exponentiation (jnp.exp) to each factor."""
