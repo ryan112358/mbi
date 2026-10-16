@@ -63,12 +63,9 @@ def _primal_feasibility_loss(
 
 def _primal_dual_gap_loss(
     marginals: CliqueVector,
-    measurements: tuple[LinearMeasurement, ...],
+    loss_fn: marginal_loss.MarginalLossFn,
 ) -> ArrayLike:
   """Adapts primal_dual_gap to the (marginals, data) loss_fn signature."""
-  loss_fn = marginal_loss.MarginalLossFn(
-      marginals.cliques, marginal_loss._l2_loss, measurements
-  )
   return estimation.primal_dual_gap(loss_fn, marginals)
 
 
@@ -116,6 +113,9 @@ def default(
   l2_loss = marginal_loss.from_linear_measurements(
       measurements, domain, norm="l2", normalize=True
   )
+  unnormalized_l2 = marginal_loss.from_linear_measurements(
+      measurements, domain, norm="l2", normalize=False
+  )
   loss_fns = {
       "L2 Loss": l2_loss,
       "L1 Loss": marginal_loss.from_linear_measurements(
@@ -127,7 +127,7 @@ def default(
       "Dual Gap": marginal_loss.MarginalLossFn(
           cliques=l2_loss.cliques,
           loss_fn=_primal_dual_gap_loss,
-          data=tuple(measurements),
+          data=unnormalized_l2,
       ),
   }
 

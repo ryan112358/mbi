@@ -288,7 +288,7 @@ class TestEstimation(unittest.TestCase):
         CliqueVector.zeros(_DOMAIN, cliques), 1.0
     )
     initial_gap = float(estimation.primal_dual_gap(loss_fn, uniform, 1.0))
-    self.assertGreater(initial_gap, 0.5)
+    self.assertGreater(initial_gap, 0.05)
 
     model = estimation.LBFGS().estimate(
         _DOMAIN, loss_fn, known_total=1.0, iters=1000, tol=1e-5

@@ -75,12 +75,15 @@ def primal_dual_gap(
     *,
     marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     constraints: Sequence[Constraint] = (),
+    normalize: bool = True,
 ) -> jax.Array:
   """Computes the Fenchel primal-dual gap at primal marginals ``marginals``.
 
   By the Fenchel-Young identity ``l(mu) + l*(grad) = <grad, mu>`` for convex
   ``l`` with ``grad = grad l(mu)``, the primal-dual gap at dual variable
   ``theta = -grad`` simplifies to ``<grad, mu> + max_{nu in M} <-grad, nu>``.
+  When ``normalize=True`` (default), the gap is divided by the characteristic
+  scale ``known_total * sqrt(loss_fn.lipschitz * num_cells)``.
   """
   if known_total is None:
     known_total = (
@@ -95,7 +98,22 @@ def primal_dual_gap(
   max_marginals = oracle(
       -grad, known_total, constraints=constraints, reduction_fn=jnp.max
   )
-  return jnp.asarray(grad.dot(marginals)) + max_marginals.max()
+  gap = jnp.asarray(grad.dot(marginals)) + max_marginals.max()
+  if not normalize:
+    return gap
+  data = loss_fn.data
+  if (
+      isinstance(data, tuple)
+      and data
+      and isinstance(data[0], LinearMeasurement)
+  ):
+    num_cells = sum(np.size(m.noisy_measurement) for m in data)
+  else:
+    num_cells = sum(marginals.domain.size(cl) for cl in marginals.cliques)
+  scale = jnp.asarray(known_total) * jnp.sqrt(
+      jnp.asarray(loss_fn.lipschitz) * max(num_cells, 1)
+  )
+  return gap / jnp.maximum(scale, 1e-12)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -185,7 +203,7 @@ class Estimator(ABC):
       iters: int = 1000,
       callback_fn: Callable | None = None,
       warm_start: Model | CliqueVector | None = None,
-      tol: float | None = None,
+      tol: float | None = 1e-3,
   ) -> Model:
     """Estimate a Model from noisy marginal measurements.
 
@@ -194,8 +212,9 @@ class Estimator(ABC):
     estimators the model's potentials are expanded to cover any new cliques;
     for MixtureOfProducts the model is used directly.
 
-    If ``tol`` is set, optimization stops early once the primal-dual gap falls
-    at or below ``tol`` (default: run the full ``iters``).
+    If ``tol`` is set (default ``1e-3``), optimization stops early once the
+    normalized primal-dual gap falls at or below ``tol``. Pass ``tol=None`` to
+    disable early stopping and run the full ``iters``.
     """
     constraints = tuple(constraints)
     if isinstance(loss_fn, Sequence):
@@ -233,7 +252,14 @@ class Estimator(ABC):
       if tol is not None:
         mu = self._callback_value(state, known_total, constraints)
         if not isinstance(mu, CliqueVector):
-          raise ValueError(f"{type(self).__name__} does not support tol.")
+          project_fn = getattr(mu, "project", None)
+          if callable(project_fn):
+            arrays = {
+                cl: cast(Factor, project_fn(cl)) for cl in loss_fn.cliques
+            }
+            mu = CliqueVector(domain, loss_fn.cliques, arrays)
+          else:
+            raise ValueError(f"{type(self).__name__} does not support tol.")
         gap = float(
             primal_dual_gap(
                 loss_fn,
