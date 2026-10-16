@@ -71,7 +71,7 @@ def _extract_potentials(
 def primal_dual_gap(
     loss_fn: MarginalLossFn,
     marginals: CliqueVector,
-    known_total: jax.Array | float = 1.0,
+    known_total: jax.Array | float | None = None,
     *,
     marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     constraints: Sequence[Constraint] = (),
@@ -82,6 +82,12 @@ def primal_dual_gap(
   ``l`` with ``grad = grad l(mu)``, the primal-dual gap at dual variable
   ``theta = -grad`` simplifies to ``<grad, mu> + max_{nu in M} <-grad, nu>``.
   """
+  if known_total is None:
+    known_total = (
+        marginals.project(()).datavector(flatten=False)
+        if marginals.cliques
+        else 1.0
+    )
   oracle = marginal_oracle or marginal_oracles.default_oracle(
       marginals.cliques, marginals.domain, has_constraints=bool(constraints)
   )

@@ -10,6 +10,7 @@ from typing import Any
 
 from jax.typing import ArrayLike
 import jax
+import jax.numpy as jnp
 
 from . import estimation
 from . import marginal_loss
@@ -46,11 +47,11 @@ def _pad(string: str, length: int):
 @jax.jit
 def _compute_row(
     loss_fns: tuple[marginal_loss.MarginalLossFn, ...], marginals: CliqueVector
-) -> list[ArrayLike]:
+) -> list[jax.Array]:
   """Evaluates all loss functions on the marginals in one fused, jitted pass."""
   # Passing loss_fns as a traced argument keeps measurement data dynamic (not
   # baked into the compiled program) and lets XLA share projections across them.
-  return [loss_fn(marginals) for loss_fn in loss_fns]
+  return [jnp.asarray(loss_fn(marginals)) for loss_fn in loss_fns]
 
 
 def _primal_feasibility_loss(
@@ -58,6 +59,25 @@ def _primal_feasibility_loss(
 ) -> ArrayLike:
   """Adapts primal_feasibility to the (marginals, data) loss_fn signature."""
   return marginal_loss.primal_feasibility(marginals)
+
+
+def _primal_dual_gap_loss(
+    marginals: CliqueVector,
+    measurements: tuple[LinearMeasurement, ...],
+) -> ArrayLike:
+  """Adapts primal_dual_gap to the (marginals, data) loss_fn signature."""
+  loss_fn = marginal_loss.MarginalLossFn(
+      marginals.cliques, marginal_loss._l2_loss, measurements
+  )
+  return estimation.primal_dual_gap(loss_fn, marginals)
+
+
+def _format_cell(val: jax.Array | float) -> str:
+  """Formats a numeric cell to 6 characters, switching to scientific for >=1e5."""
+  v = float(val)
+  if abs(v) >= 1e5:
+    return f"{v:.1e}".replace("+", "")[:6]
+  return f"{v:.6f}"[:6]
 
 
 @dataclasses.dataclass
@@ -75,7 +95,7 @@ class Callback:
     row = _compute_row(tuple(self.loss_fns.values()), marginals)
     self._logs.append([step] + row)
     padded_step = str(step) + " " * (9 - len(str(step)))
-    log(padded_step, *[f"{v:.6f}"[:6] for v in row], sep="   |   ")
+    log(padded_step, *[_format_cell(v) for v in row], sep="   |   ")
     self._call += 1
 
   @property
@@ -93,15 +113,21 @@ def default(
     include_primal_feasibility: bool | None = None,
 ) -> Callback:
   """Creates a default Callback with standard loss functions."""
+  l2_loss = marginal_loss.from_linear_measurements(
+      measurements, domain, norm="l2", normalize=True
+  )
   loss_fns = {
-      "L2 Loss": marginal_loss.from_linear_measurements(
-          measurements, domain, norm="l2", normalize=True
-      ),
+      "L2 Loss": l2_loss,
       "L1 Loss": marginal_loss.from_linear_measurements(
           measurements,
           domain,
           norm="l1",
           normalize=True,
+      ),
+      "Dual Gap": marginal_loss.MarginalLossFn(
+          cliques=l2_loss.cliques,
+          loss_fn=_primal_dual_gap_loss,
+          data=tuple(measurements),
       ),
   }
 
