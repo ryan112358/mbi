@@ -69,14 +69,6 @@ def _primal_dual_gap_loss(
   return estimation.primal_dual_gap(loss_fn, marginals)
 
 
-def _format_cell(val: jax.Array | float) -> str:
-  """Formats a numeric cell to 6 characters, switching to scientific for >=1e5."""
-  v = float(val)
-  if abs(v) >= 1e5:
-    return f"{v:.1e}".replace("+", "")[:6]
-  return f"{v:.6f}"[:6]
-
-
 @dataclasses.dataclass
 class Callback:
   loss_fns: dict[str, marginal_loss.MarginalLossFn]
@@ -92,7 +84,7 @@ class Callback:
     row = _compute_row(tuple(self.loss_fns.values()), marginals)
     self._logs.append([step] + row)
     padded_step = str(step) + " " * (9 - len(str(step)))
-    log(padded_step, *[_format_cell(v) for v in row], sep="   |   ")
+    log(padded_step, *[f"{v:.6f}"[:6] for v in row], sep="   |   ")
     self._call += 1
 
   @property

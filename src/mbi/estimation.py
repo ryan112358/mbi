@@ -72,7 +72,6 @@ def primal_dual_gap(
     loss_fn: MarginalLossFn,
     marginals: CliqueVector,
     known_total: jax.Array | float | None = None,
-    *,
     marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     constraints: Sequence[Constraint] = (),
     normalize: bool = True,
@@ -83,14 +82,10 @@ def primal_dual_gap(
   ``l`` with ``grad = grad l(mu)``, the primal-dual gap at dual variable
   ``theta = -grad`` simplifies to ``<grad, mu> + max_{nu in M} <-grad, nu>``.
   When ``normalize=True`` (default), the gap is divided by the characteristic
-  scale ``known_total * sqrt(loss_fn.lipschitz * num_cells)``.
+  scale ``known_total * sqrt(loss_fn.lipschitz * marginals.size())``.
   """
   if known_total is None:
-    known_total = (
-        marginals.project(()).datavector(flatten=False)
-        if marginals.cliques
-        else 1.0
-    )
+    known_total = marginals.project(()).datavector(flatten=False)
   oracle = marginal_oracle or marginal_oracles.default_oracle(
       marginals.cliques, marginals.domain, has_constraints=bool(constraints)
   )
@@ -99,21 +94,8 @@ def primal_dual_gap(
       -grad, known_total, constraints=constraints, reduction_fn=jnp.max
   )
   gap = jnp.asarray(grad.dot(marginals)) + max_marginals.max()
-  if not normalize:
-    return gap
-  data = loss_fn.data
-  if (
-      isinstance(data, tuple)
-      and data
-      and isinstance(data[0], LinearMeasurement)
-  ):
-    num_cells = sum(np.size(m.noisy_measurement) for m in data)
-  else:
-    num_cells = sum(marginals.domain.size(cl) for cl in marginals.cliques)
-  scale = jnp.asarray(known_total) * jnp.sqrt(
-      jnp.asarray(loss_fn.lipschitz) * max(num_cells, 1)
-  )
-  return gap / jnp.maximum(scale, 1e-12)
+  scale = known_total * jnp.sqrt(loss_fn.lipschitz * marginals.size())
+  return gap / scale if normalize else gap
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -247,27 +229,15 @@ class Estimator(ABC):
     prev_gap = np.inf
     for _ in range(math.ceil(iters / CALLBACK_EVERY)):
       state = self._multi_step(state, loss_fn, known_total, constraints)
+      mu = self._callback_value(state, known_total, constraints)
       if callback_fn is not None:
-        callback_fn(self._callback_value(state, known_total, constraints))
+        callback_fn(mu)
       if tol is not None:
-        mu = self._callback_value(state, known_total, constraints)
         if not isinstance(mu, CliqueVector):
-          project_fn = getattr(mu, "project", None)
-          if callable(project_fn):
-            arrays = {
-                cl: cast(Factor, project_fn(cl)) for cl in loss_fn.cliques
-            }
-            mu = CliqueVector(domain, loss_fn.cliques, arrays)
-          else:
-            raise ValueError(f"{type(self).__name__} does not support tol.")
+          mu = CliqueVector.from_projectable(mu, loss_fn.cliques)
+        oracle = self.marginal_oracle
         gap = float(
-            primal_dual_gap(
-                loss_fn,
-                mu,
-                known_total,
-                marginal_oracle=self.marginal_oracle,
-                constraints=constraints,
-            )
+            primal_dual_gap(loss_fn, mu, known_total, oracle, constraints)
         )
         if gap <= tol or gap == prev_gap:
           break

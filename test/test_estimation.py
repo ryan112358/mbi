@@ -261,18 +261,6 @@ class TestEstimation(unittest.TestCase):
       actual = model.project(M.clique).datavector()
       self.assertTrue(np.all(np.isfinite(actual)))
 
-  def test_tol_unsupported_estimator_raises(self):
-    class _NoGap(estimation.MirrorDescent):
-
-      def _callback_value(self, state, known_total, constraints=()):
-        return None
-
-    loss_fn = marginal_loss.from_linear_measurements(
-        fake_measurements([("a", "b"), ("b", "c")]), _DOMAIN
-    )
-    with self.assertRaises(ValueError):
-      _NoGap().estimate(_DOMAIN, loss_fn, known_total=1.0, iters=100, tol=1e-6)
-
   def test_primal_dual_gap_nonnegative_and_converges(self):
     cliques = [("a", "b"), ("b", "c"), ("c", "d")]
     # Inconsistent measurements with strictly positive minimum loss (~5.64).
