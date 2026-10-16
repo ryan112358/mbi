@@ -236,12 +236,10 @@ class Estimator(ABC):
         if not isinstance(mu, CliqueVector):
           mu = CliqueVector.from_projectable(mu, loss_fn.cliques)
         oracle = self.marginal_oracle
-        gap = float(
-            primal_dual_gap(loss_fn, mu, known_total, oracle, constraints)
-        )
+        gap = primal_dual_gap(loss_fn, mu, known_total, oracle, constraints)
         if gap <= tol or gap == prev_gap:
           break
-        prev_gap = gap
+        prev_gap = float(gap)
     return self._finalize(state, known_total, constraints=constraints)
 
   @jax.jit(static_argnames=["self"], donate_argnames=["state"])
