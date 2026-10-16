@@ -63,9 +63,7 @@ class TestCallbackStepNumbering(unittest.TestCase):
     loss_fn = callbacks.marginal_loss.from_linear_measurements(
         measurements, domain
     )
-    expected_gap = float(
-        estimation.primal_dual_gap(loss_fn, marginals, known_total=20.0)
-    )
+    expected_gap = float(estimation.primal_dual_gap(loss_fn, marginals))
     np.testing.assert_allclose(float(row[gap_idx]), expected_gap, rtol=1e-5)
 
 
