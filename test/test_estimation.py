@@ -329,6 +329,11 @@ class TestEstimation(unittest.TestCase):
     )
     np.testing.assert_allclose(gap_imp, gap_ss, atol=1e-5)
 
+    raw_gap = estimation.primal_dual_gap(loss_fn, mu, 1.0, normalize=False)
+    num_cells = sum(_DOMAIN.size(cl) for cl in cliques)
+    scale = math.sqrt(loss_fn.lipschitz * num_cells)
+    np.testing.assert_allclose(raw_gap, gap_ss * scale, rtol=1e-5)
+
   def test_precompile(self):
     """precompile() should complete without error."""
     cliques = [("a", "b"), ("b", "c")]
