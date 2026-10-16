@@ -261,17 +261,63 @@ class TestEstimation(unittest.TestCase):
       actual = model.project(M.clique).datavector()
       self.assertTrue(np.all(np.isfinite(actual)))
 
-  def test_tol_unsupported_estimator_raises(self):
-    class _NoLoss(estimation.MirrorDescent):
-
-      def _loss_value(self, state, loss_fn, known_total, constraints=()):
-        return None
-
-    loss_fn = marginal_loss.from_linear_measurements(
-        fake_measurements([("a", "b"), ("b", "c")]), _DOMAIN
+  def test_primal_dual_gap_nonnegative_and_converges(self):
+    cliques = [("a", "b"), ("b", "c"), ("c", "d")]
+    # Inconsistent measurements with strictly positive minimum loss (~5.64).
+    rng = np.random.default_rng(42)
+    measurements = [
+        marginal_loss.LinearMeasurement(
+            rng.uniform(0.1, 1.0, size=_DOMAIN.size(cl)), cl
+        )
+        for cl in cliques
+    ]
+    loss_fn = marginal_loss.from_linear_measurements(measurements, _DOMAIN)
+    uniform = mbi.marginal_oracles.message_passing_shafer_shenoy(
+        CliqueVector.zeros(_DOMAIN, cliques), 1.0
     )
-    with self.assertRaises(ValueError):
-      _NoLoss().estimate(_DOMAIN, loss_fn, known_total=1.0, iters=100, tol=1e-6)
+    initial_gap = float(estimation.primal_dual_gap(loss_fn, uniform))
+    self.assertGreater(initial_gap, 0.05)
+
+    model = estimation.LBFGS().estimate(
+        _DOMAIN, loss_fn, known_total=1.0, iters=1000, tol=1e-5
+    )
+    marginals = getattr(model, "marginals")
+    final_gap = float(estimation.primal_dual_gap(loss_fn, marginals))
+    self.assertGreaterEqual(final_gap, -1e-6)
+    self.assertLessEqual(final_gap, 1e-3)
+
+    # Consistent interior measurements converge below 1e-5 even in float32.
+    interior_loss_fn = marginal_loss.from_linear_measurements(
+        fake_measurements(cliques), _DOMAIN
+    )
+    interior_model = estimation.LBFGS().estimate(
+        _DOMAIN, interior_loss_fn, known_total=1.0, iters=1000, tol=1e-5
+    )
+    interior_marginals = getattr(interior_model, "marginals")
+    interior_gap = float(
+        estimation.primal_dual_gap(interior_loss_fn, interior_marginals)
+    )
+    self.assertGreaterEqual(interior_gap, -1e-6)
+    self.assertLessEqual(interior_gap, 1e-5)
+
+  def test_primal_dual_gap_implicit_oracle(self):
+    cliques = [("a", "b"), ("b", "c")]
+    loss_fn = marginal_loss.from_linear_measurements(
+        fake_measurements(cliques), _DOMAIN
+    )
+    mu = mbi.marginal_oracles.message_passing_shafer_shenoy(
+        CliqueVector.zeros(_DOMAIN, cliques), 1.0
+    )
+    gap_ss = estimation.primal_dual_gap(loss_fn, mu)
+    gap_imp = estimation.primal_dual_gap(
+        loss_fn, mu, mbi.marginal_oracles.message_passing_implicit
+    )
+    np.testing.assert_allclose(gap_imp, gap_ss, atol=1e-5)
+
+    raw_gap = estimation.primal_dual_gap(loss_fn, mu, normalize=False)
+    num_cells = sum(_DOMAIN.size(cl) for cl in cliques)
+    scale = math.sqrt(loss_fn.lipschitz * num_cells)
+    np.testing.assert_allclose(raw_gap, gap_ss * scale, rtol=1e-5)
 
   def test_precompile(self):
     """precompile() should complete without error."""
