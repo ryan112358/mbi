@@ -68,6 +68,30 @@ def _extract_potentials(
   return w_pot.expand(cliques)
 
 
+def primal_dual_gap(
+    loss_fn: MarginalLossFn,
+    marginals: CliqueVector,
+    known_total: jax.Array | float = 1.0,
+    *,
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
+    constraints: Sequence[Constraint] = (),
+) -> jax.Array:
+  """Computes the Fenchel primal-dual gap at primal marginals ``marginals``.
+
+  By the Fenchel-Young identity ``l(mu) + l*(grad) = <grad, mu>`` for convex
+  ``l`` with ``grad = grad l(mu)``, the primal-dual gap at dual variable
+  ``theta = -grad`` simplifies to ``<grad, mu> + max_{nu in M} <-grad, nu>``.
+  """
+  oracle = marginal_oracle or marginal_oracles.default_oracle(
+      marginals.cliques, marginals.domain, has_constraints=bool(constraints)
+  )
+  grad = jax.grad(loss_fn)(marginals)
+  max_marginals = oracle(
+      -grad, known_total, constraints=constraints, reduction_fn=jnp.max
+  )
+  return jnp.asarray(grad.dot(marginals)) + max_marginals.max()
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class Estimator(ABC):
   """An object that estimates a Model from a marginal-based loss function.
@@ -135,10 +159,6 @@ class Estimator(ABC):
     """
     return state[0]
 
-  def _loss_value(self, state, loss_fn, known_total, constraints=()):  # pylint: disable=unused-argument
-    """Current objective value for ``tol`` early stopping, or None."""
-    return getattr(state, "loss", None)
-
   def _oracle(self, cliques, domain, constraints=()):
     """Return the marginal oracle, falling back to ``default_oracle``."""
     oracle = self.marginal_oracle or marginal_oracles.default_oracle(
@@ -160,7 +180,6 @@ class Estimator(ABC):
       callback_fn: Callable | None = None,
       warm_start: Model | CliqueVector | None = None,
       tol: float | None = None,
-      patience: int = 2,
   ) -> Model:
     """Estimate a Model from noisy marginal measurements.
 
@@ -169,9 +188,8 @@ class Estimator(ABC):
     estimators the model's potentials are expanded to cover any new cliques;
     for MixtureOfProducts the model is used directly.
 
-    If ``tol`` is set, optimization stops early once the relative loss
-    improvement over a callback block stays at or below ``tol`` for
-    ``patience`` consecutive blocks (default: run the full ``iters``).
+    If ``tol`` is set, optimization stops early once the primal-dual gap falls
+    at or below ``tol`` (default: run the full ``iters``).
     """
     constraints = tuple(constraints)
     if isinstance(loss_fn, Sequence):
@@ -201,21 +219,27 @@ class Estimator(ABC):
     )
     # De-alias so that donate_argnames in _multi_step is safe.
     state = jax.tree.map(jnp.copy, state)
-    prev_loss, stalls = np.inf, 0
+    prev_gap = np.inf
     for _ in range(math.ceil(iters / CALLBACK_EVERY)):
       state = self._multi_step(state, loss_fn, known_total, constraints)
       if callback_fn is not None:
         callback_fn(self._callback_value(state, known_total, constraints))
       if tol is not None:
-        loss = self._loss_value(state, loss_fn, known_total, constraints)
-        if loss is None:
+        mu = self._callback_value(state, known_total, constraints)
+        if not isinstance(mu, CliqueVector):
           raise ValueError(f"{type(self).__name__} does not support tol.")
-        loss = float(loss)
-        converged = prev_loss - loss <= tol * max(abs(loss), 1.0)
-        stalls = stalls + 1 if converged else 0
-        prev_loss = loss
-        if stalls >= patience:
+        gap = float(
+            primal_dual_gap(
+                loss_fn,
+                mu,
+                known_total,
+                marginal_oracle=self.marginal_oracle,
+                constraints=constraints,
+            )
+        )
+        if gap <= tol or gap == prev_gap:
           break
+        prev_gap = gap
     return self._finalize(state, known_total, constraints=constraints)
 
   @jax.jit(static_argnames=["self"], donate_argnames=["state"])
@@ -724,10 +748,6 @@ class LBFGS(Estimator):
     )
     return marginal_oracle(state.potentials, known_total)
 
-  def _loss_value(self, state, loss_fn, known_total, constraints=()):
-    # optax.lbfgs stores the latest objective value in its state.
-    return optax.tree_utils.tree_get(state.opt_state, "value")
-
   def _finalize(self, state, known_total, constraints=()):
     marginal_oracle = self._oracle(
         state.potentials.cliques,
@@ -884,10 +904,6 @@ class UniversalAcceleratedMethod(Estimator):
   def _callback_value(self, state, known_total, constraints=()):
     # Scale back to N-simplex for user-facing callbacks.
     return state.x * known_total
-
-  def _loss_value(self, state, loss_fn, known_total, constraints=()):
-    # State tracks no loss; recompute on the N-scaled iterate.
-    return loss_fn(state.x * known_total)
 
   def _finalize(self, state, known_total, constraints=()):
     # Scale back to N-simplex and recover potentials via MLE.
