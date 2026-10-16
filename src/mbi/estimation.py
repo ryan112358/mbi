@@ -863,7 +863,8 @@ class UniversalAcceleratedMethod(Estimator):
         # measures curvature on the true joint distribution without
         # double-counting overlapping variables across cliques.
         taylor_approx = value_y + 0.5 * grad_y.dot(x - y)
-        tol_eps = 1e-12 * jnp.maximum(jnp.abs(value_y), 1.0)
+        eps = jnp.finfo(jnp.result_type(value_y, float)).eps
+        tol_eps = 5e3 * eps * jnp.maximum(jnp.abs(value_y), 1.0)
         accept = new_value <= (
             taylor_approx + 0.5 * target_acc * theta + tol_eps
         )

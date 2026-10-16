@@ -508,11 +508,11 @@ class TestEstimation(unittest.TestCase):
     self.assertLessEqual(float(loss2), float(loss1) + 1e-6)
 
   def test_universal_accelerated_linesearch_precision_floor(self):
-    """UAM(linesearch=True) does not collapse stepsize at the float64 floor."""
+    """UAM(linesearch=True) does not collapse stepsize at the precision floor."""
     cliques = [("a", "b"), ("b", "c"), ("c", "d")]
     total = 1e6
     rng = np.random.default_rng(0)
-    P = Factor.random(_DOMAIN)
+    P = Factor(_DOMAIN, rng.random(_DOMAIN.shape))
     P = total * P / P.sum()
     measurements = [
         marginal_loss.LinearMeasurement(
@@ -539,7 +539,8 @@ class TestEstimation(unittest.TestCase):
     import jax
 
     cliques = [("a", "b"), ("b", "c"), ("c", "d")]
-    P = Factor.random(_DOMAIN) * 100.0
+    rng = np.random.default_rng(0)
+    P = Factor(_DOMAIN, rng.random(_DOMAIN.shape)) * 100.0
     total = float(P.sum())
     mu = CliqueVector(_DOMAIN, cliques, {cl: P.project(cl) for cl in cliques})
 
