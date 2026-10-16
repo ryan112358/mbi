@@ -64,7 +64,7 @@ class MarginalOracle(Protocol):
   def __call__(
       self,
       potentials: CliqueVector,
-      total: jax.Array | float = 1.0,
+      total: jax.Array | float | None = 1.0,
       *,
       constraints: Sequence[Constraint] = (),
       reduction_fn: Callable = jax.scipy.special.logsumexp,
@@ -73,7 +73,8 @@ class MarginalOracle(Protocol):
 
     Args:
         potentials: Potentials of a graphical model.
-        total: Normalization constant. Defaults to 1.0.
+        total: Normalization constant, or ``None`` to return unnormalized
+            log-space beliefs. Defaults to 1.0.
         constraints: Structural constraints. Oracles that support
             constraints fold them into the potentials or handle
             them natively; unsupported oracles raise ValueError.
@@ -239,13 +240,15 @@ def _fold_constraints(
 def _finalize_beliefs(
     beliefs: CliqueVector | Factor,
     cliques: Sequence[Clique],
-    total: jax.Array | float,
+    total: jax.Array | float | None,
     fn: Callable = jax.scipy.special.logsumexp,
 ) -> CliqueVector:
   # Project maximal-clique beliefs onto the target cliques and convert from
   # log space to the requested marginal or max-marginal scale.
   tables = {cl: beliefs.project(cl, reduction_fn=fn) for cl in cliques}
   beliefs = CliqueVector(beliefs.domain, cliques, tables)
+  if total is None:
+    return beliefs
   if fn is jnp.max:
     return beliefs * total
   return beliefs.normalize(total, log=True).exp()
@@ -254,7 +257,7 @@ def _finalize_beliefs(
 @jax.jit(static_argnames=["jtree", "return_messages", "reduction_fn"])
 def message_passing_hugin(
     potentials: CliqueVector,
-    total: jax.Array | float = 1.0,
+    total: jax.Array | float | None = 1.0,
     jtree: nx.Graph | None = None,
     *,
     constraints: Sequence[Constraint] = (),
@@ -316,7 +319,7 @@ def message_passing_hugin(
 @jax.jit(static_argnames=["jtree", "return_messages", "reduction_fn"])
 def message_passing_shafer_shenoy(
     potentials: CliqueVector,
-    total: jax.Array | float = 1.0,
+    total: jax.Array | float | None = 1.0,
     jtree: nx.Graph | None = None,
     *,
     constraints: Sequence[Constraint] = (),
@@ -384,7 +387,7 @@ def message_passing_shafer_shenoy(
 )
 def message_passing_implicit(
     potentials: CliqueVector,
-    total: jax.Array | float = 1.0,
+    total: jax.Array | float | None = 1.0,
     jtree: nx.Graph | None = None,
     *,
     constraints: Sequence[Constraint] = (),
@@ -468,16 +471,13 @@ def message_passing_implicit(
     input_messages = [val for key, val in messages.items() if key[1] == cl]
     inputs = input_potentials + input_messages
     for cl2 in inverse_mapping[cl]:
-      if cl2 not in input_cliques:
-        continue
-      belief = contraction(inputs, domain.project(cl2))
-      beliefs[cl2] = (
-          belief * total
-          if reduction_fn is jnp.max
-          else belief.normalize(total, log=True).exp()
-      )
+      if cl2 in input_cliques:
+        beliefs[cl2] = contraction(inputs, domain.project(cl2))
 
-  marginals = CliqueVector(potentials.domain, input_cliques, beliefs)
+  beliefs = CliqueVector(potentials.domain, input_cliques, beliefs)
+  if total is None and reduction_fn is jax.scipy.special.logsumexp:
+    beliefs = beliefs + math.log(potentials.domain.size() // domain.size())
+  marginals = _finalize_beliefs(beliefs, input_cliques, total, reduction_fn)
   return (marginals, messages) if return_messages else marginals
 
 
@@ -589,7 +589,7 @@ def default_oracle(
 
 def brute_force_marginals(
     potentials: CliqueVector,
-    total: jax.Array | float = 1,
+    total: jax.Array | float | None = 1,
     *,
     constraints: Sequence[Constraint] = (),
     reduction_fn: Callable = jax.scipy.special.logsumexp,

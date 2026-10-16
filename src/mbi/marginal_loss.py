@@ -402,15 +402,21 @@ def primal_feasibility(mu: CliqueVector) -> ArrayLike:
     return 0
 
 
+def _mle_loss(mu: CliqueVector, target: CliqueVector) -> ArrayLike:
+  diff = mu - target
+  return 0.5 * diff.dot(diff)
+
+
 def mle_loss_fn(marginals: CliqueVector) -> "MarginalLossFn":
-  """MLE loss: ``-marginals.dot(mu.log())``."""
-
-  def _loss(mu: CliqueVector, target: CliqueVector) -> ArrayLike:
-    safe_mu = jax.tree.map(lambda m, t: jnp.where(t != 0, m, 1.0), mu, target)
-    return -1 * target.dot(safe_mu.log())
-
+  """Target-marginal loss with primal gradient ``mu - marginals``."""
+  total = (
+      float(marginals.project(()).datavector(flatten=False))
+      if marginals.cliques
+      else 1.0
+  )
   return MarginalLossFn(
       cliques=marginals.cliques,
-      loss_fn=_loss,
+      loss_fn=_mle_loss,
       data=marginals,
+      lipschitz=max(total, 1.0) ** 2 / max(marginals.size(), 1),
   )

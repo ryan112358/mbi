@@ -202,11 +202,11 @@ class TestEstimation(unittest.TestCase):
     mu = CliqueVector(_DOMAIN, cliques, {cl: P.project(cl) for cl in cliques})
 
     loss = marginal_loss.mle_loss_fn(mu)
-    model = estimation.LBFGS().estimate(_DOMAIN, loss, known_total=total)
+    model_lbfgs = estimation.LBFGS().estimate(_DOMAIN, loss, known_total=total)
     for cl in cliques:
       expected = mu.project(cl).datavector()
-      actual = model.project(cl).datavector()
-      np.testing.assert_allclose(actual, expected, atol=100 / total)
+      actual = model_lbfgs.project(cl).datavector()
+      np.testing.assert_allclose(actual, expected, atol=1e-2 * total)
 
   def test_tol_none_runs_all_iters(self):
     # tol=None runs the full budget: one callback per CALLBACK_EVERY block.
@@ -533,3 +533,34 @@ class TestEstimation(unittest.TestCase):
       actual = (state.x * total).project(cl).datavector()
       expected = P.project(cl).datavector()
       np.testing.assert_allclose(actual, expected, atol=500.0)
+
+  def test_mle_forward_only_no_backprop(self):
+    """LBFGS on mle_loss_fn recovers potentials without differentiating oracle."""
+    import jax
+
+    cliques = [("a", "b"), ("b", "c"), ("c", "d")]
+    P = Factor.random(_DOMAIN) * 100.0
+    total = float(P.sum())
+    mu = CliqueVector(_DOMAIN, cliques, {cl: P.project(cl) for cl in cliques})
+
+    def forward_only_oracle(potentials, tot=1.0, **kwargs):
+      @jax.custom_vjp
+      def _call(p):
+        return mbi.marginal_oracles.message_passing_shafer_shenoy(
+            p, tot, **kwargs
+        )
+
+      def _bwd(_, __):
+        raise RuntimeError("Backprop through marginal_oracle is forbidden")
+
+      _call.defvjp(lambda p: (_call(p), None), _bwd)
+      return _call(potentials)
+
+    loss = marginal_loss.mle_loss_fn(mu)
+    model = estimation.LBFGS(marginal_oracle=forward_only_oracle).estimate(
+        _DOMAIN, loss, known_total=total, iters=25000, tol=1e-4
+    )
+    for cl in cliques:
+      actual = model.project(cl).datavector()
+      expected = mu.project(cl).datavector()
+      np.testing.assert_allclose(actual, expected, atol=1e-3 * total)

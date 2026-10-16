@@ -279,6 +279,34 @@ class TestMarginalOracles(unittest.TestCase):
           mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
       )
 
+  @parameterized.expand(
+      itertools.product(
+          _SCHEDULES + [_implicit_fused, marginal_oracles.message_passing_fast],
+          _CLIQUE_SETS,
+      )
+  )
+  def test_unnormalized_log_beliefs_matches_brute_force(self, oracle, cliques):
+    """total=None returns unnormalized log-beliefs whose log-Z gradient is p."""
+    import jax
+
+    theta = CliqueVector.random(_DOMAIN, cliques)
+    b1 = oracle(theta, None)
+    b2 = marginal_oracles.brute_force_marginals(theta, None)
+    self.assertEqual(b1.domain, _DOMAIN)
+    self.assertEqual(b1.cliques, tuple(cliques))
+    for cl in cliques:
+      np.testing.assert_allclose(
+          b1[cl].datavector(), b2[cl].datavector(), atol=1e-5
+      )
+    if cliques:
+      log_z = lambda t: oracle(t, None).project((), log=True).datavector(False)
+      grad_log_z = jax.grad(log_z)(theta)
+      p = oracle(theta, 1.0)
+      for cl in cliques:
+        np.testing.assert_allclose(
+            grad_log_z[cl].datavector(), p[cl].datavector(), atol=1e-5
+        )
+
 
 class TestDefaultOracle(unittest.TestCase):
 
