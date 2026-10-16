@@ -71,7 +71,6 @@ def _extract_potentials(
 def primal_dual_gap(
     loss_fn: MarginalLossFn,
     marginals: CliqueVector,
-    known_total: jax.Array | float | None = None,
     marginal_oracle: marginal_oracles.MarginalOracle | None = None,
     constraints: Sequence[Constraint] = (),
     normalize: bool = True,
@@ -82,19 +81,18 @@ def primal_dual_gap(
   ``l`` with ``grad = grad l(mu)``, the primal-dual gap at dual variable
   ``theta = -grad`` simplifies to ``<grad, mu> + max_{nu in M} <-grad, nu>``.
   When ``normalize=True`` (default), the gap is divided by the characteristic
-  scale ``known_total * sqrt(loss_fn.lipschitz * marginals.size())``.
+  scale ``total * sqrt(loss_fn.lipschitz * marginals.size())``.
   """
-  if known_total is None:
-    known_total = marginals.project(()).datavector(flatten=False)
+  total = marginals.project(()).datavector(flatten=False)
   oracle = marginal_oracle or marginal_oracles.default_oracle(
       marginals.cliques, marginals.domain, has_constraints=bool(constraints)
   )
   grad = jax.grad(loss_fn)(marginals)
   max_marginals = oracle(
-      -grad, known_total, constraints=constraints, reduction_fn=jnp.max
+      -grad, total, constraints=constraints, reduction_fn=jnp.max
   )
   gap = jnp.asarray(grad.dot(marginals)) + max_marginals.max()
-  scale = known_total * jnp.sqrt(loss_fn.lipschitz * marginals.size())
+  scale = total * jnp.sqrt(loss_fn.lipschitz * marginals.size())
   return gap / scale if normalize else gap
 
 
@@ -235,8 +233,7 @@ class Estimator(ABC):
       if tol is not None:
         if not isinstance(mu, CliqueVector):
           mu = CliqueVector.from_projectable(mu, loss_fn.cliques)
-        oracle = self.marginal_oracle
-        gap = primal_dual_gap(loss_fn, mu, known_total, oracle, constraints)
+        gap = primal_dual_gap(loss_fn, mu, self.marginal_oracle, constraints)
         if gap <= tol or gap == prev_gap:
           break
         prev_gap = float(gap)

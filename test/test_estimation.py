@@ -275,14 +275,14 @@ class TestEstimation(unittest.TestCase):
     uniform = mbi.marginal_oracles.message_passing_shafer_shenoy(
         CliqueVector.zeros(_DOMAIN, cliques), 1.0
     )
-    initial_gap = float(estimation.primal_dual_gap(loss_fn, uniform, 1.0))
+    initial_gap = float(estimation.primal_dual_gap(loss_fn, uniform))
     self.assertGreater(initial_gap, 0.05)
 
     model = estimation.LBFGS().estimate(
         _DOMAIN, loss_fn, known_total=1.0, iters=1000, tol=1e-5
     )
     marginals = getattr(model, "marginals")
-    final_gap = float(estimation.primal_dual_gap(loss_fn, marginals, 1.0))
+    final_gap = float(estimation.primal_dual_gap(loss_fn, marginals))
     self.assertGreaterEqual(final_gap, -1e-6)
     self.assertLessEqual(final_gap, 1e-3)
 
@@ -295,7 +295,7 @@ class TestEstimation(unittest.TestCase):
     )
     interior_marginals = getattr(interior_model, "marginals")
     interior_gap = float(
-        estimation.primal_dual_gap(interior_loss_fn, interior_marginals, 1.0)
+        estimation.primal_dual_gap(interior_loss_fn, interior_marginals)
     )
     self.assertGreaterEqual(interior_gap, -1e-6)
     self.assertLessEqual(interior_gap, 1e-5)
@@ -308,16 +308,13 @@ class TestEstimation(unittest.TestCase):
     mu = mbi.marginal_oracles.message_passing_shafer_shenoy(
         CliqueVector.zeros(_DOMAIN, cliques), 1.0
     )
-    gap_ss = estimation.primal_dual_gap(loss_fn, mu, 1.0)
+    gap_ss = estimation.primal_dual_gap(loss_fn, mu)
     gap_imp = estimation.primal_dual_gap(
-        loss_fn,
-        mu,
-        1.0,
-        marginal_oracle=mbi.marginal_oracles.message_passing_implicit,
+        loss_fn, mu, mbi.marginal_oracles.message_passing_implicit
     )
     np.testing.assert_allclose(gap_imp, gap_ss, atol=1e-5)
 
-    raw_gap = estimation.primal_dual_gap(loss_fn, mu, 1.0, normalize=False)
+    raw_gap = estimation.primal_dual_gap(loss_fn, mu, normalize=False)
     num_cells = sum(_DOMAIN.size(cl) for cl in cliques)
     scale = math.sqrt(loss_fn.lipschitz * num_cells)
     np.testing.assert_allclose(raw_gap, gap_ss * scale, rtol=1e-5)
