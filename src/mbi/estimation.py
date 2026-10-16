@@ -21,7 +21,7 @@ import functools
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
-from typing import Any, NamedTuple, cast
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -148,13 +148,18 @@ class Estimator(ABC):
   ) -> Any:
     """Perform one optimization step (or one scan block)."""
 
-  @abstractmethod
-  def _finalize(self, state: Any, known_total: float, constraints=()) -> Model:
-    """Convert the final optimization state into a Model."""
-
   # ------------------------------------------------------------------
   # Overridable hooks
   # ------------------------------------------------------------------
+
+  def _finalize(self, state: Any, known_total: float, constraints=()) -> Model:
+    """Convert the final optimization state into a Model."""
+    mu = self._callback_value(state, known_total, constraints)
+    loss = marginal_loss.mle_loss_fn(mu)
+    est = LBFGS(marginal_oracle=self.marginal_oracle)
+    return est.estimate(
+        mu.domain, loss, known_total, constraints, iters=25000, tol=1e-4
+    )
 
   def _callback_value(self, state: Any, known_total: float, constraints=()) -> Any:  # pylint: disable=unused-argument
     """Extract the value to pass to ``callback_fn``.
@@ -576,23 +581,6 @@ class DualAveraging(Estimator):
         w, v, gbar, loss, state.lipschitz, state.gamma, t + 1
     )
 
-  def _finalize(
-      self,
-      state: DualAveragingState,
-      known_total: float,
-      constraints=(),
-  ) -> MarkovRandomField:
-    # Recover potentials from the weighted-average marginals via MLE.
-    # NOTE: warm_start from DA (and IG/UAM) uses these recovered
-    # potentials, not the internal averaging state — so it seeds a
-    # reasonable initial guess rather than exactly continuing.
-    loss = marginal_loss.mle_loss_fn(state.w)
-    est = LBFGS(marginal_oracle=self.marginal_oracle)
-    mrf = est.estimate(
-        state.w.domain, loss, known_total, constraints, iters=25000, tol=1e-6
-    )
-    return cast(MarkovRandomField, mrf)
-
 
 @dataclasses.dataclass(frozen=True)
 class InteriorGradient(Estimator):
@@ -659,19 +647,6 @@ class InteriorGradient(Estimator):
         x, potentials, c, y, z, loss, state.inv_lipschitz
     )
 
-  def _finalize(
-      self,
-      state: InteriorGradientState,
-      known_total: float,
-      constraints=(),
-  ) -> MarkovRandomField:
-    loss = marginal_loss.mle_loss_fn(state.x)
-    est = LBFGS(marginal_oracle=self.marginal_oracle)
-    mrf = est.estimate(
-        state.x.domain, loss, known_total, constraints, iters=25000, tol=1e-6
-    )
-    return cast(MarkovRandomField, mrf)
-
 
 @dataclasses.dataclass(frozen=True)
 class LBFGS(Estimator):
@@ -718,8 +693,26 @@ class LBFGS(Estimator):
         linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
     )
 
-    def theta_loss(theta):
-      return loss_fn(marginal_oracle(theta, known_total))
+    if loss_fn.loss_fn is marginal_loss._mle_loss:  # pylint: disable=protected-access
+      target_p = loss_fn.data / known_total
+
+      @jax.custom_vjp
+      def theta_loss(theta):
+        log_beliefs = marginal_oracle(theta, None)
+        log_z = log_beliefs.project((), log=True).datavector(flatten=False)
+        return log_z - theta.dot(target_p)
+
+      def _fwd(theta):
+        log_beliefs = marginal_oracle(theta, None)
+        log_z = log_beliefs.project((), log=True).datavector(flatten=False)
+        p = log_beliefs.normalize(1.0, log=True).exp()
+        return log_z - theta.dot(target_p), p - target_p
+
+      theta_loss.defvjp(_fwd, lambda res, g: (res * g,))
+    else:
+
+      def theta_loss(theta):
+        return loss_fn(marginal_oracle(theta, known_total))
 
     loss, grad = jax.value_and_grad(theta_loss)(state.potentials)
     updates, opt_state = optimizer.update(
@@ -901,12 +894,3 @@ class UniversalAcceleratedMethod(Estimator):
   def _callback_value(self, state, known_total, constraints=()):
     # Scale back to N-simplex for user-facing callbacks.
     return state.x * known_total
-
-  def _finalize(self, state, known_total, constraints=()):
-    # Scale back to N-simplex and recover potentials via MLE.
-    marginals = state.x * known_total
-    loss = marginal_loss.mle_loss_fn(marginals)
-    est = LBFGS(marginal_oracle=self.marginal_oracle)
-    return est.estimate(
-        marginals.domain, loss, known_total, constraints, iters=25000, tol=1e-6
-    )
