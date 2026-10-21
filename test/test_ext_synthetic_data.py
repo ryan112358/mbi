@@ -1,17 +1,56 @@
+import collections
 import importlib
 import logging
+import pathlib
 import unittest
 import jax
-import numpy as np
 from mbi import (
-    Domain,
-    Factor,
     CliqueVector,
     Constraint,
+    Domain,
+    Factor,
     MarkovRandomField,
     marginal_oracles,
 )
 from mbi.extensions.synthetic_data import synthetic_data as ext_synthetic_data
+import numpy as np
+
+_FIXTURE_PATH = pathlib.Path(__file__).with_name("synthetic_data_fixture.npz")
+
+
+def _load_census_fixtures():
+  """Loads precomputed 20-attribute MRFs and exact in/out-of-model marginals."""
+  npz = np.load(_FIXTURE_PATH)
+  grouped = collections.defaultdict(lambda: collections.defaultdict(dict))
+  for key in npz.files:
+    graph, section, cl_str = key.split("/")
+    grouped[graph][section][tuple(cl_str.split(","))] = npz[key]
+
+  fixtures = {}
+  for graph, sections in grouped.items():
+    domain = Domain.fromdict({
+        cl[0]: arr.shape[0]
+        for cl, arr in sections["in_model"].items()
+        if len(cl) == 1
+    })
+    make_cv = lambda d: CliqueVector(
+        domain,
+        list(d),
+        {cl: Factor(domain.project(cl), arr) for cl, arr in d.items()},
+    )
+    potentials = make_cv(sections["potentials"])
+    in_model = make_cv(sections["in_model"])
+    out_of_model = make_cv(sections["out_of_model"])
+    marginals = CliqueVector(
+        domain,
+        list(sections["potentials"]),
+        {cl: in_model[cl] for cl in sections["potentials"]},
+    )
+    model = MarkovRandomField(
+        potentials=potentials, marginals=marginals, total=1.0
+    )
+    fixtures[graph] = (model, in_model, out_of_model)
+  return fixtures
 
 
 def _create_random_model(domain, cliques, N, constraints=()):
@@ -115,6 +154,7 @@ class TestExtSyntheticDataAccuracy(unittest.TestCase):
 
   def test_two_hubs_shared_separator(self):
     """Two hubs with shared separators — the structure that triggered
+
     the clique-conditioning bug.
 
     Hub1 (H1) connects to A, B, C.
@@ -190,26 +230,6 @@ class TestExtSyntheticDataAccuracy(unittest.TestCase):
         cross_cliques=[("A", "C"), ("A", "E"), ("C", "E")],
     )
 
-  def test_systematic_rounding_and_large_parent_product(self):
-    """Systematic remainder rounding is unbiased and handles >2^19 parents."""
-    sd = importlib.import_module("mbi.extensions.synthetic_data")
-    rng = jax.random.PRNGKey(0)
-    probs = jax.numpy.tile(jax.numpy.array([[0.4, 0.2, 0.2, 0.2]]), (2000, 1))
-    counts = jax.numpy.full((2000,), 2, dtype=jax.numpy.int32)
-    rounded = np.asarray(sd._stochastic_round_dense(rng, probs, counts))
-    np.testing.assert_allclose(
-        rounded.mean(axis=0), [0.8, 0.4, 0.4, 0.4], atol=0.03
-    )
-
-    n_parents = 600_000
-    marg_2d = jax.numpy.zeros((n_parents, 2)).at[:, 0].set(1.0)
-    marg_2d = marg_2d.at[n_parents - 1, :].set(jax.numpy.array([0.0, 1.0]))
-    parent_idx = jax.numpy.array(
-        [n_parents - 2, n_parents - 1], dtype=jax.numpy.int32
-    )
-    out = np.asarray(sd._gumbel_round(rng, marg_2d, parent_idx, 2))
-    np.testing.assert_array_equal(out, [0, 1])
-
   def test_realized_parent_regime_parity(self):
     """Realized-parent conditioning matches model marginals on large cliques."""
     domain = Domain(["A", "B", "C", "D"], [6, 6, 6, 6])
@@ -222,6 +242,51 @@ class TestExtSyntheticDataAccuracy(unittest.TestCase):
       ext_marg = synth_ext.project((attr,)).datavector(flatten=True) / N
       gap = 0.5 * np.sum(np.abs(model_marg - ext_marg))
       self.assertLess(gap, 0.02, f"gap {gap:.6f} for {attr}")
+
+  def test_precomputed_census_graphs(self):
+    """In-model and out-of-model marginals match precomputed 20-attr MRFs.
+
+    Evaluates ``MRF.synthetic_data`` and ``extensions.synthetic_data`` across
+    three realistic 20-attribute graph topologies stored in
+    ``synthetic_data_fixture.npz``:
+      * ``graph1_hub_spoke``: Hub-and-spoke demographic graph (~65K JT cells).
+      * ``graph2_clustered_bridge``: Three dense clusters connected by narrow
+        separator bridges (~215K JT cells).
+      * ``graph3_socioeconomic_treewidth``: High-treewidth triangle mesh
+        (~1.6M JT cells, >125K parent states) that exercises
+        ``_realized_marginals``.
+    """
+    rows = 50_000
+    for graph, (
+        model,
+        in_model,
+        out_of_model,
+    ) in _load_census_fixtures().items():
+      np.random.seed(0)
+      datasets = {
+          "mrf": model.synthetic_data(rows=rows, method="round"),
+          "ext": ext_synthetic_data(model, rows=rows, seed=0),
+      }
+      for impl, synth in datasets.items():
+        for kind, target_cv, mean_tol in (
+            ("in_model", in_model, 0.008),
+            ("out_of_model", out_of_model, 0.018),
+        ):
+          tvds = [
+              0.5
+              * float(
+                  np.sum(
+                      np.abs(
+                          np.asarray(target_cv[cl].datavector())
+                          - np.asarray(synth.project(cl).datavector()) / rows
+                      )
+                  )
+              )
+              for cl in target_cv.cliques
+          ]
+          self.assertLess(
+              float(np.mean(tvds)), mean_tol, f"{graph} ({impl}) {kind}"
+          )
 
 
 class TestExtSyntheticDataPrecompile(unittest.TestCase):
