@@ -965,12 +965,20 @@ class UniversalAcceleratedMethod(Estimator):
       x = (1 - theta) * carry.x + theta * z
 
       if not use_linesearch:
+        new_value = scaled_loss(x)
+        dg = grad_y.dot(x - y)
+        quad_rem = jnp.maximum(new_value - value_y - dg, 0.0)
+        breg_term = jnp.maximum(-0.5 * dg, 1e-30)
+        rho = quad_rem / breg_term
+        next_stepsize = stepsize * jnp.clip(
+            0.8 / jnp.maximum(rho, 0.2), 0.5, 2.0
+        )
         return _AcceleratedStepSearchState(
             x=x,
             z=z,
             u=u,
             prev_stepsize=stepsize,
-            stepsize=stepsize,
+            stepsize=next_stepsize,
             prev_theta=theta,
             accept=jnp.asarray(False),
             iter_search=jnp.asarray(0),

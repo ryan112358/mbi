@@ -324,6 +324,84 @@ def einsum_sharded(
   return _kernel(log_factors)
 
 
+def _einsum_sharded_multi(
+    log_factors: list[Factor],
+    doms: Sequence[Domain],
+    reduction_fn: Callable = jax.scipy.special.logsumexp,
+    *,
+    contraction: Callable = einsum_materialized,
+) -> list[Factor]:
+  """Project combined ``log_factors`` onto multiple target domains in one pass."""
+  if not doms:
+    return []
+  if len(doms) == 1 or contraction is not einsum_materialized:
+    return [
+        einsum_sharded(
+            log_factors, d, reduction_fn=reduction_fn, contraction=contraction
+        )
+        for d in doms
+    ]
+  merged = functools.reduce(
+      lambda a, b: a.merge(b.domain), log_factors, Domain([], [])
+  )
+  for d in doms:
+    merged = merged.merge(d)
+  if jax.device_count() <= 1 or len(merged) == 0:
+    combined = functools.reduce(lambda a, b: a + b, log_factors)
+    return [
+        combined.project(d.attributes, reduction_fn=reduction_fn) for d in doms
+    ]
+
+  mesh = _shard_mesh(merged, Domain([], []))
+  chunks = {a: math.ceil(merged[a] / d) for a, d in mesh.shape.items()}
+  local_dom = Domain.fromdict({**merged.config, **chunks})
+
+  def _slice(f: Factor) -> Factor:
+    if not any(a in mesh.shape for a in f.domain.attributes):
+      return f
+    val = f.pad(mesh, "-inf").values
+    for i, a in enumerate(f.domain.attributes):
+      if a in mesh.shape:
+        val = jax.lax.dynamic_slice_in_dim(
+            val, jax.lax.axis_index(a) * chunks[a], chunks[a], axis=i
+        )
+    return Factor(local_dom.project(f.domain.attributes), val)
+
+  @functools.partial(
+      jax.shard_map,
+      mesh=mesh,
+      in_specs=jax.sharding.PartitionSpec(),
+      out_specs=jax.sharding.PartitionSpec(),
+      check_vma=False,
+  )
+  def _kernel(factors: list[Factor]) -> list[Factor]:
+    local = [_slice(f) for f in factors]
+    combined = functools.reduce(lambda a, b: a + b, local)
+    results = []
+    for dom in doms:
+      out_dom = local_dom.project(dom.attributes)
+      val = combined.project(
+          out_dom.attributes, reduction_fn=reduction_fn
+      ).values
+      elim = tuple(a for a in mesh.axis_names if a not in dom)
+      kept = [a for a in mesh.axis_names if a in dom]
+      if elim:
+        if reduction_fn is jnp.max:
+          val = jax.lax.pmax(val, elim)
+        else:
+          m = jax.lax.pmax(jax.lax.stop_gradient(val), elim)
+          shift = jnp.where(jnp.isneginf(m), 0.0, m)
+          val = m + jnp.log(jax.lax.psum(jnp.exp(val - shift), elim))
+      for a in kept:
+        axis = dom.attributes.index(a)
+        val = jax.lax.all_gather(val, a, axis=axis, tiled=True)
+        val = jax.lax.slice_in_dim(val, 0, dom[a], axis=axis)
+      results.append(Factor(dom, val))
+    return results
+
+  return _kernel(log_factors)
+
+
 def _fold_constraints(
     potentials: CliqueVector,
     constraints: Sequence[Constraint],
@@ -564,10 +642,17 @@ def message_passing_implicit(
       if msg[0] == msg2[1] and msg[1] != msg2[0]:
         incoming_messages[msg].append(msg2)
 
+  is_default_sharded = contraction is einsum_sharded
   if reduction_fn is not jax.scipy.special.logsumexp:
     contraction = functools.partial(contraction, reduction_fn=reduction_fn)
 
+  def _barrier(x: jax.Array) -> jax.Array:
+    return jax.lax.stop_gradient(
+        jnp.sum(jnp.where(jnp.isfinite(x), x * 0.0, 0.0))
+    )
+
   messages = {}
+  barrier = jnp.asarray(0.0)
   for i, j in message_order:
     shared = domain.project([a for a in i if a in j])
     input_potentials = potential_mapping[i]
@@ -578,7 +663,11 @@ def message_passing_implicit(
       if not any(attr in input.domain.attributes for input in inputs):
         inputs.append(Factor.zeros(domain.project([attr])))
 
-    messages[(i, j)] = contraction(inputs, shared)
+    if inputs:
+      inputs = [inputs[0] + barrier, *inputs[1:]]
+    msg = contraction(inputs, shared)
+    barrier = _barrier(msg.values)
+    messages[(i, j)] = msg
 
   if return_messages:
     return CliqueVector(potentials.domain, [], {}), messages
@@ -588,9 +677,31 @@ def message_passing_implicit(
     input_potentials = potential_mapping[cl]
     input_messages = [val for key, val in messages.items() if key[1] == cl]
     inputs = input_potentials + input_messages
-    for cl2 in inverse_mapping[cl]:
-      if cl2 in input_cliques:
-        beliefs[cl2] = contraction(inputs, domain.project(cl2))
+    target_cliques = [
+        cl2 for cl2 in inverse_mapping[cl] if cl2 in input_cliques
+    ]
+    if not target_cliques:
+      continue
+    if inputs:
+      inputs = [inputs[0] + barrier, *inputs[1:]]
+    if is_default_sharded:
+      target_doms = [domain.project(cl2) for cl2 in target_cliques]
+      outs = _einsum_sharded_multi(
+          inputs, target_doms, reduction_fn=reduction_fn
+      )
+      for cl2, out in zip(target_cliques, outs):
+        beliefs[cl2] = out
+      barrier = _barrier(outs[-1].values)
+    elif contraction is einsum_materialized:
+      combined = functools.reduce(lambda a, b: a + b, inputs)
+      for cl2 in target_cliques:
+        beliefs[cl2] = combined.project(cl2, reduction_fn=reduction_fn)
+      barrier = _barrier(beliefs[target_cliques[-1]].values)
+    else:
+      for cl2 in target_cliques:
+        out = contraction(inputs, domain.project(cl2))
+        beliefs[cl2] = out
+        barrier = _barrier(out.values)
 
   beliefs = CliqueVector(potentials.domain, input_cliques, beliefs)
   if total is None and reduction_fn is jax.scipy.special.logsumexp:
