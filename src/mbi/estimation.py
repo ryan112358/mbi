@@ -70,7 +70,7 @@ def _finalize_step(
   }
 
   def body(carry, _):
-    th, lb = carry
+    th, lb = jax.lax.optimization_barrier(carry)
     log_p = lb.normalize(1.0, log=True)
     th = CliqueVector(
         th.domain,
@@ -246,7 +246,7 @@ class Estimator(ABC):
     )
     log_beliefs = oracle(theta, None)
     prev_err = np.inf
-    for _ in range(20):
+    for _ in range(1 if theta is cand else 20):
       theta, log_beliefs, max_l1 = _finalize_step(
           theta, log_beliefs, target_p, weights, log_taus, oracle
       )
