@@ -4,6 +4,7 @@ import logging
 import pathlib
 import unittest
 import jax
+import jax.numpy as jnp
 from mbi import (
     CliqueVector,
     Constraint,
@@ -51,6 +52,12 @@ def _load_census_fixtures():
     )
     fixtures[graph] = (model, in_model, out_of_model)
   return fixtures
+
+
+def _mean_tvd(synth, target: CliqueVector) -> float:
+  emp = CliqueVector.from_projectable(synth, target.cliques) / synth.records
+  tvds = [0.5 * jnp.abs(f.values).sum() for f in (emp - target).tables.values()]
+  return float(np.mean(tvds))
 
 
 def _create_random_model(domain, cliques, N, constraints=()):
@@ -244,18 +251,7 @@ class TestExtSyntheticDataAccuracy(unittest.TestCase):
       self.assertLess(gap, 0.02, f"gap {gap:.6f} for {attr}")
 
   def test_precomputed_census_graphs(self):
-    """In-model and out-of-model marginals match precomputed 20-attr MRFs.
-
-    Evaluates ``MRF.synthetic_data`` and ``extensions.synthetic_data`` across
-    three realistic 20-attribute graph topologies stored in
-    ``synthetic_data_fixture.npz``:
-      * ``graph1_hub_spoke``: Hub-and-spoke demographic graph (~65K JT cells).
-      * ``graph2_clustered_bridge``: Three dense clusters connected by narrow
-        separator bridges (~215K JT cells).
-      * ``graph3_socioeconomic_treewidth``: High-treewidth triangle mesh
-        (~1.6M JT cells, >125K parent states) that exercises
-        ``_realized_marginals``.
-    """
+    """In-model and out-of-model marginals match precomputed 20-attr MRFs."""
     rows = 50_000
     for graph, (
         model,
@@ -263,30 +259,12 @@ class TestExtSyntheticDataAccuracy(unittest.TestCase):
         out_of_model,
     ) in _load_census_fixtures().items():
       np.random.seed(0)
-      datasets = {
-          "mrf": model.synthetic_data(rows=rows, method="round"),
-          "ext": ext_synthetic_data(model, rows=rows, seed=0),
-      }
-      for impl, synth in datasets.items():
-        for kind, target_cv, mean_tol in (
-            ("in_model", in_model, 0.008),
-            ("out_of_model", out_of_model, 0.018),
-        ):
-          tvds = [
-              0.5
-              * float(
-                  np.sum(
-                      np.abs(
-                          np.asarray(target_cv[cl].datavector())
-                          - np.asarray(synth.project(cl).datavector()) / rows
-                      )
-                  )
-              )
-              for cl in target_cv.cliques
-          ]
-          self.assertLess(
-              float(np.mean(tvds)), mean_tol, f"{graph} ({impl}) {kind}"
-          )
+      for synth in (
+          model.synthetic_data(rows=rows, method="round"),
+          ext_synthetic_data(model, rows=rows, seed=0),
+      ):
+        self.assertLess(_mean_tvd(synth, in_model), 0.008, graph)
+        self.assertLess(_mean_tvd(synth, out_of_model), 0.018, graph)
 
 
 class TestExtSyntheticDataPrecompile(unittest.TestCase):
