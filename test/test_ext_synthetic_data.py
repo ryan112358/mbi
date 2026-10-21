@@ -190,6 +190,26 @@ class TestExtSyntheticDataAccuracy(unittest.TestCase):
         cross_cliques=[("A", "C"), ("A", "E"), ("C", "E")],
     )
 
+  def test_systematic_rounding_and_large_parent_product(self):
+    """Systematic remainder rounding is unbiased and handles >2^19 parents."""
+    sd = importlib.import_module("mbi.extensions.synthetic_data")
+    rng = jax.random.PRNGKey(0)
+    probs = jax.numpy.tile(jax.numpy.array([[0.4, 0.2, 0.2, 0.2]]), (2000, 1))
+    counts = jax.numpy.full((2000,), 2, dtype=jax.numpy.int32)
+    rounded = np.asarray(sd._stochastic_round_dense(rng, probs, counts))
+    np.testing.assert_allclose(
+        rounded.mean(axis=0), [0.8, 0.4, 0.4, 0.4], atol=0.03
+    )
+
+    n_parents = 600_000
+    marg_2d = jax.numpy.zeros((n_parents, 2)).at[:, 0].set(1.0)
+    marg_2d = marg_2d.at[n_parents - 1, :].set(jax.numpy.array([0.0, 1.0]))
+    parent_idx = jax.numpy.array(
+        [n_parents - 2, n_parents - 1], dtype=jax.numpy.int32
+    )
+    out = np.asarray(sd._gumbel_round(rng, marg_2d, parent_idx, 2))
+    np.testing.assert_array_equal(out, [0, 1])
+
 
 class TestExtSyntheticDataPrecompile(unittest.TestCase):
   """Tests that precompile() lowers against the signatures generation uses.

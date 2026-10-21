@@ -358,29 +358,16 @@ _ROUND_CHUNK_CELLS = 1 << 24  # ~16M cells/chunk (~1 GiB working set under x64)
 
 
 def _stochastic_round_dense(rng, cond_probs, counts_per_parent):
-  """Expected-count rounding: floor + Gumbel-top-k of the remainder."""
-  parent_product, domain_size = cond_probs.shape
+  """Expected-count rounding: floor + systematic rounding of the remainder."""
   expected = counts_per_parent[:, None] * cond_probs
   integ = jnp.floor(expected).astype(jnp.int32)
-  frac = expected - jnp.floor(expected)
-  extra = counts_per_parent - integ.sum(axis=1)
-
-  u = jax.random.uniform(rng, (parent_product, domain_size))
-  scores = jnp.log(frac + 1e-30) - jnp.log(-jnp.log(u + 1e-30))
-  scores = jnp.where(frac == 0, -jnp.inf, scores)
-
-  ranked = jnp.argsort(-scores, axis=1)
-  positions = jnp.broadcast_to(
-      jnp.arange(domain_size)[None, :],
-      (parent_product, domain_size),
-  )
-  roundup_mask = (positions < extra[:, None]).astype(jnp.int32)
-  row_indices = jnp.broadcast_to(
-      jnp.arange(parent_product)[:, None],
-      ranked.shape,
-  )
-  roundup = jnp.zeros((parent_product, domain_size), dtype=jnp.int32)
-  roundup = roundup.at[row_indices, ranked].set(roundup_mask)
+  frac = expected - integ
+  extra = counts_per_parent[:, None] - integ.sum(axis=1, keepdims=True)
+  cum = jnp.cumsum(frac, axis=1)
+  total = jnp.where(cum[:, -1:] > 0, cum[:, -1:], 1.0)
+  u = jax.random.uniform(rng, (cond_probs.shape[0], 1))
+  cum_int = jnp.floor((cum / total) * extra + (1.0 - u)).astype(jnp.int32)
+  roundup = jnp.diff(jnp.clip(cum_int, 0, extra), axis=1, prepend=0)
   return jnp.maximum(integ + roundup, 0)
 
 
@@ -435,17 +422,13 @@ def _gumbel_round(prng, marg_2d, flat_parent_idx, total):
   )
 
   group_ids = jnp.repeat(
-      jnp.arange(parent_product, dtype=jnp.float32),
+      jnp.arange(parent_product, dtype=jnp.int32),
       counts_per_parent,
       total_repeat_length=total,
   )
-  shuffle_keys = jax.random.uniform(rng2, (total,))
-  composite = group_ids + shuffle_keys
-  shuffle_perm = jnp.argsort(composite)
-  all_values = all_values[shuffle_perm]
-
+  perm = jnp.lexsort((jax.random.uniform(rng2, (total,)), group_ids))
   sort_order = jnp.argsort(flat_parent_idx)
-  return jnp.empty(total, dtype=jnp.int32).at[sort_order].set(all_values)
+  return jnp.empty(total, dtype=jnp.int32).at[sort_order].set(all_values[perm])
 
 
 def _ravel_multi_index(arrays, sizes):
