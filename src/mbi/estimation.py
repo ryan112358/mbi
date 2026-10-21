@@ -132,6 +132,15 @@ def _extract_potentials(
   return w_pot.expand(cliques)
 
 
+@jax.jit
+def _loss_grad_and_dot(
+    loss_fn: MarginalLossFn, marginals: CliqueVector
+) -> tuple[CliqueVector, jax.Array]:
+  """Computes grad(loss_fn)(marginals) and <grad, marginals> under JIT."""
+  grad = jax.grad(loss_fn)(marginals)
+  return grad, jnp.asarray(grad.dot(marginals))
+
+
 def primal_dual_gap(
     loss_fn: MarginalLossFn,
     marginals: CliqueVector,
@@ -151,11 +160,11 @@ def primal_dual_gap(
   oracle = marginal_oracle or marginal_oracles.default_oracle(
       marginals.cliques, marginals.domain, has_constraints=bool(constraints)
   )
-  grad = jax.grad(loss_fn)(marginals)
+  grad, grad_dot_mu = _loss_grad_and_dot(loss_fn, marginals)
   max_marginals = oracle(
       -grad, total, constraints=constraints, reduction_fn=jnp.max
   )
-  gap = jnp.asarray(grad.dot(marginals)) + max_marginals.max()
+  gap = grad_dot_mu + max_marginals.max()
   scale = total * jnp.sqrt(loss_fn.lipschitz * marginals.size())
   return gap / scale if normalize else gap
 
@@ -955,25 +964,31 @@ class UniversalAcceleratedMethod(Estimator):
       z = dual_proj(u)
       x = (1 - theta) * carry.x + theta * z
 
-      if use_linesearch:
-        new_value = scaled_loss(x)
-        # Since u - carry.u = -(stepsize / theta) * grad_y and
-        # x - y = theta * (z - carry.z), the symmetrized KL divergence of the
-        # joint MRF satisfies theta^2 * D_sym_KL(P_z, P_prev_z) =
-        # theta^2 * <u - carry.u, z - carry.z> = -stepsize * <grad_y, x - y>.
-        # Using 0.5 * smooth_estim * theta^2 * D_sym_KL = -0.5 * grad_y.dot(x - y)
-        # measures curvature on the true joint distribution without
-        # double-counting overlapping variables across cliques.
-        taylor_approx = value_y + 0.5 * grad_y.dot(x - y)
-        eps = jnp.finfo(jnp.result_type(value_y, float)).eps
-        tol_eps = 5e3 * eps * jnp.abs(value_y) + 1e-12
-        accept = new_value <= (
-            taylor_approx + 0.5 * target_acc * theta + tol_eps
+      if not use_linesearch:
+        return _AcceleratedStepSearchState(
+            x=x,
+            z=z,
+            u=u,
+            prev_stepsize=stepsize,
+            stepsize=stepsize,
+            prev_theta=theta,
+            accept=jnp.asarray(False),
+            iter_search=jnp.asarray(0),
         )
-        new_stepsize = 1.1 * stepsize
-      else:
-        accept = True
-        new_stepsize = stepsize
+
+      new_value = scaled_loss(x)
+      # Since u - carry.u = -(stepsize / theta) * grad_y and
+      # x - y = theta * (z - carry.z), the symmetrized KL divergence of the
+      # joint MRF satisfies theta^2 * D_sym_KL(P_z, P_prev_z) =
+      # theta^2 * <u - carry.u, z - carry.z> = -stepsize * <grad_y, x - y>.
+      # Using 0.5 * smooth_estim * theta^2 * D_sym_KL = -0.5 * grad_y.dot(x - y)
+      # measures curvature on the true joint distribution without
+      # double-counting overlapping variables across cliques.
+      taylor_approx = value_y + 0.5 * grad_y.dot(x - y)
+      eps = jnp.finfo(jnp.result_type(value_y, float)).eps
+      tol_eps = 5e3 * eps * jnp.abs(value_y) + 1e-12
+      accept = new_value <= (taylor_approx + 0.5 * target_acc * theta + tol_eps)
+      new_stepsize = 1.1 * stepsize
 
       candidate = _AcceleratedStepSearchState(
           x=x,
@@ -991,6 +1006,8 @@ class UniversalAcceleratedMethod(Estimator):
       )
       return jax.tree.map(lambda a, b: jnp.where(accept, a, b), candidate, base)
 
+    if not use_linesearch:
+      return body_fun(state)
     carry = jax.lax.while_loop(cond_fun, body_fun, state)
     return carry._replace(accept=jnp.asarray(False))
 
