@@ -505,7 +505,7 @@ def message_passing_implicit(
     jtree: nx.Graph | None = None,
     *,
     constraints: Sequence[Constraint] = (),
-    contraction: Callable = einsum_materialized,
+    contraction: Callable = einsum_sharded,
     return_messages: bool = False,
     reduction_fn: Callable = jax.scipy.special.logsumexp,
 ) -> CliqueVector | tuple[CliqueVector, dict]:
@@ -515,8 +515,9 @@ def message_passing_implicit(
   via the given contraction function.  Most memory-efficient — never
   materializes super-clique tables.
 
-  The default contraction (``einsum_materialized``) is the fastest on GPU.
-  For better ``-inf`` tolerance, use ``einsum_fused``.
+  The default contraction (``einsum_sharded``) shards large contractions
+  across available devices and delegates to ``einsum_materialized`` on a
+  single device.  For better ``-inf`` tolerance, use ``einsum_fused``.
 
   Args:
       potentials: Potentials of a graphical model.
@@ -534,7 +535,7 @@ def message_passing_implicit(
     raise ValueError(
         "einsum_semistable is not compatible with constraints"
         " (-inf potentials). Use einsum_fused or the default"
-        " einsum_materialized instead."
+        " einsum_sharded instead."
     )
   potentials, input_cliques = _fold_constraints(potentials, constraints)
   if len(potentials.cliques) == 0:
@@ -593,7 +594,8 @@ def message_passing_implicit(
 
   beliefs = CliqueVector(potentials.domain, input_cliques, beliefs)
   if total is None and reduction_fn is jax.scipy.special.logsumexp:
-    beliefs = beliefs + math.log(potentials.domain.size() // domain.size())
+    unused = potentials.domain.invert(domain.attributes)
+    beliefs = beliefs + sum(math.log(potentials.domain[a]) for a in unused)
   marginals = _finalize_beliefs(beliefs, input_cliques, total, reduction_fn)
   return (marginals, messages) if return_messages else marginals
 
@@ -667,28 +669,20 @@ def default_oracle(
   if backend is None:
     backend = jax.default_backend()
 
-  # CPU: SS or Hugin always (XLA compiler less effective on CPU).
-  if backend == "cpu":
-    if has_constraints:
-      return message_passing_shafer_shenoy
-    return message_passing_hugin
-
-  # GPU/TPU: consider memory pressure and per-message data movement.
+  # Consider memory pressure and per-message data movement across all backends.
   if cliques is not None and domain is not None:
     jtree = junction_tree.make_junction_tree(domain, cliques)[0]
     max_cliques = junction_tree.maximal_cliques(jtree)
     sc_sizes = [domain.project(cl).size() for cl in max_cliques]
-    max_size = max(sc_sizes)
+    max_size = max(sc_sizes, default=0)
     num_nodes = len(max_cliques)
 
     # Estimate total beliefs memory for Hugin/SS (4 bytes per float32).
+    # For large junction trees (>= 100M cells / 400 MB), materializing all
+    # super-clique tables simultaneously in Hugin/SS causes excessive memory
+    # overhead and cannot shard super-clique contractions across devices.
     total_beliefs_bytes = sum(sc_sizes) * 4
-
-    # Memory-limited: use implicit to avoid OOM.  The 40% threshold
-    # leaves room for messages, temporaries, and JAX runtime overhead.
-    # Estimate 80 GB for A100; could be refined per device.
-    estimated_hbm = 80e9
-    if total_beliefs_bytes > estimated_hbm * 0.4:
+    if total_beliefs_bytes >= 400e6:
       return message_passing_implicit
 
     # Few large super-cliques: implicit wins on data movement.
@@ -698,7 +692,7 @@ def default_oracle(
     if max_size >= 50_000_000 and num_nodes < 30:
       return message_passing_implicit
 
-  # GPU/TPU with moderate cliques: SS for constraints, Hugin otherwise.
+  # Moderate or unknown cliques: SS for constraints, Hugin otherwise.
   if has_constraints:
     return message_passing_shafer_shenoy
   return message_passing_hugin

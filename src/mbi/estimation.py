@@ -52,6 +52,70 @@ _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 CALLBACK_EVERY = 50
 
 
+@jax.jit(static_argnames=["oracle"])
+def _finalize_step(
+    theta: CliqueVector,
+    log_beliefs: CliqueVector,
+    alpha: jax.Array,
+    target_p: CliqueVector,
+    weights: dict[Clique, float],
+    log_taus: dict[Clique, float],
+    oracle: Callable,
+):
+  """Run CALLBACK_EVERY adaptive log-ratio updates to match target_p."""
+  eps = jnp.finfo(jnp.result_type(float)).eps
+  log_target = {
+      cl: jnp.maximum(
+          jnp.log(jnp.maximum(target_p[cl].values, 0.0)), log_taus[cl]
+      )
+      for cl in target_p.cliques
+  }
+
+  def body(carry, _):
+    th, lb, lr = carry
+    log_z = lb.project((), log=True).datavector(flatten=False)
+    log_p = lb.normalize(1.0, log=True)
+    p = log_p.exp()
+    loss = log_z - th.dot(target_p)
+    grad = p - target_p
+    delta = CliqueVector(
+        th.domain,
+        th.cliques,
+        {
+            cl: Factor(
+                th[cl].domain,
+                weights[cl]
+                * (
+                    log_target[cl] - jnp.maximum(log_p[cl].values, log_taus[cl])
+                ),
+            )
+            for cl in th.cliques
+        },
+    )
+    th2 = th + lr * delta
+    lb2 = oracle(th2, None)
+    log_z2 = lb2.project((), log=True).datavector(flatten=False)
+    loss2 = log_z2 - th2.dot(target_p)
+    tol_eps = 1e3 * eps * jnp.maximum(jnp.abs(loss), 1.0)
+    accept = loss2 <= loss + 0.5 * lr * grad.dot(delta) + tol_eps
+    next_th = jax.tree.map(lambda a, b: jnp.where(accept, a, b), th2, th)
+    next_lb = jax.tree.map(lambda a, b: jnp.where(accept, a, b), lb2, lb)
+    next_lr = jnp.where(accept, jnp.minimum(1.1 * lr, 2.0), 0.5 * lr)
+    return (next_th, next_lb, next_lr), None
+
+  (theta, log_beliefs, alpha), _ = jax.lax.scan(
+      body, (theta, log_beliefs, alpha), None, length=CALLBACK_EVERY
+  )
+  p = log_beliefs.normalize(1.0, log=True).exp()
+  max_l1 = jnp.max(
+      jnp.array([
+          jnp.sum(jnp.abs(p[cl].values - target_p[cl].values))
+          for cl in target_p.cliques
+      ])
+  )
+  return theta, log_beliefs, alpha, max_l1
+
+
 def _extract_potentials(
     warm_start: Model | CliqueVector | None,
     domain: Domain,
@@ -155,10 +219,48 @@ class Estimator(ABC):
   def _finalize(self, state: Any, known_total: float, constraints=()) -> Model:
     """Convert the final optimization state into a Model."""
     mu = self._callback_value(state, known_total, constraints)
-    loss = marginal_loss.mle_loss_fn(mu)
-    est = LBFGS(marginal_oracle=self.marginal_oracle)
-    return est.estimate(
-        mu.domain, loss, known_total, constraints, iters=25000, tol=1e-4
+    if not isinstance(mu, CliqueVector):
+      return mu
+    oracle = self._oracle(mu.cliques, mu.domain, constraints=constraints)
+    if not mu.cliques:
+      potentials = CliqueVector.zeros(mu.domain, ())
+      return MarkovRandomField(
+          potentials=potentials,
+          marginals=oracle(potentials, known_total),
+          total=known_total,
+          constraints=constraints,
+      )
+    target_p = mu / known_total
+    deg: dict[Any, int] = {}
+    for cl in mu.cliques:
+      for a in cl:
+        deg[a] = deg.get(a, 0) + 1
+    eps = float(jnp.finfo(jnp.result_type(float)).eps)
+    weights = {
+        cl: 1.0 / max((deg[a] for a in cl), default=1) for cl in mu.cliques
+    }
+    log_taus = {
+        cl: math.log(100.0 * eps / max(mu.domain.size(cl), 1))
+        for cl in mu.cliques
+    }
+    theta = CliqueVector.zeros(mu.domain, mu.cliques)
+    log_beliefs = oracle(theta, None)
+    alpha = jnp.asarray(1.0)
+    prev_err = np.inf
+    for _ in range(20):
+      theta, log_beliefs, alpha, max_l1 = _finalize_step(
+          theta, log_beliefs, alpha, target_p, weights, log_taus, oracle
+      )
+      err = float(max_l1)
+      if err <= 1e-4 or err >= prev_err * (1.0 - 1e-5):
+        break
+      prev_err = err
+    marginals = log_beliefs.normalize(known_total, log=True).exp()
+    return MarkovRandomField(
+        potentials=theta,
+        marginals=marginals,
+        total=known_total,
+        constraints=constraints,
     )
 
   def _callback_value(self, state: Any, known_total: float, constraints=()) -> Any:  # pylint: disable=unused-argument
