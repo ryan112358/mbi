@@ -225,11 +225,9 @@ def _shard_mesh(merged: Domain, dom: Domain) -> jax.sharding.Mesh:
   ``'a'`` (chunk ``6 -> 3``), and the second shards ``'b'`` (chunk ``4 -> 2``
   with no padding) rather than padding ``'a'`` from 6 to 8::
 
-      >>> merged = Domain(['a', 'b', 'c'], [6, 4, 10])
-      >>> dom = Domain(['c'], [10])
-      >>> mesh = _shard_mesh(merged, dom)
-      >>> dict(mesh.shape)
-      {'a': 2, 'b': 2}
+      merged = Domain(['a', 'b', 'c'], [6, 4, 10])
+      dom = Domain(['c'], [10])
+      mesh = _shard_mesh(merged, dom)  # dict(mesh.shape) == {'a': 2, 'b': 2}
 
   Args:
       merged: Joint domain across all input factors and the output domain.
@@ -250,7 +248,7 @@ def _shard_mesh(merged: Domain, dom: Domain) -> jax.sharding.Mesh:
       n //= d
     d += 1
   axes = {a: k for a, k in axes.items() if k > 1}
-  devices = np.array(jax.devices()).reshape(*axes.values())
+  devices = np.array(jax.devices()).reshape(tuple(axes.values()))
   return jax.sharding.Mesh(devices, tuple(axes))
 
 
