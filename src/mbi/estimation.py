@@ -56,14 +56,12 @@ CALLBACK_EVERY = 50
 def _finalize_step(
     theta: CliqueVector,
     log_beliefs: CliqueVector,
-    alpha: jax.Array,
     target_p: CliqueVector,
     weights: dict[Clique, float],
     log_taus: dict[Clique, float],
     oracle: Callable,
 ):
-  """Run CALLBACK_EVERY adaptive log-ratio updates to match target_p."""
-  eps = jnp.finfo(jnp.result_type(float)).eps
+  """Run CALLBACK_EVERY generalized iterative scaling updates to match target_p."""
   log_target = {
       cl: jnp.maximum(
           jnp.log(jnp.maximum(target_p[cl].values, 0.0)), log_taus[cl]
@@ -72,40 +70,27 @@ def _finalize_step(
   }
 
   def body(carry, _):
-    th, lb, lr = carry
-    log_z = lb.project((), log=True).datavector(flatten=False)
+    th, lb = carry
     log_p = lb.normalize(1.0, log=True)
-    p = log_p.exp()
-    loss = log_z - th.dot(target_p)
-    grad = p - target_p
-    delta = CliqueVector(
+    th = CliqueVector(
         th.domain,
         th.cliques,
         {
             cl: Factor(
                 th[cl].domain,
-                weights[cl]
+                th[cl].values
+                + weights[cl]
                 * (
-                    log_target[cl]
-                    - jnp.maximum(log_p[cl].values, log_taus[cl])
+                    log_target[cl] - jnp.maximum(log_p[cl].values, log_taus[cl])
                 ),
             )
             for cl in th.cliques
         },
     )
-    th2 = th + lr * delta
-    lb2 = oracle(th2, None)
-    log_z2 = lb2.project((), log=True).datavector(flatten=False)
-    loss2 = log_z2 - th2.dot(target_p)
-    tol_eps = 1e3 * eps * jnp.maximum(jnp.abs(loss), 1.0)
-    accept = loss2 <= loss + 0.5 * lr * grad.dot(delta) + tol_eps
-    next_th = jax.tree.map(lambda a, b: jnp.where(accept, a, b), th2, th)
-    next_lb = jax.tree.map(lambda a, b: jnp.where(accept, a, b), lb2, lb)
-    next_lr = jnp.where(accept, jnp.minimum(1.1 * lr, 2.0), 0.5 * lr)
-    return (next_th, next_lb, next_lr), None
+    return (th, oracle(th, None)), None
 
-  (theta, log_beliefs, alpha), _ = jax.lax.scan(
-      body, (theta, log_beliefs, alpha), None, length=CALLBACK_EVERY
+  (theta, log_beliefs), _ = jax.lax.scan(
+      body, (theta, log_beliefs), None, length=CALLBACK_EVERY
   )
   p = log_beliefs.normalize(1.0, log=True).exp()
   max_l1 = jnp.max(
@@ -114,7 +99,7 @@ def _finalize_step(
           for cl in target_p.cliques
       ])
   )
-  return theta, log_beliefs, alpha, max_l1
+  return theta, log_beliefs, max_l1
 
 
 def _extract_potentials(
@@ -255,14 +240,13 @@ class Estimator(ABC):
     }
     theta = jax.tree.map(jnp.zeros_like, target_p)
     log_beliefs = oracle(theta, None)
-    alpha = jnp.asarray(1.0)
     prev_err = np.inf
     for _ in range(20):
-      theta, log_beliefs, alpha, max_l1 = _finalize_step(
-          theta, log_beliefs, alpha, target_p, weights, log_taus, oracle
+      theta, log_beliefs, max_l1 = _finalize_step(
+          theta, log_beliefs, target_p, weights, log_taus, oracle
       )
       err = float(max_l1)
-      if err <= 1e-4 or err >= prev_err * (1.0 - 1e-5):
+      if err <= 1e-4 or err >= prev_err * (1.0 - 1e-3):
         break
       prev_err = err
     marginals = log_beliefs.normalize(known_total, log=True).exp()
@@ -285,7 +269,11 @@ class Estimator(ABC):
     oracle = self.marginal_oracle or marginal_oracles.default_oracle(
         cliques, domain, has_constraints=bool(constraints)
     )
-    return functools.partial(oracle, constraints=constraints)
+    return (
+        functools.partial(oracle, constraints=constraints)
+        if constraints
+        else oracle
+    )
 
   # ------------------------------------------------------------------
   # Default implementations
@@ -998,9 +986,7 @@ class UniversalAcceleratedMethod(Estimator):
       taylor_approx = value_y + 0.5 * grad_y.dot(x - y)
       eps = jnp.finfo(jnp.result_type(value_y, float)).eps
       tol_eps = 5e3 * eps * jnp.abs(value_y) + 1e-12
-      accept = new_value <= (
-          taylor_approx + 0.5 * target_acc * theta + tol_eps
-      )
+      accept = new_value <= (taylor_approx + 0.5 * target_acc * theta + tol_eps)
       new_stepsize = 1.1 * stepsize
 
       candidate = _AcceleratedStepSearchState(
