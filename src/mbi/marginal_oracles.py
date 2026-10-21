@@ -647,9 +647,8 @@ def message_passing_implicit(
     contraction = functools.partial(contraction, reduction_fn=reduction_fn)
 
   def _barrier(x: jax.Array) -> jax.Array:
-    return jax.lax.stop_gradient(
-        jnp.sum(jnp.where(jnp.isfinite(x), x * 0.0, 0.0))
-    )
+    v = x.ravel()[0]
+    return jax.lax.stop_gradient(jnp.where(jnp.isfinite(v), v * 0.0, 0.0))
 
   messages = {}
   barrier = jnp.asarray(0.0)
@@ -663,10 +662,12 @@ def message_passing_implicit(
       if not any(attr in input.domain.attributes for input in inputs):
         inputs.append(Factor.zeros(domain.project([attr])))
 
-    if inputs:
-      inputs = [inputs[0] + barrier, *inputs[1:]]
+    is_large = domain.size(i) >= 100_000
+    if inputs and is_large:
+      inputs = [f + barrier for f in inputs]
     msg = contraction(inputs, shared)
-    barrier = _barrier(msg.values)
+    if is_large:
+      barrier = _barrier(msg.values)
     messages[(i, j)] = msg
 
   if return_messages:
@@ -682,8 +683,9 @@ def message_passing_implicit(
     ]
     if not target_cliques:
       continue
-    if inputs:
-      inputs = [inputs[0] + barrier, *inputs[1:]]
+    is_large = domain.size(cl) >= 100_000
+    if inputs and is_large:
+      inputs = [f + barrier for f in inputs]
     if is_default_sharded:
       target_doms = [domain.project(cl2) for cl2 in target_cliques]
       outs = _einsum_sharded_multi(
@@ -691,17 +693,20 @@ def message_passing_implicit(
       )
       for cl2, out in zip(target_cliques, outs):
         beliefs[cl2] = out
-      barrier = _barrier(outs[-1].values)
+      if is_large:
+        barrier = _barrier(outs[-1].values)
     elif contraction is einsum_materialized:
       combined = functools.reduce(lambda a, b: a + b, inputs)
       for cl2 in target_cliques:
         beliefs[cl2] = combined.project(cl2, reduction_fn=reduction_fn)
-      barrier = _barrier(beliefs[target_cliques[-1]].values)
+      if is_large:
+        barrier = _barrier(beliefs[target_cliques[-1]].values)
     else:
       for cl2 in target_cliques:
         out = contraction(inputs, domain.project(cl2))
         beliefs[cl2] = out
-        barrier = _barrier(out.values)
+        if is_large:
+          barrier = _barrier(out.values)
 
   beliefs = CliqueVector(potentials.domain, input_cliques, beliefs)
   if total is None and reduction_fn is jax.scipy.special.logsumexp:

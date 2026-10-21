@@ -86,7 +86,8 @@ def _finalize_step(
                 th[cl].domain,
                 weights[cl]
                 * (
-                    log_target[cl] - jnp.maximum(log_p[cl].values, log_taus[cl])
+                    log_target[cl]
+                    - jnp.maximum(log_p[cl].values, log_taus[cl])
                 ),
             )
             for cl in th.cliques
@@ -252,7 +253,7 @@ class Estimator(ABC):
         cl: math.log(100.0 * eps / max(mu.domain.size(cl), 1))
         for cl in mu.cliques
     }
-    theta = CliqueVector.zeros(mu.domain, mu.cliques)
+    theta = jax.tree.map(jnp.zeros_like, target_p)
     log_beliefs = oracle(theta, None)
     alpha = jnp.asarray(1.0)
     prev_err = np.inf
@@ -912,6 +913,8 @@ class UniversalAcceleratedMethod(Estimator):
     # Project onto unit simplex (total=1) for numerical stability.
     x = marginal_oracle(potentials, 1.0)
     z = jax.tree.map(jnp.copy, x)
+    if warm_start is None:
+      potentials = jax.tree.map(jnp.zeros_like, x)
     # f_scaled(p) = loss_fn(N*p) has Lipschitz-continuous gradient with
     # constant N² * L, where L = loss_fn.lipschitz.  The initial stepsize
     # is the inverse of this smoothness estimate.
@@ -995,7 +998,9 @@ class UniversalAcceleratedMethod(Estimator):
       taylor_approx = value_y + 0.5 * grad_y.dot(x - y)
       eps = jnp.finfo(jnp.result_type(value_y, float)).eps
       tol_eps = 5e3 * eps * jnp.abs(value_y) + 1e-12
-      accept = new_value <= (taylor_approx + 0.5 * target_acc * theta + tol_eps)
+      accept = new_value <= (
+          taylor_approx + 0.5 * target_acc * theta + tol_eps
+      )
       new_stepsize = 1.1 * stepsize
 
       candidate = _AcceleratedStepSearchState(
