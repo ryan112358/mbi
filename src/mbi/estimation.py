@@ -238,7 +238,12 @@ class Estimator(ABC):
         cl: math.log(100.0 * eps / max(mu.domain.size(cl), 1))
         for cl in mu.cliques
     }
-    theta = jax.tree.map(jnp.zeros_like, target_p)
+    cand = getattr(state, "u", getattr(state, "potentials", None))
+    theta = (
+        cand
+        if isinstance(cand, CliqueVector) and cand.cliques == target_p.cliques
+        else jax.tree.map(jnp.zeros_like, target_p)
+    )
     log_beliefs = oracle(theta, None)
     prev_err = np.inf
     for _ in range(20):
