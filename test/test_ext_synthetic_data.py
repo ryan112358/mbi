@@ -210,6 +210,19 @@ class TestExtSyntheticDataAccuracy(unittest.TestCase):
     out = np.asarray(sd._gumbel_round(rng, marg_2d, parent_idx, 2))
     np.testing.assert_array_equal(out, [0, 1])
 
+  def test_realized_parent_regime_parity(self):
+    """Realized-parent conditioning matches model marginals on large cliques."""
+    domain = Domain(["A", "B", "C", "D"], [6, 6, 6, 6])
+    cliques = [("A", "B", "C", "D")]
+    N = 1000
+    model = _create_random_model(domain, cliques, N)
+    synth_ext = ext_synthetic_data(model, rows=N)
+    for attr in domain.attributes:
+      model_marg = model.project((attr,)).datavector(flatten=True) / N
+      ext_marg = synth_ext.project((attr,)).datavector(flatten=True) / N
+      gap = 0.5 * np.sum(np.abs(model_marg - ext_marg))
+      self.assertLess(gap, 0.02, f"gap {gap:.6f} for {attr}")
+
 
 class TestExtSyntheticDataPrecompile(unittest.TestCase):
   """Tests that precompile() lowers against the signatures generation uses.
