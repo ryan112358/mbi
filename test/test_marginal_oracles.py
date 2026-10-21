@@ -1,7 +1,12 @@
+import doctest
 import functools
 import itertools
+import os
 import unittest
 
+os.environ.setdefault("XLA_FLAGS", "--xla_force_host_platform_device_count=4")
+
+import jax
 import jax.numpy as jnp
 import numpy as np
 from parameterized import parameterized
@@ -17,6 +22,7 @@ from mbi.marginal_oracles import (
     einsum_fused,
     einsum_materialized,
     einsum_semistable,
+    einsum_sharded,
     message_passing_hugin,
     message_passing_implicit,
     message_passing_shafer_shenoy,
@@ -56,6 +62,9 @@ _implicit_materialized = functools.partial(
 _implicit_fused = functools.partial(
     message_passing_implicit, contraction=einsum_fused
 )
+_implicit_sharded = functools.partial(
+    message_passing_implicit, contraction=einsum_sharded
+)
 _implicit_constraints_materialized = functools.partial(
     ext_implicit,
     contraction=einsum_materialized,
@@ -74,6 +83,7 @@ _ORACLES = [
     marginal_oracles.message_passing_fast,
     _implicit_materialized,
     _implicit_fused,
+    _implicit_sharded,
     message_passing_hugin,
     message_passing_shafer_shenoy,
     ext_shafer_shenoy,
@@ -89,6 +99,7 @@ _STABLE_ORACLES = [
     marginal_oracles.message_passing_shafer_shenoy,
     message_passing_shafer_shenoy,
     ext_shafer_shenoy,
+    _implicit_sharded,
 ]
 
 _DOMAIN = Domain(["a", "b", "c", "d"], [2, 3, 4, 5])
@@ -115,6 +126,7 @@ _CONTRACTIONS = [
     einsum_semistable,
     einsum_materialized,
     einsum_fused,
+    einsum_sharded,
 ]
 
 # All three schedules for exhaustive schedule testing.
@@ -260,7 +272,7 @@ class TestMarginalOracles(unittest.TestCase):
 
   @parameterized.expand(
       itertools.product(
-          _SCHEDULES + [_implicit_fused],
+          _SCHEDULES + [_implicit_fused, _implicit_sharded],
           _CLIQUE_SETS,
       )
   )
@@ -281,7 +293,12 @@ class TestMarginalOracles(unittest.TestCase):
 
   @parameterized.expand(
       itertools.product(
-          _SCHEDULES + [_implicit_fused, marginal_oracles.message_passing_fast],
+          _SCHEDULES
+          + [
+              _implicit_fused,
+              _implicit_sharded,
+              marginal_oracles.message_passing_fast,
+          ],
           _CLIQUE_SETS,
       )
   )
@@ -306,6 +323,16 @@ class TestMarginalOracles(unittest.TestCase):
         np.testing.assert_allclose(
             grad_log_z[cl].datavector(), p[cl].datavector(), atol=1e-5
         )
+
+  def test_doctest(self):
+    failures, _ = doctest.testmod(marginal_oracles)
+    self.assertEqual(failures, 0)
+
+  def test_shard_mesh_multi_attribute(self):
+    merged = Domain(["a", "b", "c"], [6, 4, 10])
+    dom = Domain(["c"], [10])
+    mesh = marginal_oracles._shard_mesh(merged, dom)
+    self.assertEqual(dict(mesh.shape), {"a": 2, "b": 2})
 
 
 class TestDefaultOracle(unittest.TestCase):
@@ -401,6 +428,7 @@ _CONSTRAINED_ORACLES = [
 _FOLDING_ORACLES = [
     message_passing_shafer_shenoy,
     message_passing_hugin,
+    _implicit_sharded,
 ]
 
 
