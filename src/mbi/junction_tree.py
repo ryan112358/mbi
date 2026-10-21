@@ -29,14 +29,14 @@ def message_passing_order(
     junction_tree: nx.Graph,
 ) -> list[tuple[Clique, Clique]]:
   """Return a valid message passing order."""
-  edges = set()
+  edges = []
   messages = list(junction_tree.edges()) + [
       (b, a) for a, b in junction_tree.edges()
   ]
   for m1 in messages:
     for m2 in messages:
       if m1[1] == m2[0] and m1[0] != m2[1]:
-        edges.add((m1, m2))
+        edges.append((m1, m2))
   graph = nx.DiGraph()
   graph.add_nodes_from(messages)
   graph.add_edges_from(edges)

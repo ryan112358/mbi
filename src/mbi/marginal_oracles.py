@@ -17,18 +17,19 @@ hardware and clique structure::
 """
 
 import collections
+from collections.abc import Callable, Sequence
 import concurrent.futures
 import functools
 import itertools
 import math
 import string
-import warnings
-from collections.abc import Callable, Sequence
 from typing import Protocol
+import warnings
 
 import jax
 import jax.numpy as jnp
 import networkx as nx
+import numpy as np
 
 from . import junction_tree
 from ._future import RobustFuture
@@ -208,6 +209,119 @@ def einsum_fused(
     )
 
   return sum_product(log_factors, dom, einsum_fn=_custom_einsum)
+
+
+def _shard_mesh(merged: Domain, dom: Domain) -> jax.sharding.Mesh:
+  """Construct a device mesh that shards attributes of ``merged`` across JAX devices.
+
+  Greedily assigns prime factors of ``jax.device_count()`` to attributes in
+  ``merged``, preferring eliminated attributes (those not in ``dom``) so
+  cross-device reductions use in-place ``psum``/``pmax`` collectives over
+  ``all_gather``, then minimizing per-device padded chunk growth
+  (``ceil(size / shards)``), and breaking ties by larger current chunk size.
+
+  In the 4-device example below, ``'c'`` is in ``dom``, so eliminated
+  attributes ``'a'`` and ``'b'`` are preferred. The first factor of 2 shards
+  ``'a'`` (chunk ``6 -> 3``), and the second shards ``'b'`` (chunk ``4 -> 2``
+  with no padding) rather than padding ``'a'`` from 6 to 8::
+
+      merged = Domain(['a', 'b', 'c'], [6, 4, 10])
+      dom = Domain(['c'], [10])
+      mesh = _shard_mesh(merged, dom)  # dict(mesh.shape) == {'a': 2, 'b': 2}
+
+  Args:
+      merged: Joint domain across all input factors and the output domain.
+      dom: Target output domain of the contraction.
+
+  Returns:
+      A ``jax.sharding.Mesh`` whose axis names are a subset of ``merged``'s
+      attributes and whose axis sizes multiply to ``jax.device_count()``.
+  """
+  axes = {a: 1 for a in merged.attributes}
+  n, d = jax.device_count(), 2
+  chunk = lambda a, k: math.ceil(merged[a] / k)
+  while n > 1:
+    while n % d == 0:
+      ratio = lambda a: chunk(a, axes[a] * d) / chunk(a, axes[a])
+      key = lambda a: (ratio(a) == 1, a in dom, ratio(a), -chunk(a, axes[a]))
+      axes[min(merged.attributes, key=key)] *= d
+      n //= d
+    d += 1
+  axes = {a: k for a, k in axes.items() if k > 1}
+  devices = np.array(jax.devices()).reshape(tuple(axes.values()))
+  return jax.sharding.Mesh(devices, tuple(axes))
+
+
+def einsum_sharded(
+    log_factors: list[Factor],
+    dom: Domain,
+    reduction_fn: Callable = jax.scipy.special.logsumexp,
+    *,
+    contraction: Callable = einsum_materialized,
+) -> Factor:
+  """Compute the log-space sum-product sharded across all JAX devices.
+
+  Splits attributes across devices via ``Factor.pad`` and ``jax.shard_map``,
+  runs ``contraction`` on each device's local slice, and combines the partial
+  results with a collective reduction or ``all_gather``.
+
+  Args:
+      log_factors: Factors in log space.
+      dom: Target domain for the output.
+      reduction_fn: Reduction callable (default:
+        ``jax.scipy.special.logsumexp``).
+      contraction: Per-device contraction function (default:
+        ``einsum_materialized``).
+
+  Returns:
+      A Factor over *dom* in log space.
+  """
+  merged = functools.reduce(lambda a, b: a.merge(b.domain), log_factors, dom)
+  if jax.device_count() <= 1 or len(merged) == 0:
+    return contraction(log_factors, dom, reduction_fn=reduction_fn)
+
+  mesh = _shard_mesh(merged, dom)
+  chunks = {a: math.ceil(merged[a] / d) for a, d in mesh.shape.items()}
+  local_dom = Domain.fromdict({**merged.config, **chunks})
+  elim = tuple(a for a in mesh.axis_names if a not in dom)
+  kept = [a for a in mesh.axis_names if a in dom]
+
+  def _slice(f: Factor) -> Factor:
+    if not any(a in mesh.shape for a in f.domain.attributes):
+      return f
+    val = f.pad(mesh, "-inf").values
+    for i, a in enumerate(f.domain.attributes):
+      if a in mesh.shape:
+        val = jax.lax.dynamic_slice_in_dim(
+            val, jax.lax.axis_index(a) * chunks[a], chunks[a], axis=i
+        )
+    return Factor(local_dom.project(f.domain.attributes), val)
+
+  @functools.partial(
+      jax.shard_map,
+      mesh=mesh,
+      in_specs=jax.sharding.PartitionSpec(),
+      out_specs=jax.sharding.PartitionSpec(),
+      check_vma=False,
+  )
+  def _kernel(factors: list[Factor]) -> Factor:
+    local = [_slice(f) for f in factors]
+    out_dom = local_dom.project(dom.attributes)
+    val = contraction(local, out_dom, reduction_fn=reduction_fn).values
+    if elim:
+      if reduction_fn is jnp.max:
+        val = jax.lax.pmax(val, elim)
+      else:
+        m = jax.lax.pmax(jax.lax.stop_gradient(val), elim)
+        shift = jnp.where(jnp.isneginf(m), 0.0, m)
+        val = m + jnp.log(jax.lax.psum(jnp.exp(val - shift), elim))
+    for a in kept:
+      axis = dom.attributes.index(a)
+      val = jax.lax.all_gather(val, a, axis=axis, tiled=True)
+      val = jax.lax.slice_in_dim(val, 0, dom[a], axis=axis)
+    return Factor(dom, val)
+
+  return _kernel(log_factors)
 
 
 def _fold_constraints(
@@ -454,7 +568,7 @@ def message_passing_implicit(
 
   messages = {}
   for i, j in message_order:
-    shared = domain.project(tuple(set(i) & set(j)))
+    shared = domain.project([a for a in i if a in j])
     input_potentials = potential_mapping[i]
     input_messages = [messages[key] for key in incoming_messages[(i, j)]]
     inputs = input_potentials + input_messages
@@ -464,6 +578,9 @@ def message_passing_implicit(
         inputs.append(Factor.zeros(domain.project([attr])))
 
     messages[(i, j)] = contraction(inputs, shared)
+
+  if return_messages:
+    return CliqueVector(potentials.domain, [], {}), messages
 
   beliefs = {}
   for cl in maximal_cliques:
