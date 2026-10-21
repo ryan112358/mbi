@@ -42,7 +42,7 @@ def precompile(
     rows: int,
     constraints: Sequence[Constraint] = (),
     *,
-    contraction: Callable = marginal_oracles.einsum_materialized,
+    contraction: Callable = marginal_oracles.einsum_sharded,
 ) -> concurrent.futures.Future:
   """Warm the JIT cache for ``synthetic_data`` asynchronously.
 
@@ -70,7 +70,7 @@ def precompile(
   def _compile_all():
     # --- Compile message_passing_implicit (abstract, no execution) ---
     abstract_potentials = CliqueVector.abstract(domain, cliques)
-    marginal_oracles.message_passing_implicit.lower(
+    mp_compiled = marginal_oracles.message_passing_implicit.lower(
         abstract_potentials,
         1.0,
         jtree=plan.jtree,
@@ -90,11 +90,18 @@ def precompile(
       pot_map[mapping[cl]].append(Factor.abstract(domain.project(cl)))
 
     # Messages grouped by destination clique (shapes from separators).
+    # Propagate the separator shardings produced by `einsum_sharded` onto the
+    # abstract message factors so `_generate_column.lower` sees the exact
+    # `NamedSharding` that `synthetic_data` will pass at runtime.
     message_order = junction_tree.message_passing_order(plan.jtree)
     msg_map: dict[tuple, list[Factor]] = collections.defaultdict(list)
+    _, msg_shardings = mp_compiled.output_shardings
     for i, j in message_order:
       sep = domain.project([a for a in i if a in j])
-      msg_map[j].append(Factor.abstract(sep))
+      sharding = msg_shardings[(i, j)].values
+      if not isinstance(sharding, jax.sharding.Sharding):
+        sharding = None
+      msg_map[j].append(Factor.abstract(sep, sharding=sharding))
 
     # --- Compile each column's _generate_column ---
     for cp in plan.columns.values():
@@ -129,7 +136,7 @@ def synthetic_data(
     rows: int,
     seed: int = 0,
     *,
-    contraction: Callable = marginal_oracles.einsum_materialized,
+    contraction: Callable = marginal_oracles.einsum_sharded,
 ) -> Dataset:
   """Generate synthetic data from a fitted model using Gumbel rounding.
 
