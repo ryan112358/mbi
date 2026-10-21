@@ -71,14 +71,19 @@ class Factor:
     return cls(domain, jnp.asarray(np.random.rand(*domain.shape)))
 
   @classmethod
-  def abstract(cls, domain: Domain) -> Factor:
+  def abstract(
+      cls,
+      domain: Domain,
+      sharding: jax.sharding.Sharding | None = None,
+  ) -> Factor:
     """Creates a shape/dtype-only Factor for ahead-of-time compilation."""
     # Match zeros/ones' default float dtype so abstract-traced programs share
     # the JIT cache with real runs (a fixed dtype would force recompiles).
+    dtype = jnp.result_type(float)
     return cls(
         domain,
         # ShapeDtypeStruct stands in for a concrete Array under eval_shape.
-        jax.ShapeDtypeStruct(domain.shape, jnp.result_type(float)),  # pyrefly: ignore[bad-argument-type]
+        jax.ShapeDtypeStruct(domain.shape, dtype, sharding=sharding),  # pyrefly: ignore[bad-argument-type]
     )
 
   # Reshaping operations
