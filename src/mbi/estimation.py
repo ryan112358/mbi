@@ -52,7 +52,7 @@ _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 CALLBACK_EVERY = 50
 
 
-@jax.jit(static_argnames=["oracle"])
+@jax.jit(static_argnames=["oracle", "num_steps"])
 def _finalize_step(
     theta: CliqueVector,
     log_beliefs: CliqueVector,
@@ -60,8 +60,9 @@ def _finalize_step(
     weights: dict[Clique, float],
     log_taus: dict[Clique, float],
     oracle: Callable,
+    num_steps: int = CALLBACK_EVERY,
 ):
-  """Run CALLBACK_EVERY generalized iterative scaling updates to match target_p."""
+  """Run num_steps generalized iterative scaling updates to match target_p."""
   log_target = {
       cl: jnp.maximum(
           jnp.log(jnp.maximum(target_p[cl].values, 0.0)), log_taus[cl]
@@ -90,7 +91,7 @@ def _finalize_step(
     return (th, oracle(th, None)), None
 
   (theta, log_beliefs), _ = jax.lax.scan(
-      body, (theta, log_beliefs), None, length=CALLBACK_EVERY
+      body, (theta, log_beliefs), None, length=num_steps
   )
   p = log_beliefs.normalize(1.0, log=True).exp()
   max_l1 = jnp.max(
@@ -245,15 +246,20 @@ class Estimator(ABC):
         else jax.tree.map(jnp.zeros_like, target_p)
     )
     log_beliefs = oracle(theta, None)
-    prev_err = np.inf
-    for _ in range(1 if theta is cand else 20):
-      theta, log_beliefs, max_l1 = _finalize_step(
-          theta, log_beliefs, target_p, weights, log_taus, oracle
+    if theta is cand:
+      theta, log_beliefs, _ = _finalize_step(
+          theta, log_beliefs, target_p, weights, log_taus, oracle, num_steps=10
       )
-      err = float(max_l1)
-      if err <= 1e-4 or err >= prev_err * (1.0 - 1e-3):
-        break
-      prev_err = err
+    else:
+      prev_err = np.inf
+      for _ in range(20):
+        theta, log_beliefs, max_l1 = _finalize_step(
+            theta, log_beliefs, target_p, weights, log_taus, oracle
+        )
+        err = float(max_l1)
+        if err <= 1e-4 or err >= prev_err * (1.0 - 1e-3):
+          break
+        prev_err = err
     marginals = log_beliefs.normalize(known_total, log=True).exp()
     return MarkovRandomField(
         potentials=theta,
