@@ -52,6 +52,57 @@ _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 CALLBACK_EVERY = 50
 
 
+@jax.jit(static_argnames=["oracle", "num_steps"])
+def _finalize_step(
+    theta: CliqueVector,
+    log_beliefs: CliqueVector,
+    target_p: CliqueVector,
+    weights: dict[Clique, float],
+    log_taus: dict[Clique, float],
+    oracle: Callable,
+    num_steps: int = CALLBACK_EVERY,
+):
+  """Run num_steps generalized iterative scaling updates to match target_p."""
+  log_target = {
+      cl: jnp.maximum(
+          jnp.log(jnp.maximum(target_p[cl].values, 0.0)), log_taus[cl]
+      )
+      for cl in target_p.cliques
+  }
+
+  def body(carry, _):
+    th, lb = jax.lax.optimization_barrier(carry)
+    log_p = lb.normalize(1.0, log=True)
+    th = CliqueVector(
+        th.domain,
+        th.cliques,
+        {
+            cl: Factor(
+                th[cl].domain,
+                th[cl].values
+                + weights[cl]
+                * (
+                    log_target[cl] - jnp.maximum(log_p[cl].values, log_taus[cl])
+                ),
+            )
+            for cl in th.cliques
+        },
+    )
+    return (th, oracle(th, None)), None
+
+  (theta, log_beliefs), _ = jax.lax.scan(
+      body, (theta, log_beliefs), None, length=num_steps
+  )
+  p = log_beliefs.normalize(1.0, log=True).exp()
+  max_l1 = jnp.max(
+      jnp.array([
+          jnp.sum(jnp.abs(p[cl].values - target_p[cl].values))
+          for cl in target_p.cliques
+      ])
+  )
+  return theta, log_beliefs, max_l1
+
+
 def _extract_potentials(
     warm_start: Model | CliqueVector | None,
     domain: Domain,
@@ -66,6 +117,15 @@ def _extract_potentials(
       else getattr(warm_start, "potentials")
   )
   return w_pot.expand(cliques)
+
+
+@jax.jit
+def _loss_grad_and_dot(
+    loss_fn: MarginalLossFn, marginals: CliqueVector
+) -> tuple[CliqueVector, jax.Array]:
+  """Computes grad(loss_fn)(marginals) and <grad, marginals> under JIT."""
+  grad = jax.grad(loss_fn)(marginals)
+  return grad, jnp.asarray(grad.dot(marginals))
 
 
 def primal_dual_gap(
@@ -87,11 +147,11 @@ def primal_dual_gap(
   oracle = marginal_oracle or marginal_oracles.default_oracle(
       marginals.cliques, marginals.domain, has_constraints=bool(constraints)
   )
-  grad = jax.grad(loss_fn)(marginals)
+  grad, grad_dot_mu = _loss_grad_and_dot(loss_fn, marginals)
   max_marginals = oracle(
       -grad, total, constraints=constraints, reduction_fn=jnp.max
   )
-  gap = jnp.asarray(grad.dot(marginals)) + max_marginals.max()
+  gap = grad_dot_mu + max_marginals.max()
   scale = total * jnp.sqrt(loss_fn.lipschitz * marginals.size())
   return gap / scale if normalize else gap
 
@@ -155,10 +215,57 @@ class Estimator(ABC):
   def _finalize(self, state: Any, known_total: float, constraints=()) -> Model:
     """Convert the final optimization state into a Model."""
     mu = self._callback_value(state, known_total, constraints)
-    loss = marginal_loss.mle_loss_fn(mu)
-    est = LBFGS(marginal_oracle=self.marginal_oracle)
-    return est.estimate(
-        mu.domain, loss, known_total, constraints, iters=25000, tol=1e-4
+    if not isinstance(mu, CliqueVector):
+      return mu
+    oracle = self._oracle(mu.cliques, mu.domain, constraints=constraints)
+    if not mu.cliques:
+      potentials = CliqueVector.zeros(mu.domain, ())
+      return MarkovRandomField(
+          potentials=potentials,
+          marginals=oracle(potentials, known_total),
+          total=known_total,
+          constraints=constraints,
+      )
+    target_p = mu / known_total
+    deg: dict[Any, int] = {}
+    for cl in mu.cliques:
+      for a in cl:
+        deg[a] = deg.get(a, 0) + 1
+    eps = float(jnp.finfo(jnp.result_type(float)).eps)
+    weights = {
+        cl: 1.0 / max((deg[a] for a in cl), default=1) for cl in mu.cliques
+    }
+    log_taus = {
+        cl: math.log(100.0 * eps / max(mu.domain.size(cl), 1))
+        for cl in mu.cliques
+    }
+    cand = getattr(state, "u", getattr(state, "potentials", None))
+    theta = (
+        cand
+        if isinstance(cand, CliqueVector) and cand.cliques == target_p.cliques
+        else jax.tree.map(jnp.zeros_like, target_p)
+    )
+    log_beliefs = oracle(theta, None)
+    if theta is cand:
+      theta, log_beliefs, _ = _finalize_step(
+          theta, log_beliefs, target_p, weights, log_taus, oracle, num_steps=10
+      )
+    else:
+      prev_err = np.inf
+      for _ in range(20):
+        theta, log_beliefs, max_l1 = _finalize_step(
+            theta, log_beliefs, target_p, weights, log_taus, oracle
+        )
+        err = float(max_l1)
+        if err <= 1e-4 or err >= prev_err * (1.0 - 1e-3):
+          break
+        prev_err = err
+    marginals = log_beliefs.normalize(known_total, log=True).exp()
+    return MarkovRandomField(
+        potentials=theta,
+        marginals=marginals,
+        total=known_total,
+        constraints=constraints,
     )
 
   def _callback_value(self, state: Any, known_total: float, constraints=()) -> Any:  # pylint: disable=unused-argument
@@ -173,7 +280,11 @@ class Estimator(ABC):
     oracle = self.marginal_oracle or marginal_oracles.default_oracle(
         cliques, domain, has_constraints=bool(constraints)
     )
-    return functools.partial(oracle, constraints=constraints)
+    return (
+        functools.partial(oracle, constraints=constraints)
+        if constraints
+        else oracle
+    )
 
   # ------------------------------------------------------------------
   # Default implementations
@@ -801,6 +912,8 @@ class UniversalAcceleratedMethod(Estimator):
     # Project onto unit simplex (total=1) for numerical stability.
     x = marginal_oracle(potentials, 1.0)
     z = jax.tree.map(jnp.copy, x)
+    if warm_start is None:
+      potentials = jax.tree.map(jnp.zeros_like, x)
     # f_scaled(p) = loss_fn(N*p) has Lipschitz-continuous gradient with
     # constant N² * L, where L = loss_fn.lipschitz.  The initial stepsize
     # is the inverse of this smoothness estimate.
@@ -853,25 +966,39 @@ class UniversalAcceleratedMethod(Estimator):
       z = dual_proj(u)
       x = (1 - theta) * carry.x + theta * z
 
-      if use_linesearch:
+      if not use_linesearch:
         new_value = scaled_loss(x)
-        # Since u - carry.u = -(stepsize / theta) * grad_y and
-        # x - y = theta * (z - carry.z), the symmetrized KL divergence of the
-        # joint MRF satisfies theta^2 * D_sym_KL(P_z, P_prev_z) =
-        # theta^2 * <u - carry.u, z - carry.z> = -stepsize * <grad_y, x - y>.
-        # Using 0.5 * smooth_estim * theta^2 * D_sym_KL = -0.5 * grad_y.dot(x - y)
-        # measures curvature on the true joint distribution without
-        # double-counting overlapping variables across cliques.
-        taylor_approx = value_y + 0.5 * grad_y.dot(x - y)
-        eps = jnp.finfo(jnp.result_type(value_y, float)).eps
-        tol_eps = 5e3 * eps * jnp.abs(value_y) + 1e-12
-        accept = new_value <= (
-            taylor_approx + 0.5 * target_acc * theta + tol_eps
+        dg = grad_y.dot(x - y)
+        quad_rem = jnp.maximum(new_value - value_y - dg, 0.0)
+        breg_term = jnp.maximum(-0.5 * dg, 1e-30)
+        rho = quad_rem / breg_term
+        next_stepsize = stepsize * jnp.clip(
+            0.8 / jnp.maximum(rho, 0.2), 0.5, 2.0
         )
-        new_stepsize = 1.1 * stepsize
-      else:
-        accept = True
-        new_stepsize = stepsize
+        return _AcceleratedStepSearchState(
+            x=x,
+            z=z,
+            u=u,
+            prev_stepsize=stepsize,
+            stepsize=next_stepsize,
+            prev_theta=theta,
+            accept=jnp.asarray(False),
+            iter_search=jnp.asarray(0),
+        )
+
+      new_value = scaled_loss(x)
+      # Since u - carry.u = -(stepsize / theta) * grad_y and
+      # x - y = theta * (z - carry.z), the symmetrized KL divergence of the
+      # joint MRF satisfies theta^2 * D_sym_KL(P_z, P_prev_z) =
+      # theta^2 * <u - carry.u, z - carry.z> = -stepsize * <grad_y, x - y>.
+      # Using 0.5 * smooth_estim * theta^2 * D_sym_KL = -0.5 * grad_y.dot(x - y)
+      # measures curvature on the true joint distribution without
+      # double-counting overlapping variables across cliques.
+      taylor_approx = value_y + 0.5 * grad_y.dot(x - y)
+      eps = jnp.finfo(jnp.result_type(value_y, float)).eps
+      tol_eps = 5e3 * eps * jnp.abs(value_y) + 1e-12
+      accept = new_value <= (taylor_approx + 0.5 * target_acc * theta + tol_eps)
+      new_stepsize = 1.1 * stepsize
 
       candidate = _AcceleratedStepSearchState(
           x=x,
@@ -889,6 +1016,8 @@ class UniversalAcceleratedMethod(Estimator):
       )
       return jax.tree.map(lambda a, b: jnp.where(accept, a, b), candidate, base)
 
+    if not use_linesearch:
+      return body_fun(state)
     carry = jax.lax.while_loop(cond_fun, body_fun, state)
     return carry._replace(accept=jnp.asarray(False))
 
