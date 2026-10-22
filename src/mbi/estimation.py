@@ -235,31 +235,41 @@ class Estimator(ABC):
     weights = {
         cl: 1.0 / max((deg[a] for a in cl), default=1) for cl in mu.cliques
     }
+    for _ in range(10):
+      usage = {a: sum(weights[cl] for cl in mu.cliques if a in cl) for a in deg}
+      weights = {
+          cl: weights[cl] / max((usage[a] for a in cl), default=1.0)
+          for cl in mu.cliques
+      }
     log_taus = {
         cl: math.log(100.0 * eps / max(mu.domain.size(cl), 1))
         for cl in mu.cliques
     }
-    cand = getattr(state, "u", getattr(state, "potentials", None))
-    theta = (
-        cand
-        if isinstance(cand, CliqueVector) and cand.cliques == target_p.cliques
-        else jax.tree.map(jnp.zeros_like, target_p)
+    theta = CliqueVector(
+        mu.domain,
+        mu.cliques,
+        {
+            cl: Factor(
+                target_p[cl].domain,
+                jnp.maximum(
+                    jnp.log(jnp.maximum(target_p[cl].values, 0.0)), log_taus[cl]
+                )
+                if len(cl) == 1
+                else jnp.zeros_like(target_p[cl].values),
+            )
+            for cl in mu.cliques
+        },
     )
     log_beliefs = oracle(theta, None)
-    if theta is cand:
-      theta, log_beliefs, _ = _finalize_step(
-          theta, log_beliefs, target_p, weights, log_taus, oracle, num_steps=10
+    prev_err = np.inf
+    for _ in range(20):
+      theta, log_beliefs, max_l1 = _finalize_step(
+          theta, log_beliefs, target_p, weights, log_taus, oracle
       )
-    else:
-      prev_err = np.inf
-      for _ in range(20):
-        theta, log_beliefs, max_l1 = _finalize_step(
-            theta, log_beliefs, target_p, weights, log_taus, oracle
-        )
-        err = float(max_l1)
-        if err <= 1e-4 or err >= prev_err * (1.0 - 1e-3):
-          break
-        prev_err = err
+      err = float(max_l1)
+      if err <= 1e-4 or err >= prev_err * (1.0 - 1e-3):
+        break
+      prev_err = err
     marginals = log_beliefs.normalize(known_total, log=True).exp()
     return MarkovRandomField(
         potentials=theta,
