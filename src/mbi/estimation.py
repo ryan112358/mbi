@@ -235,31 +235,11 @@ class Estimator(ABC):
     weights = {
         cl: 1.0 / max((deg[a] for a in cl), default=1) for cl in mu.cliques
     }
-    for _ in range(10):
-      usage = {a: sum(weights[cl] for cl in mu.cliques if a in cl) for a in deg}
-      weights = {
-          cl: weights[cl] / max((usage[a] for a in cl), default=1.0)
-          for cl in mu.cliques
-      }
     log_taus = {
         cl: math.log(100.0 * eps / max(mu.domain.size(cl), 1))
         for cl in mu.cliques
     }
-    theta = CliqueVector(
-        mu.domain,
-        mu.cliques,
-        {
-            cl: Factor(
-                target_p[cl].domain,
-                jnp.maximum(
-                    jnp.log(jnp.maximum(target_p[cl].values, 0.0)), log_taus[cl]
-                )
-                if len(cl) == 1
-                else jnp.zeros_like(target_p[cl].values),
-            )
-            for cl in mu.cliques
-        },
-    )
+    theta = jax.tree.map(jnp.zeros_like, target_p)
     log_beliefs = oracle(theta, None)
     prev_err = np.inf
     for _ in range(20):
