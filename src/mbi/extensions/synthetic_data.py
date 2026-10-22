@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import collections
+from collections.abc import Callable, Sequence
 import concurrent.futures
 import dataclasses
 import functools
 import logging
+import math
 import time
-from collections.abc import Sequence
 from typing import Any
 
 import jax
@@ -27,6 +28,8 @@ from ..markov_random_field import MarkovRandomField
 
 _COMPILE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
+_REALIZED_CHUNK_CELLS = 1 << 20
+
 
 # precompile() and synthetic_data() are coupled: both must build the same
 # _GenerationPlan and call _generate_column with matching static args for
@@ -38,6 +41,8 @@ def precompile(
     cliques: Sequence[Clique],
     rows: int,
     constraints: Sequence[Constraint] = (),
+    *,
+    contraction: Callable = marginal_oracles.einsum_sharded,
 ) -> concurrent.futures.Future:
   """Warm the JIT cache for ``synthetic_data`` asynchronously.
 
@@ -56,6 +61,7 @@ def precompile(
     constraints: Structural constraints the model is fit under.  Their
         cliques are added to the plan so the warmed JIT cache matches the
         constraint-aware ``synthetic_data`` call.
+    contraction: Contraction function for log-space sum-product.
   """
   rows = max(1, int(rows))
   cliques = _plan_cliques(cliques, constraints, domain)
@@ -64,10 +70,11 @@ def precompile(
   def _compile_all():
     # --- Compile message_passing_implicit (abstract, no execution) ---
     abstract_potentials = CliqueVector.abstract(domain, cliques)
-    marginal_oracles.message_passing_implicit.lower(
+    mp_compiled = marginal_oracles.message_passing_implicit.lower(
         abstract_potentials,
         1.0,
         jtree=plan.jtree,
+        contraction=contraction,
         return_messages=True,
     ).compile()
 
@@ -85,9 +92,14 @@ def precompile(
     # Messages grouped by destination clique (shapes from separators).
     message_order = junction_tree.message_passing_order(plan.jtree)
     msg_map: dict[tuple, list[Factor]] = collections.defaultdict(list)
+    _, msg_shardings = mp_compiled.output_shardings
     for i, j in message_order:
-      sep = domain.project(tuple(sorted(set(i) & set(j))))
-      msg_map[j].append(Factor.abstract(sep))
+      sep = domain.project([a for a in i if a in j])
+      sharding = msg_shardings[(i, j)].values
+      f = Factor.abstract(sep)
+      if isinstance(sharding, jax.sharding.NamedSharding):
+        object.__setattr__(f.values, '_sharding', sharding)
+      msg_map[j].append(f)
 
     # --- Compile each column's _generate_column ---
     for cp in plan.columns.values():
@@ -111,6 +123,7 @@ def precompile(
           query=cp.query,
           parent_sizes=cp.parent_sizes,
           total=rows,
+          contraction=contraction,
       ).compile()
 
   return RobustFuture(_COMPILE_POOL.submit(_compile_all))
@@ -120,6 +133,8 @@ def synthetic_data(
     model: MarkovRandomField,
     rows: int,
     seed: int = 0,
+    *,
+    contraction: Callable = marginal_oracles.einsum_sharded,
 ) -> Dataset:
   """Generate synthetic data from a fitted model using Gumbel rounding.
 
@@ -131,6 +146,7 @@ def synthetic_data(
     model: A fitted ``MarkovRandomField``.
     rows: Number of records to generate.
     seed: Random seed for the JAX PRNG.
+    contraction: Contraction function for log-space sum-product.
 
   Returns:
     A ``Dataset`` whose marginals closely match the model.
@@ -162,6 +178,7 @@ def synthetic_data(
       potentials,
       1.0,
       jtree=plan.jtree,
+      contraction=contraction,
       return_messages=True,
   )
   pot_map, msg_map = _build_lookups(
@@ -192,6 +209,7 @@ def synthetic_data(
         query=cp.query,
         parent_sizes=cp.parent_sizes,
         total=rows,
+        contraction=contraction,
     )
     elapsed = time.monotonic() - t0
 
@@ -326,30 +344,109 @@ def _gather_inputs(cp, domain, pot_map, msg_map):
 
 
 @jax.jit(
-    static_argnames=['query', 'parent_sizes', 'total'],
+    static_argnames=['query', 'parent_sizes', 'total', 'contraction'],
     # `total` is static, so root-column arrays built from it become large
     # constant subgraphs XLA would fold on the host (slow); defer to device.
     compiler_options={'xla_disable_hlo_passes': 'constant_folding'},
 )
 def _generate_column(
-    prng, inputs, parent_arrays, *, query, parent_sizes, total
+    prng,
+    inputs,
+    parent_arrays,
+    *,
+    query,
+    parent_sizes,
+    total,
+    contraction=marginal_oracles.einsum_sharded,
 ):
   """Fused per-column program: marginal computation + Gumbel rounding."""
-  combined = functools.reduce(lambda a, b: a + b, inputs)
-  query_domain = combined.domain.project(query)
-  elim_attrs = combined.domain.marginalize(query_domain).attributes
-  result = combined.logsumexp(elim_attrs).transpose(query_domain.attributes)
-  result = result.normalize(total, log=True).exp()
-  marg = result.datavector(flatten=False)
+  merged = functools.reduce(
+      lambda a, b: a.merge(b.domain), inputs, Domain([], [])
+  )
+  query_domain = merged.project(query)
+  use_dense = not parent_sizes or (
+      math.prod(parent_sizes) <= total
+      and query_domain.size() <= _ROUND_CHUNK_CELLS
+  )
+  if use_dense:
+    marg = contraction(inputs, query_domain)
+    marg = marg.normalize(total, log=True).exp().values
+    idx = (
+        jnp.ravel_multi_index(parent_arrays, parent_sizes, mode='wrap')
+        if parent_arrays
+        else jnp.zeros(total, dtype=jnp.int32)
+    )
+    return _gumbel_round(prng, marg.reshape(-1, marg.shape[-1]), idx, total)
 
-  if parent_arrays:
-    marg_2d = marg.reshape(-1, marg.shape[-1])
-    parent_idx = _ravel_multi_index(parent_arrays, parent_sizes)
-  else:
-    marg_2d = marg[jnp.newaxis, :]
-    parent_idx = jnp.zeros(total, dtype=jnp.int32)
+  return _realized_round(
+      prng, inputs, parent_arrays, query, total, contraction=contraction
+  )
 
-  return _gumbel_round(prng, marg_2d, parent_idx, total)
+
+def _slice_factor(
+    f: Factor, batch_p: dict[str, jax.Array], chunk: int
+) -> Factor:
+  """Slice a Factor along realized parent coordinates for a batch of groups."""
+  p = [a for a in f.domain.attributes if a in batch_p]
+  if not p:
+    return f
+  r = [a for a in f.domain.attributes if a not in batch_p]
+  vals = f.transpose(p + r).values[tuple(batch_p[a] for a in p)]
+  dom = Domain(['_batch', *r], [chunk, *(f.domain[a] for a in r)])
+  return Factor(dom, vals)
+
+
+def _realized_round(
+    prng,
+    inputs,
+    parent_arrays,
+    query,
+    total,
+    *,
+    contraction=marginal_oracles.einsum_sharded,
+):
+  """Sort records by parent tuple and round conditional marginals in chunks."""
+  rng_perm, rng_scan = jax.random.split(prng)
+  parents, col = query[:-1], query[-1]
+  perm = jax.random.permutation(rng_perm, total)
+  order = perm[jnp.lexsort(tuple(p[perm] for p in parent_arrays))]
+  sorted_p = jnp.stack([p[order] for p in parent_arrays], axis=1)
+
+  merged = functools.reduce(
+      lambda a, b: a.merge(b.domain), inputs, Domain([], [])
+  )
+  domain_size = merged[col]
+  cells = merged.marginalize(parents).size()
+  chunk = min(total, max(1, _REALIZED_CHUNK_CELLS // max(1, cells)))
+  n_chunks = math.ceil(total / chunk)
+  pad = n_chunks * chunk - total
+  padded_p = jnp.pad(sorted_p, ((0, pad), (0, 0)), constant_values=-1).reshape(
+      n_chunks, chunk, -1
+  )
+  batch_dom = Domain(['_batch', col], [chunk, domain_size])
+
+  def _body(_, xs):
+    idx, rec_p = xs
+    unique_p, group_id = jnp.unique(
+        rec_p, axis=0, return_inverse=True, size=chunk
+    )
+    batch_p = dict(zip(parents, jnp.maximum(unique_p, 0).T))
+    sliced = [Factor.zeros(batch_dom)] + [
+        _slice_factor(f, batch_p, chunk) for f in inputs
+    ]
+    marg = contraction(sliced, batch_dom)
+    probs = jnp.nan_to_num(jax.nn.softmax(marg.values))
+    vals = _gumbel_round(
+        jax.random.fold_in(rng_scan, idx), probs, group_id.ravel(), chunk
+    )
+    return None, vals
+
+  _, out_sorted = jax.lax.scan(_body, None, (jnp.arange(n_chunks), padded_p))
+  return (
+      jnp.empty(total, dtype=jnp.int32)
+      .at[order]
+      .set(out_sorted.reshape(-1)[:total])
+  )
 
 
 # Chunk the per-parent rounding for large marginals: the dense path allocates
@@ -429,14 +526,6 @@ def _gumbel_round(prng, marg_2d, flat_parent_idx, total):
   perm = jnp.lexsort((jax.random.uniform(rng2, (total,)), group_ids))
   sort_order = jnp.argsort(flat_parent_idx)
   return jnp.empty(total, dtype=jnp.int32).at[sort_order].set(all_values[perm])
-
-
-def _ravel_multi_index(arrays, sizes):
-  """Compute flat indices from a tuple of per-dimension index arrays."""
-  result = arrays[0].astype(jnp.int32)
-  for arr, size in zip(arrays[1:], sizes[1:]):
-    result = result * size + arr.astype(jnp.int32)
-  return result
 
 
 def _find_maxclique(query_vars, maximal_cliques):
