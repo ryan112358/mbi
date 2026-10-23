@@ -43,7 +43,9 @@ def save(obj: Any, file: str | os.PathLike | io.IOBase) -> None:
   # numpy stub: allow_pickle precedes **kwds, so unpacking arrays trips it.
   np.savez_compressed(buf, **arrays)  # pyrefly: ignore[bad-argument-type]
   data = buf.getvalue()
-  if isinstance(file, (str, os.PathLike)):
+  if hasattr(file, "write_bytes"):
+    file.write_bytes(data)
+  elif isinstance(file, (str, os.PathLike)):
     with open(file, "wb") as f:
       f.write(data)
   else:
@@ -62,7 +64,9 @@ def load(file: str | os.PathLike | io.IOBase) -> Any:
   Returns:
       The reconstructed pytree.
   """
-  if isinstance(file, (str, os.PathLike)):
+  if hasattr(file, "read_bytes"):
+    raw = file.read_bytes()
+  elif isinstance(file, (str, os.PathLike)):
     with open(file, "rb") as f:
       raw = f.read()
   else:

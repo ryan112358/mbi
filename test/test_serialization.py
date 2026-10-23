@@ -1,6 +1,7 @@
 """Tests for mbi.save / mbi.load serialization."""
 
 import io
+import os
 
 import jax.numpy as jnp
 import numpy as np
@@ -182,3 +183,29 @@ class TestInvalidLeaves:
     buf = io.BytesIO()
     with pytest.raises(TypeError):
       save({"a": NotAnArray(), "b": NotAnArray()}, buf)
+
+
+def test_custom_pathlike_uses_read_write_bytes(domain, cliques):
+  """PathLike objects with read_bytes/write_bytes bypass built-in open()."""
+
+  class MemoryPath(os.PathLike):
+
+    def __init__(self):
+      self.payload = b""
+
+    def __fspath__(self):
+      return "nonexistent_scheme://bucket/model.npz"
+
+    def write_bytes(self, data: bytes) -> None:
+      self.payload = data
+
+    def read_bytes(self) -> bytes:
+      return self.payload
+
+  cv = CliqueVector.random(domain, cliques)
+  path = MemoryPath()
+  save(cv, path)
+  assert path.payload
+  loaded = load(path)
+  for cl in cv.cliques:
+    np.testing.assert_allclose(loaded[cl].values, cv[cl].values, atol=1e-6)
