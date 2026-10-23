@@ -1,8 +1,10 @@
 import doctest
 import functools
 import itertools
+import math
 import os
 import unittest
+from unittest import mock
 
 os.environ.setdefault("XLA_FLAGS", "--xla_force_host_platform_device_count=4")
 
@@ -334,8 +336,60 @@ class TestMarginalOracles(unittest.TestCase):
     mesh = marginal_oracles._shard_mesh(merged, dom)
     self.assertEqual(dict(mesh.shape), {"a": 2, "b": 2})
 
+  @parameterized.expand([
+      (0, jax.scipy.special.logsumexp, einsum_materialized),
+      (1, jax.scipy.special.logsumexp, einsum_materialized),
+      (2, jnp.max, einsum_materialized),
+      (3, jax.scipy.special.logsumexp, einsum_fused),
+  ])
+  def test_einsum_sharded_many_matches_reference(self, seed, fn, contraction):
+    rng = np.random.default_rng(seed)
+    attrs = ["a", "b", "c", "d", "e"]
+    sizes = [int(x) for x in rng.integers(2, 8, size=len(attrs))]
+    dom = Domain(attrs, sizes)
+    factor_cliques = [("a", "b", "c"), ("b", "c", "d"), ("c", "d", "e")]
+    factors = []
+    for cl in factor_cliques:
+      f_dom = dom.project(cl)
+      vals = rng.normal(size=f_dom.shape).astype(np.float32)
+      if seed == 1 and cl == ("a", "b", "c"):
+        vals[0, 0, :] = -np.inf
+      factors.append(Factor(f_dom, jnp.asarray(vals)))
+    target_doms = [dom.project(cl) for cl in [("a", "b"), ("b", "d"), ("e",)]]
+    got = marginal_oracles._einsum_sharded_many(
+        factors, target_doms, fn, contraction=contraction
+    )
+    ref = [
+        einsum_materialized(factors, d, reduction_fn=fn) for d in target_doms
+    ]
+    for g, r in zip(got, ref):
+      self.assertEqual(g.domain, r.domain)
+      np.testing.assert_allclose(g.values, r.values, atol=1e-5)
+    self.assertEqual(marginal_oracles._einsum_sharded_many(factors, []), [])
+
+  def test_unnormalized_log_beliefs_huge_unused_domain(self):
+    attrs = [f"x{i}" for i in range(200)]
+    dom = Domain(attrs, [100] * 200)
+    cliques = [("x0", "x1"), ("x1", "x2")]
+    active_dom = dom.project(["x0", "x1", "x2"])
+    theta_active = CliqueVector.random(active_dom, cliques)
+    theta = CliqueVector(dom, cliques, theta_active.tables)
+    b_full = message_passing_implicit(theta, None)
+    b_active = message_passing_implicit(theta_active, None)
+    expected_offset = 197 * math.log(100)
+    for cl in cliques:
+      np.testing.assert_allclose(
+          b_full[cl].values, b_active[cl].values + expected_offset, rtol=1e-5
+      )
+
 
 class TestDefaultOracle(unittest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    patcher = mock.patch.object(jax, "device_count", return_value=1)
+    patcher.start()
+    self.addCleanup(patcher.stop)
 
   def test_cpu_returns_shafer_shenoy(self):
     oracle = marginal_oracles.default_oracle(backend="cpu")
@@ -375,19 +429,39 @@ class TestDefaultOracle(unittest.TestCase):
     oracle = marginal_oracles.default_oracle(backend="gpu")
     self.assertIs(oracle, message_passing_shafer_shenoy)
 
+  def test_empty_cliques_returns_shafer_shenoy(self):
+    oracle = marginal_oracles.default_oracle((), _DOMAIN, backend="gpu")
+    self.assertIs(oracle, message_passing_shafer_shenoy)
+
+  @parameterized.expand([("cpu",), ("gpu",), ("tpu",)])
+  def test_large_total_beliefs_returns_implicit(self, backend):
+    attrs = [f"x{i}" for i in range(7)]
+    domain = Domain(attrs, [300] * 7)
+    cliques = tuple((attrs[i], attrs[i + 1], attrs[i + 2]) for i in range(5))
+    oracle = marginal_oracles.default_oracle(cliques, domain, backend=backend)
+    self.assertIs(oracle, message_passing_implicit)
+
+  @parameterized.expand([("cpu",), ("gpu",), ("tpu",)])
+  def test_multi_device_returns_sharded_implicit(self, backend):
+    with mock.patch.object(jax, "device_count", return_value=4):
+      oracle = marginal_oracles.default_oracle(backend=backend)
+      self.assertIs(oracle, marginal_oracles._message_passing_sharded)
+
   @parameterized.expand([(cs,) for cs in _CLIQUE_SETS])
   def test_correctness(self, cliques):
     """default_oracle produces correct marginals."""
     if not cliques:
       return
-    oracle = marginal_oracles.default_oracle(cliques, _DOMAIN)
     theta = CliqueVector.random(_DOMAIN, cliques)
-    mu1 = oracle(theta, 1.0)
-    mu2 = marginal_oracles.brute_force_marginals(theta, 1.0)
-    for cl in cliques:
-      np.testing.assert_allclose(
-          mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
-      )
+    mu_ref = marginal_oracles.brute_force_marginals(theta, 1.0)
+    for num_devices in {1, len(jax.devices())}:
+      with mock.patch.object(jax, "device_count", return_value=num_devices):
+        oracle = marginal_oracles.default_oracle(cliques, _DOMAIN)
+      mu = oracle(theta, 1.0)
+      for cl in cliques:
+        np.testing.assert_allclose(
+            mu[cl].datavector(), mu_ref[cl].datavector(), atol=1e-5
+        )
 
 
 # --- Constraint-aware oracle tests ---

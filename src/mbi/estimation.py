@@ -229,6 +229,9 @@ class Estimator(ABC):
     )
     # De-alias so that donate_argnames in _multi_step is safe.
     state = jax.tree.map(jnp.copy, state)
+    if jax.device_count() > 1:
+      rep = marginal_oracles._replicated_sharding()  # pylint: disable=protected-access
+      state = jax.device_put(state, rep)
     prev_gap = np.inf
     for _ in range(math.ceil(iters / CALLBACK_EVERY)):
       state = self._multi_step(state, loss_fn, known_total, constraints)
@@ -279,11 +282,19 @@ class Estimator(ABC):
 
     loss_fn = marginal_loss.from_linear_measurements(all_measurements, domain)
     abstract_state = jax.eval_shape(
-        functools.partial(self._init, domain),
+        lambda *a, **kw: jax.tree.map(jnp.copy, self._init(domain, *a, **kw)),
         loss_fn,
         1.0,
         constraints=constraints,
     )
+    if jax.device_count() > 1:
+      rep = marginal_oracles._replicated_sharding()  # pylint: disable=protected-access
+      abstract_state = jax.tree.map(
+          lambda x: jax.ShapeDtypeStruct(
+              x.shape, x.dtype, sharding=rep, weak_type=x.weak_type
+          ),
+          abstract_state,
+      )
     abstract_constraints = jax.eval_shape(lambda x: x, constraints)
     lowered = self._multi_step.lower(
         self, abstract_state, loss_fn, 1.0, abstract_constraints
