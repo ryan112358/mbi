@@ -68,6 +68,7 @@ def _extract_potentials(
   return w_pot.expand(cliques)
 
 
+@jax.jit(static_argnames=["marginal_oracle", "normalize"])
 def primal_dual_gap(
     loss_fn: MarginalLossFn,
     marginals: CliqueVector,
@@ -446,18 +447,14 @@ class MirrorDescent(Estimator):
   ) -> MirrorDescentState:
     """Initialize the optimization state."""
     potentials = _extract_potentials(warm_start, domain, loss_fn.cliques)
-    marginal_oracle = self._oracle(
-        loss_fn.cliques, domain, constraints=constraints
-    )
     # Theory suggests the initial learning rate should be inversely
     # proportional to L. We also divide by scaling factor to account for
     # the fact that gradients are scaled up by a factor of known_total.
     # See Eq 75. of https://www.cs.uic.edu/~zhangx/teaching/bregman.pdf.
     L = loss_fn.lipschitz
     alpha = 2.0 / (L * known_total) if self.stepsize is None else self.stepsize
-    mu = marginal_oracle(potentials, known_total)
-    initial_loss = loss_fn(mu)
-    return MirrorDescentState(mu, potentials, alpha, initial_loss)
+    mu = jax.tree.map(jnp.zeros_like, potentials)
+    return MirrorDescentState(mu, potentials, alpha, jnp.zeros(()))
 
   def _step(
       self,
@@ -553,8 +550,7 @@ class DualAveraging(Estimator):
 
     w = v = marginal_oracle(potentials, known_total)
     gbar = CliqueVector.zeros(domain, loss_fn.cliques)
-    initial_loss = loss_fn(w)
-    return DualAveragingState(w, v, gbar, initial_loss, L, gamma, 1)
+    return DualAveragingState(w, v, gbar, jnp.zeros(()), L, gamma, 1)
 
   def _step(
       self,
@@ -619,9 +615,8 @@ class InteriorGradient(Estimator):
 
     inv_lipschitz = 1.0 / loss_fn.lipschitz
     x = y = z = marginal_oracle(potentials, known_total)
-    initial_loss = loss_fn(x)
     return InteriorGradientState(
-        x, potentials, 1.0, y, z, initial_loss, inv_lipschitz
+        x, potentials, 1.0, y, z, jnp.zeros(()), inv_lipschitz
     )
 
   def _step(
