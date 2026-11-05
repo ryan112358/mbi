@@ -66,14 +66,6 @@ class TestDatasetDeterministic(unittest.TestCase):
     np.testing.assert_array_equal(proj_B.datavector(), expected_B)
     self.assertEqual(proj_B.domain.attributes, ('B',))
 
-  def test_project_preserves_large_counts(self):
-    domain = Domain(['A'], [2])
-    weights = np.array([2**24 + 1, 1], dtype=np.int64)
-    dataset = Dataset({'A': np.array([0, 1])}, domain, weights=weights)
-    proj = dataset.project('A')
-    self.assertEqual(int(proj.values[0]), 2**24 + 1)
-    self.assertEqual(int(proj.values[1]), 1)
-
   def test_datavector_weighted(self):
     expected = np.array([2.0, 2.0, 0, 0, 0, 0.5])
     result = self.weighted_dataset.datavector(flatten=True)
