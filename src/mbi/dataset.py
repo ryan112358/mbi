@@ -113,9 +113,7 @@ class Dataset:
           "Weights must be provided if data is empty (cannot infer N)"
       )
 
-    if self.weights is None:
-      object.__setattr__(self, "weights", np.ones(n))
-    elif np.size(self.weights) != n:
+    if self.weights is not None and np.size(self.weights) != n:
       raise ValueError(
           f"Weights length ({np.size(self.weights)}) does not match "
           f"data length ({n})"
@@ -144,6 +142,9 @@ class Dataset:
       cols = [cols]
 
     domain = self.domain.project(cols)
+    if not domain.attributes:
+      total = self.records if self.weights is None else np.sum(self.weights)
+      return Factor(domain, jnp.asarray(total))
     data = {col: self.data[col] for col in domain.attributes}
     sub = Dataset(data, domain, self.weights)
     return Factor(sub.domain, jnp.asarray(sub.datavector(flatten=False)))
@@ -168,9 +169,8 @@ class Dataset:
     """Return the database in vector-of-counts form."""
     dims = self.domain.shape
     if len(dims) == 0:
-      assert self.weights is not None  # guaranteed by __post_init__
-      result = np.sum(self.weights)
-      return np.array([result]) if flatten else result
+      result = self.records if self.weights is None else np.sum(self.weights)
+      return np.array([result]) if flatten else np.asarray(result)
     multi_index = tuple(self.data[a] for a in self.domain.attributes)
     linear_indices = np.ravel_multi_index(multi_index, dims, order="C")
     counts = np.bincount(

@@ -167,6 +167,27 @@ class TestPrecomputeMarginals(unittest.TestCase):
         decimal=4,
     )
 
+  def test_preserves_integer_and_large_counts(self):
+    """Unweighted and large-count marginals do not lose precision to float32."""
+    domain = _make_domain([2, 2])
+    unweighted = Dataset(
+        {'a0': np.array([0, 1]), 'a1': np.array([0, 1])}, domain
+    )
+    res_unweighted = precompute_marginals(unweighted, [('a0',)])
+    self.assertTrue(
+        jnp.issubdtype(res_unweighted[('a0',)].values.dtype, jnp.integer)
+    )
+
+    weights = np.array([2**24 + 1, 1], dtype=np.int64)
+    weighted = Dataset(
+        {'a0': np.array([0, 1]), 'a1': np.array([0, 1])},
+        domain,
+        weights=weights,
+    )
+    res_weighted = precompute_marginals(weighted, [('a0',)])
+    self.assertEqual(int(res_weighted[('a0',)].values[0]), 2**24 + 1)
+    self.assertEqual(int(res_weighted[('a0',)].values[1]), 1)
+
 
 if __name__ == '__main__':
   unittest.main()

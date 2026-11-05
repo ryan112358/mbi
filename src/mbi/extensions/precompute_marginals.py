@@ -46,7 +46,7 @@ def _bincount_marginal(cols, weights, padded_shape):
     flat = flat * stride + col.astype(jnp.uint32)
   length = math.prod(padded_shape)
   counts = jnp.bincount(flat, weights=weights, length=length)
-  return counts.reshape(padded_shape).astype(jnp.float32)
+  return counts.reshape(padded_shape)
 
 
 def _prepare_columns(dataset):
