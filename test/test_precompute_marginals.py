@@ -167,6 +167,17 @@ class TestPrecomputeMarginals(unittest.TestCase):
         decimal=4,
     )
 
+  def test_preserves_integer_counts(self):
+    """Unweighted marginals retain integer dtype instead of casting to float32."""
+    domain = _make_domain([2, 2])
+    unweighted = Dataset(
+        {'a0': np.array([0, 1]), 'a1': np.array([0, 1])}, domain
+    )
+    res_unweighted = precompute_marginals(unweighted, [('a0',)])
+    self.assertTrue(
+        jnp.issubdtype(res_unweighted[('a0',)].values.dtype, jnp.integer)
+    )
+
 
 if __name__ == '__main__':
   unittest.main()

@@ -54,10 +54,12 @@ class TestDatasetDeterministic(unittest.TestCase):
     np.testing.assert_array_equal(result_unflat, expected_unflat)
 
   def test_project_unweighted(self):
+    self.assertIsNone(self.dataset.weights)
     expected_A = np.array([3, 1])
     proj_A = self.dataset.project('A')
     np.testing.assert_array_equal(proj_A.datavector(), expected_A)
     self.assertEqual(proj_A.domain.attributes, ('A',))
+    self.assertTrue(jnp.issubdtype(proj_A.values.dtype, jnp.integer))
 
     expected_B = np.array([2, 1, 1])
     proj_B = self.dataset.project('B')
