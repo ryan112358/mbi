@@ -32,6 +32,7 @@ import networkx as nx
 import numpy as np
 
 from . import junction_tree
+from ._api import jax_enable_x64
 from ._future import RobustFuture
 from .clique_utils import Clique, clique_mapping
 from .clique_vector import CliqueVector
@@ -88,6 +89,7 @@ class MarginalOracle(Protocol):
     """
 
 
+@jax_enable_x64
 def sum_product(
     factors: list[Factor], dom: Domain, einsum_fn: Callable = jnp.einsum
 ) -> Factor:
@@ -121,6 +123,7 @@ def sum_product(
   return Factor(dom, values)
 
 
+@jax_enable_x64
 def einsum_semistable(
     log_factors: list[Factor],
     dom: Domain,
@@ -149,6 +152,7 @@ def einsum_semistable(
   return sum_product(stable_factors, dom, einsum_fn).log() + sum(maxes)
 
 
+@jax_enable_x64
 def einsum_materialized(
     log_factors: list[Factor],
     dom: Domain,
@@ -174,6 +178,7 @@ def einsum_materialized(
   return combined.project(dom.attributes, reduction_fn=reduction_fn)
 
 
+@jax_enable_x64
 def einsum_fused(
     log_factors: list[Factor],
     dom: Domain,
@@ -252,6 +257,7 @@ def _shard_mesh(merged: Domain, dom: Domain) -> jax.sharding.Mesh:
   return jax.sharding.Mesh(devices, tuple(axes))
 
 
+@jax_enable_x64
 def einsum_sharded(
     log_factors: list[Factor],
     dom: Domain,
@@ -368,6 +374,7 @@ def _finalize_beliefs(
   return beliefs.normalize(total, log=True).exp()
 
 
+@jax_enable_x64
 @jax.jit(static_argnames=["jtree", "return_messages", "reduction_fn"])
 def message_passing_hugin(
     potentials: CliqueVector,
@@ -430,6 +437,7 @@ def message_passing_hugin(
   return (marginals, messages) if return_messages else marginals
 
 
+@jax_enable_x64
 @jax.jit(static_argnames=["jtree", "return_messages", "reduction_fn"])
 def message_passing_shafer_shenoy(
     potentials: CliqueVector,
@@ -496,6 +504,7 @@ def message_passing_shafer_shenoy(
   return (marginals, messages) if return_messages else marginals
 
 
+@jax_enable_x64
 @jax.jit(
     static_argnames=["jtree", "contraction", "return_messages", "reduction_fn"]
 )
@@ -704,6 +713,7 @@ def default_oracle(
   return message_passing_hugin
 
 
+@jax_enable_x64
 def brute_force_marginals(
     potentials: CliqueVector,
     total: jax.Array | float | None = 1,
@@ -728,6 +738,7 @@ def brute_force_marginals(
   return _finalize_beliefs(joint, input_cliques, total, reduction_fn)
 
 
+@jax_enable_x64
 def einsum_marginals(
     potentials: CliqueVector,
     total: jax.Array | float = 1,
@@ -772,6 +783,7 @@ def einsum_marginals(
   )
 
 
+@jax_enable_x64
 @jax.jit(static_argnames=("clique",))
 def variable_elimination(
     potentials: CliqueVector,
@@ -824,6 +836,7 @@ def variable_elimination(
   return unnormalized.normalize(total, log=True).exp().project(clique)
 
 
+@jax_enable_x64
 def precompile_bulk_variable_elimination(
     domain: Domain,
     potential_cliques: Sequence[Clique],
@@ -846,6 +859,7 @@ def precompile_bulk_variable_elimination(
 
   jitted = jax.jit(variable_elimination, static_argnames=("clique",))
 
+  @jax_enable_x64
   def _compile_all():
     for query in marginal_queries:
       jitted.lower(
@@ -858,6 +872,7 @@ def precompile_bulk_variable_elimination(
   return RobustFuture(_COMPILE_POOL.submit(_compile_all))
 
 
+@jax_enable_x64
 def bulk_variable_elimination(
     potentials: CliqueVector,
     marginal_queries: Sequence[Clique],
@@ -888,6 +903,7 @@ def bulk_variable_elimination(
   constraints = tuple(constraints)
   jitted = jax.jit(variable_elimination, static_argnames=("clique",))
 
+  @jax_enable_x64
   def _evaluate(query):
     return query, jitted(
         potentials, query, total=total, constraints=constraints
@@ -903,6 +919,7 @@ def bulk_variable_elimination(
   return CliqueVector(out_domain, marginal_queries, results)
 
 
+@jax_enable_x64
 def calculate_many_marginals(
     potentials: CliqueVector,
     marginal_queries: Sequence[Clique],
@@ -995,6 +1012,7 @@ def calculate_many_marginals(
   return CliqueVector(domain, marginal_queries, answers)
 
 
+@jax_enable_x64
 def kron_query(
     potentials: CliqueVector,
     query_factors: dict[str, jax.Array],

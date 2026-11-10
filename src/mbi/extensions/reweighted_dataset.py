@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import optax
 
 
+from .._api import jax_enable_x64
 from ..estimation import Estimator
 from ..clique_vector import CliqueVector
 from ..dataset import Dataset, JaxDataset
@@ -48,6 +49,7 @@ class ReweightedDatasetEstimator(Estimator):
       init=False, repr=False, compare=False
   )
 
+  @jax_enable_x64
   def __post_init__(self):
     # Precompute JAX arrays from seed data once.
     data_dict = self.seed_data.to_dict()

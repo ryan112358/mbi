@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
+from .._api import jax_enable_x64
 from ..clique_vector import CliqueVector
 from ..dataset import Dataset
 from ..domain import Attribute, Domain
@@ -39,6 +40,7 @@ class MixtureOfProducts:
   total: float = field(metadata={"static": True})
 
   @classmethod
+  @jax_enable_x64
   def random(
       cls,
       domain: Domain,
@@ -52,9 +54,10 @@ class MixtureOfProducts:
     logits = {}
     for col in domain:
       key, subkey = jax.random.split(key)
-      logits[col] = (
-          jax.random.normal(subkey, (num_components, domain[col])) * scale
+      noise = jax.random.normal(
+          subkey, (num_components, domain[col]), dtype=jnp.float32
       )
+      logits[col] = noise.astype(jnp.result_type(float)) * scale
     return cls(logits, domain, total)
 
   @property
@@ -63,12 +66,14 @@ class MixtureOfProducts:
     return next(iter(self._logits.values())).shape[0]
 
   @property
+  @jax_enable_x64
   def products(self) -> dict[Attribute, jax.Array]:
     """Per-attribute categorical probabilities (softmax of logits)."""
     return {
         col: jax.nn.softmax(self._logits[col], axis=1) for col in self._logits
     }
 
+  @jax_enable_x64
   def project(self, attrs: Attribute | Sequence[Attribute]) -> Factor:
     """Compute the marginal over ``attrs`` via einsum."""
     if isinstance(attrs, (str, int)):

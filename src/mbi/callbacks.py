@@ -14,6 +14,7 @@ import jax.numpy as jnp
 
 from . import estimation
 from . import marginal_loss
+from ._api import jax_enable_x64
 from .clique_vector import CliqueVector
 from .domain import Domain
 from .factor import Projectable
@@ -75,6 +76,7 @@ class Callback:
   _call: int = 0
   _logs: list = dataclasses.field(default_factory=list)
 
+  @jax_enable_x64
   def __call__(self, marginals: CliqueVector) -> None:
     step = self._call * estimation.CALLBACK_EVERY
     if self._call == 0:
@@ -95,6 +97,7 @@ class Callback:
     }
 
 
+@jax_enable_x64
 def default(
     measurements: list[LinearMeasurement],
     domain: Domain,

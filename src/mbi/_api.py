@@ -8,10 +8,28 @@ This module defines the core types (interfaces) that mbi types implement:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Protocol
+from collections.abc import Callable, Sequence
+import functools
+from typing import Any, Protocol, TYPE_CHECKING, TypeVar, cast
 
+import jax
 from jax.typing import ArrayLike
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def jax_enable_x64(fn: _F) -> _F:
+  """Decorator to enable x64 precision for a function."""
+
+  @functools.wraps(fn)
+  def wrapped(*args, **kwargs):
+    with jax.enable_x64():
+      return fn(*args, **kwargs)
+
+  if hasattr(fn, "lower"):
+    setattr(wrapped, "lower", jax_enable_x64(getattr(fn, "lower")))
+  return cast(_F, wrapped)
+
 
 if TYPE_CHECKING:
   from .dataset import Dataset

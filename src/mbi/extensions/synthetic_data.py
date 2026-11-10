@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .. import junction_tree, marginal_oracles
+from .._api import jax_enable_x64
 from .._future import RobustFuture
 from ..clique_utils import Clique, clique_mapping
 from ..clique_vector import CliqueVector
@@ -36,6 +37,7 @@ _REALIZED_CHUNK_CELLS = 1 << 20
 # the JIT cache to hit.  Keep their signatures and internal logic in sync.
 
 
+@jax_enable_x64
 def precompile(
     domain: Domain,
     cliques: Sequence[Clique],
@@ -67,6 +69,7 @@ def precompile(
   cliques = _plan_cliques(cliques, constraints, domain)
   plan = _build_plan(domain, cliques)
 
+  @jax_enable_x64
   def _compile_all():
     # --- Compile message_passing_implicit (abstract, no execution) ---
     abstract_potentials = CliqueVector.abstract(domain, cliques)
@@ -131,6 +134,7 @@ def precompile(
   return RobustFuture(_COMPILE_POOL.submit(_compile_all))
 
 
+@jax_enable_x64
 def synthetic_data(
     model: MarkovRandomField,
     rows: int,
@@ -465,7 +469,7 @@ def _stochastic_round_dense(rng, cond_probs, counts_per_parent):
   extra = counts_per_parent[:, None] - integ.sum(axis=1, keepdims=True)
   cum = jnp.cumsum(frac, axis=1)
   total = jnp.where(cum[:, -1:] > 0, cum[:, -1:], 1.0)
-  u = jax.random.uniform(rng, (cond_probs.shape[0], 1))
+  u = jax.random.uniform(rng, (cond_probs.shape[0], 1), dtype=jnp.float32)
   cum_int = jnp.floor((cum / total) * extra + (1.0 - u)).astype(jnp.int32)
   roundup = jnp.diff(jnp.clip(cum_int, 0, extra), axis=1, prepend=0)
   return jnp.maximum(integ + roundup, 0)
@@ -526,7 +530,9 @@ def _gumbel_round(prng, marg_2d, flat_parent_idx, total):
       counts_per_parent,
       total_repeat_length=total,
   )
-  perm = jnp.lexsort((jax.random.uniform(rng2, (total,)), group_ids))
+  perm = jnp.lexsort(
+      (jax.random.uniform(rng2, (total,), dtype=jnp.float32), group_ids)
+  )
   sort_order = jnp.argsort(flat_parent_idx)
   return jnp.empty(total, dtype=jnp.int32).at[sort_order].set(all_values[perm])
 

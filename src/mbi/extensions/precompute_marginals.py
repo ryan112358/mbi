@@ -25,6 +25,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._api import jax_enable_x64
 from ..clique_utils import Clique
 from ..clique_vector import CliqueVector
 from ..dataset import Dataset, JaxDataset
@@ -104,15 +105,12 @@ def _submit_all_compilations(
   futures: dict[tuple[int, ...], concurrent.futures.Future] = {}
   for shape in sorted_shapes:
     abstract_cols = tuple(_col_struct(n_rows, s) for s in shape)
-    futures[shape] = _COMPILE_POOL.submit(
-        lambda c, w, s: _bincount_marginal.lower(c, w, s).compile(),
-        abstract_cols,
-        weights_struct,
-        shape,
-    )
+    lowered = _bincount_marginal.lower(abstract_cols, weights_struct, shape)
+    futures[shape] = _COMPILE_POOL.submit(lowered.compile)
   return futures
 
 
+@jax_enable_x64
 def precompute_marginals(
     dataset: Dataset | JaxDataset,
     cliques: Sequence[Clique],

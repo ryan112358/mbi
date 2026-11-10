@@ -11,6 +11,7 @@ import jax
 import networkx as nx
 
 from . import junction_tree, marginal_oracles
+from ._api import jax_enable_x64
 from .clique_utils import Clique
 from .clique_vector import CliqueVector
 from .domain import Domain
@@ -179,6 +180,7 @@ class ModelSummary:
     return "\n".join(lines)
 
 
+@jax_enable_x64
 def summarize(
     domain: Domain,
     cliques: Sequence[Clique],

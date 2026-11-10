@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ._api import Projectable, jax_enable_x64
 from .domain import Attribute, Domain
 
 
@@ -56,21 +57,25 @@ class Factor:
 
   # Constructors
   @classmethod
+  @jax_enable_x64
   def zeros(cls, domain: Domain) -> Factor:
     """Creates a Factor object with all values initialized to zero."""
     return cls(domain, jnp.zeros(domain.shape))
 
   @classmethod
+  @jax_enable_x64
   def ones(cls, domain: Domain) -> Factor:
     """Creates a Factor object with all values initialized to one."""
     return cls(domain, jnp.ones(domain.shape))
 
   @classmethod
+  @jax_enable_x64
   def random(cls, domain: Domain) -> Factor:
     """Creates a Factor object with random values (uniform 0-1)."""
     return cls(domain, jnp.asarray(np.random.rand(*domain.shape)))
 
   @classmethod
+  @jax_enable_x64
   def abstract(
       cls,
       domain: Domain,
@@ -87,6 +92,7 @@ class Factor:
     )
 
   # Reshaping operations
+  @jax_enable_x64
   def transpose(self, attrs: Sequence[Attribute]) -> Factor:
     """Rearranges the factor's axes according to the new attribute order."""
     if set(attrs) != set(self.domain.attributes):
@@ -96,6 +102,7 @@ class Factor:
     values = jnp.moveaxis(self.values, range(len(ax)), ax)
     return Factor(newdom, values)
 
+  @jax_enable_x64
   def expand(self, domain: Domain) -> Factor:
     """Expands the factor's domain to include new attributes."""
     if not domain.contains(self.domain):
@@ -108,6 +115,7 @@ class Factor:
     return Factor(domain, values)
 
   # Functions that aggregate along some subset of axes
+  @jax_enable_x64
   def aggregate(
       self, fn: Callable, attrs: Sequence[Attribute] | None = None
   ) -> Factor:
@@ -176,14 +184,17 @@ class Factor:
     return self.domain.supports(attrs)
 
   # Functions that operate element-wise
+  @jax_enable_x64
   def exp(self) -> Factor:
     """Applies element-wise exponentiation (jnp.exp) to the factor's values."""
     return Factor(self.domain, jnp.exp(self.values))
 
+  @jax_enable_x64
   def log(self) -> Factor:
     """Applies element-wise logarithm (jnp.log) to the factor's values."""
     return Factor(self.domain, jnp.log(self.values))
 
+  @jax_enable_x64
   def normalize(
       self, total: jax.Array | float = 1.0, log: bool = False
   ) -> Factor:
@@ -202,6 +213,7 @@ class Factor:
     return float(self.values)
 
   # Binary operations between two factors
+  @jax_enable_x64
   def _binaryop(self, fn: Callable, other: Factor | ArrayLike) -> Factor:
     """Helper for applying binary operations between this factor and another factor or scalar."""
     if not isinstance(other, Factor):
@@ -251,6 +263,7 @@ class Factor:
   def __neg__(self) -> Factor:
     return self * -1
 
+  @jax_enable_x64
   def dot(self, other: Factor) -> ArrayLike:
     if self.domain != other.domain:
       raise ValueError(f"Domains do not match {self.domain} != {other.domain}")
@@ -263,6 +276,7 @@ class Factor:
     """Returns the factor's values as a flattened vector or original array."""
     return self.values.flatten() if flatten else self.values
 
+  @jax_enable_x64
   def pad(
       self, mesh: jax.sharding.Mesh | None, pad_value: Literal[0, "-inf"]
   ) -> Factor:
@@ -315,9 +329,6 @@ class Factor:
         values=jax.lax.with_sharding_constraint(self.values, sharding),
     )
 
-
-# Re-export for backward compatibility; canonical definition is in _api.py.
-from ._api import Projectable  # noqa: E402  # pylint: disable=wrong-import-position,unused-import
 
 __all__ = [name for name in dir() if not name.startswith("_")] + [
     "Projectable",

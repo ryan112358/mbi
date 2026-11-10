@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 import numpy as np
 import optax
 
+from ._api import jax_enable_x64
 from .clique_utils import Clique, clique_mapping, maximal_subset
 from .clique_vector import CliqueVector
 from .domain import Attribute, Domain
@@ -199,6 +200,7 @@ class MarginalLossFn:
   def __post_init__(self):
     object.__setattr__(self, "cliques", tuple(self.cliques))
 
+  @jax_enable_x64
   def __call__(self, marginals: CliqueVector) -> ArrayLike:
     return self.loss_fn(marginals, self.data)
 
@@ -251,6 +253,7 @@ def _normalized_l1_loss(
   return loss / len(measurements) / total
 
 
+@jax_enable_x64
 def calculate_l2_lipschitz(
     domain: Domain,
     cliques: Sequence[Clique],
@@ -335,6 +338,7 @@ def calculate_l2_lipschitz_from_metadata(
   return max(max_block, max_attr)
 
 
+@jax_enable_x64
 def from_linear_measurements(
     measurements: Sequence[LinearMeasurement],
     domain: Domain,
@@ -380,6 +384,7 @@ def from_linear_measurements(
   return loss
 
 
+@jax_enable_x64
 def primal_feasibility(mu: CliqueVector) -> ArrayLike:
   """Calculates the average L1 distance between overlapping marginals in `mu` (consistency)."""
   ans = 0
@@ -407,6 +412,7 @@ def _mle_loss(mu: CliqueVector, target: CliqueVector) -> ArrayLike:
   return 0.5 * diff.dot(diff)
 
 
+@jax_enable_x64
 def mle_loss_fn(marginals: CliqueVector) -> "MarginalLossFn":
   """Target-marginal loss with primal gradient ``mu - marginals``."""
   total = (

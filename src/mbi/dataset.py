@@ -19,6 +19,7 @@ import numpy as np
 from jax.typing import ArrayLike as JaxArrayLike
 from numpy.typing import NDArray
 
+from ._api import jax_enable_x64
 from .domain import Attribute, Domain
 from .factor import Factor
 
@@ -136,6 +137,7 @@ class Dataset:
     }
     return Dataset(data, domain)
 
+  @jax_enable_x64
   def project(self, cols: Attribute | Sequence[Attribute]) -> Factor:
     """Project dataset onto a subset of columns."""
     if isinstance(cols, (str, int)):
@@ -300,6 +302,7 @@ class JaxDataset:
   weights: jax.Array | None = None
 
   @staticmethod
+  @jax_enable_x64
   def synthetic(domain: Domain, records: int) -> JaxDataset:
     """Generate synthetic data conforming to the given domain.
 
@@ -313,6 +316,7 @@ class JaxDataset:
 
     return JaxDataset(data, domain)
 
+  @jax_enable_x64
   def project(self, attrs: Attribute | Sequence[Attribute]) -> Factor:
     """Project dataset onto a subset of columns."""
     if isinstance(attrs, (str, int)):
@@ -349,6 +353,7 @@ class JaxDataset:
     return list(self.data.values())[0].shape[0]
 
   @property
+  @jax_enable_x64
   def total(self) -> JaxArrayLike:
     """Total count represented by the dataset.
 

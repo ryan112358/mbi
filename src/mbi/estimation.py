@@ -35,6 +35,7 @@ from . import marginal_loss, marginal_oracles
 from ._api import (
     Model,  # noqa: F401
     Projectable,  # noqa: F401
+    jax_enable_x64,
 )
 
 # pylint: enable=unused-import
@@ -68,6 +69,7 @@ def _extract_potentials(
   return w_pot.expand(cliques)
 
 
+@jax_enable_x64
 @jax.jit(static_argnames=["marginal_oracle", "normalize"])
 def primal_dual_gap(
     loss_fn: MarginalLossFn,
@@ -153,6 +155,7 @@ class Estimator(ABC):
   # Overridable hooks
   # ------------------------------------------------------------------
 
+  @jax_enable_x64
   def _finalize(self, state: Any, known_total: float, constraints=()) -> Model:
     """Convert the final optimization state into a Model."""
     mu = self._callback_value(state, known_total, constraints)
@@ -180,6 +183,7 @@ class Estimator(ABC):
   # Default implementations
   # ------------------------------------------------------------------
 
+  @jax_enable_x64
   def estimate(
       self,
       domain: Domain,
@@ -245,6 +249,7 @@ class Estimator(ABC):
         prev_gap = float(gap)
     return self._finalize(state, known_total, constraints=constraints)
 
+  @jax_enable_x64
   @jax.jit(static_argnames=["self"], donate_argnames=["state"])
   def _multi_step(self, state, loss_fn, known_total, constraints=()):
     """Run ``CALLBACK_EVERY`` optimization steps as a fused scan."""
@@ -254,6 +259,7 @@ class Estimator(ABC):
 
     return jax.lax.scan(step, state, None, length=CALLBACK_EVERY)[0]
 
+  @jax_enable_x64
   def precompile(
       self,
       domain: Domain,
@@ -293,6 +299,7 @@ class Estimator(ABC):
     return RobustFuture(_COMPILE_POOL.submit(lowered.compile))
 
 
+@jax_enable_x64
 def minimum_variance_unbiased_total(
     measurements: Sequence[LinearMeasurement],
 ) -> float:
@@ -436,6 +443,7 @@ class MirrorDescent(Estimator):
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
   mesh: jax.sharding.Mesh | None = None
 
+  @jax_enable_x64
   def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
       self,
       domain: Domain,
@@ -489,6 +497,7 @@ class MirrorDescent(Estimator):
     accepted_loss = jax.lax.select(sufficient_decrease, loss2, loss)
     return MirrorDescentState(mu, potentials, alpha, accepted_loss)
 
+  @jax_enable_x64
   def _finalize(
       self,
       state: MirrorDescentState,
@@ -526,6 +535,7 @@ class DualAveraging(Estimator):
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
   mesh: jax.sharding.Mesh | None = None
 
+  @jax_enable_x64
   def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
       self,
       domain: Domain,
@@ -598,6 +608,7 @@ class InteriorGradient(Estimator):
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
   mesh: jax.sharding.Mesh | None = None
 
+  @jax_enable_x64
   def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
       self,
       domain: Domain,
@@ -662,6 +673,7 @@ class LBFGS(Estimator):
 
   marginal_oracle: marginal_oracles.MarginalOracle | None = None
 
+  @jax_enable_x64
   def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
       self,
       domain,
@@ -721,6 +733,7 @@ class LBFGS(Estimator):
     potentials = optax.apply_updates(state.potentials, updates)
     return LBFGSState(potentials, opt_state)  # pyrefly: ignore[bad-argument-type]
 
+  @jax_enable_x64
   def _callback_value(self, state, known_total, constraints=()):
     # Unlike MD/DA/IG, LBFGSState stores only potentials (not marginals)
     # to avoid an extra oracle call on every step.  Marginals are
@@ -733,6 +746,7 @@ class LBFGS(Estimator):
     )
     return marginal_oracle(state.potentials, known_total)
 
+  @jax_enable_x64
   def _finalize(self, state, known_total, constraints=()):
     marginal_oracle = self._oracle(
         state.potentials.cliques,
@@ -780,6 +794,7 @@ class UniversalAcceleratedMethod(Estimator):
   norm: int = 2
   linesearch: bool = True
 
+  @jax_enable_x64
   def _init(  # pyrefly: ignore[bad-override]  # intentional estimator-specific hook
       self,
       domain,
@@ -887,6 +902,7 @@ class UniversalAcceleratedMethod(Estimator):
     carry = jax.lax.while_loop(cond_fun, body_fun, state)
     return carry._replace(accept=jnp.asarray(False))
 
+  @jax_enable_x64
   def _callback_value(self, state, known_total, constraints=()):
     # Scale back to N-simplex for user-facing callbacks.
     return state.x * known_total
