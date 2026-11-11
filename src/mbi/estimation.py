@@ -86,7 +86,7 @@ def primal_dual_gap(
   When ``normalize=True`` (default), the gap is divided by the characteristic
   scale ``total * sqrt(loss_fn.lipschitz * marginals.size())``.
   """
-  total = marginals.project(()).datavector(flatten=False)
+  total = marginals.project(()).values
   oracle = marginal_oracle or marginal_oracles.default_oracle(
       marginals.cliques, marginals.domain, has_constraints=bool(constraints)
   )
@@ -706,12 +706,12 @@ class LBFGS(Estimator):
       @jax.custom_vjp
       def theta_loss(theta):
         log_beliefs = marginal_oracle(theta, None)
-        log_z = log_beliefs.project((), log=True).datavector(flatten=False)
+        log_z = log_beliefs.project((), log=True).values
         return log_z - theta.dot(target_p)
 
       def _fwd(theta):
         log_beliefs = marginal_oracle(theta, None)
-        log_z = log_beliefs.project((), log=True).datavector(flatten=False)
+        log_z = log_beliefs.project((), log=True).values
         p = log_beliefs.normalize(1.0, log=True).exp()
         return log_z - theta.dot(target_p), p - target_p
 

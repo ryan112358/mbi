@@ -162,6 +162,7 @@ class CliqueVector:
         is_leaf=Factor.__instancecheck__,
     )
 
+  @jax_enable_x64
   def __mul__(self, const: ArrayLike) -> CliqueVector:
     """Multiplies each factor in the vector by a constant."""
     return jax.tree.map(lambda f: f * const, self)
@@ -206,6 +207,7 @@ class CliqueVector:
     """Applies elementwise logarithm (jnp.log) to each factor."""
     return jax.tree.map(jnp.log, self)
 
+  @jax_enable_x64
   def dot(self, other: CliqueVector) -> ArrayLike:
     """Computes the dot product between this CliqueVector and another."""
     dots = jax.tree.map(

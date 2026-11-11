@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable, Sequence
-from typing import Literal
+from typing import Literal, cast
 from jax.typing import ArrayLike
 import jax
 import jax.numpy as jnp
@@ -55,6 +55,13 @@ class Factor:
   domain: Domain = jax.tree.static()
   values: jax.Array
 
+  @jax_enable_x64
+  def __post_init__(self):
+    if isinstance(
+        self.values, (np.ndarray, np.number, int, float, list, tuple)
+    ):
+      object.__setattr__(self, "values", jnp.asarray(self.values))
+
   # Constructors
   @classmethod
   @jax_enable_x64
@@ -92,7 +99,6 @@ class Factor:
     )
 
   # Reshaping operations
-  @jax_enable_x64
   def transpose(self, attrs: Sequence[Attribute]) -> Factor:
     """Rearranges the factor's axes according to the new attribute order."""
     if set(attrs) != set(self.domain.attributes):
@@ -102,7 +108,6 @@ class Factor:
     values = jnp.moveaxis(self.values, range(len(ax)), ax)
     return Factor(newdom, values)
 
-  @jax_enable_x64
   def expand(self, domain: Domain) -> Factor:
     """Expands the factor's domain to include new attributes."""
     if not domain.contains(self.domain):
@@ -272,9 +277,12 @@ class Factor:
         where=(self.values != 0) & (other.values != 0),
     )
 
-  def datavector(self, flatten: bool = True) -> jax.Array:
-    """Returns the factor's values as a flattened vector or original array."""
-    return self.values.flatten() if flatten else self.values
+  def datavector(self, flatten: bool = True) -> np.ndarray:
+    """Returns the factor's values as a flattened NumPy vector or array."""
+    res = self.values.flatten() if flatten else self.values
+    if isinstance(res, jax.core.Tracer):
+      return cast(np.ndarray, res)
+    return np.asarray(res)
 
   @jax_enable_x64
   def pad(
