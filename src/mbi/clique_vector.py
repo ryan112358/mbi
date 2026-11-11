@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 from jax.typing import ArrayLike
 
+from ._api import jax_enable_x64
 from .clique_utils import Clique, reverse_clique_mapping
 from .domain import Attribute, Domain
 from .factor import Factor, Projectable
@@ -161,6 +162,7 @@ class CliqueVector:
         is_leaf=Factor.__instancecheck__,
     )
 
+  @jax_enable_x64
   def __mul__(self, const: ArrayLike) -> CliqueVector:
     """Multiplies each factor in the vector by a constant."""
     return jax.tree.map(lambda f: f * const, self)
@@ -173,6 +175,7 @@ class CliqueVector:
     """Divides each factor in the vector by a constant."""
     return self.__mul__(1 / const)
 
+  @jax_enable_x64
   def __add__(self, other: ArrayLike | CliqueVector) -> CliqueVector:
     """Adds another CliqueVector or a constant to this vector elementwise."""
     if isinstance(other, CliqueVector):
@@ -187,20 +190,24 @@ class CliqueVector:
     """Negates each factor in the vector."""
     return self * -1
 
+  @jax_enable_x64
   def max(self) -> jax.Array:
     """Computes the maximum scalar value across all factors in the vector."""
     if not self.cliques:
       return jnp.asarray(0.0)
     return jnp.max(jnp.stack([f.max().values for f in self.tables.values()]))
 
+  @jax_enable_x64
   def exp(self) -> CliqueVector:
     """Applies elementwise exponentiation (jnp.exp) to each factor."""
     return jax.tree.map(jnp.exp, self)
 
+  @jax_enable_x64
   def log(self) -> CliqueVector:
     """Applies elementwise logarithm (jnp.log) to each factor."""
     return jax.tree.map(jnp.log, self)
 
+  @jax_enable_x64
   def dot(self, other: CliqueVector) -> ArrayLike:
     """Computes the dot product between this CliqueVector and another."""
     dots = jax.tree.map(

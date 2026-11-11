@@ -239,7 +239,7 @@ class TestAbstractDtypeStability(unittest.TestCase):
 
   def test_float32(self):
     with _x64(False):
-      self._check(jnp.float32)
+      self._check(jnp.float64)
 
   def test_float64(self):
     with _x64(True):

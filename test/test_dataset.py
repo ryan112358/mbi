@@ -177,6 +177,17 @@ class TestDatasetDeterministic(unittest.TestCase):
     self.assertEqual(decompressed.domain['a'], 3)
     self.assertEqual(len(decompressed.to_dict()['a']), 0)
 
+  def test_large_counts_64bit_precision(self):
+    n = 20_000_001
+    domain = Domain(['a'], [1])
+    dataset = Dataset({'a': np.zeros(n, dtype=np.uint8)}, domain)
+    proj = dataset.project('a')
+    dv = proj.datavector()
+    self.assertIsInstance(dv, np.ndarray)
+    self.assertEqual(dv.dtype, np.int64)
+    self.assertEqual(int(dv[0]), n)
+    self.assertEqual(int(dataset.project(()).datavector(flatten=False)), n)
+
 
 class TestJaxDataset(unittest.TestCase):
 

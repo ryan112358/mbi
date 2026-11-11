@@ -317,7 +317,8 @@ class TestMarginalOracles(unittest.TestCase):
       )
     if cliques:
       log_z = lambda t: oracle(t, None).project((), log=True).datavector(False)
-      grad_log_z = jax.grad(log_z)(theta)
+      with jax.enable_x64():
+        grad_log_z = jax.grad(log_z)(theta)
       p = oracle(theta, 1.0)
       for cl in cliques:
         np.testing.assert_allclose(

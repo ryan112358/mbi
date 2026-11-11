@@ -19,19 +19,21 @@ from jax.typing import ArrayLike
 import numpy as np
 import optax
 
+from ._api import jax_enable_x64
 from .clique_utils import Clique, clique_mapping, maximal_subset
 from .clique_vector import CliqueVector
 from .domain import Attribute, Domain
 from .factor import Factor
 
 
+@jax_enable_x64
 def _weighted_datavector(weights: np.ndarray, x: Factor) -> jax.Array:
   """Datavector scaled by pre-baked weights (pickle-safe).
 
   .. deprecated::
       Use :class:`WeightedQuery` instead for serialization support.
   """
-  return x.datavector() * weights
+  return x.values.flatten() * weights
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +56,7 @@ class DatavectorQuery:
   use_for_total_estimation: bool = True
 
   def __call__(self, f: Factor) -> jax.Array:
-    return f.datavector()
+    return f.values.flatten()
 
   def op_norm_sq(self) -> float:
     return 1.0
@@ -66,8 +68,9 @@ class WeightedQuery:
 
   weights: np.ndarray
 
+  @jax_enable_x64
   def __call__(self, f: Factor) -> jax.Array:
-    return f.datavector() * self.weights
+    return f.values.flatten() * self.weights
 
   def op_norm_sq(self) -> float:
     return float(np.max(np.asarray(self.weights) ** 2))
@@ -87,7 +90,7 @@ class SlicedQuery:
   start: int = 1
 
   def __call__(self, f: Factor) -> jax.Array:
-    return f.datavector()[self.start :]
+    return f.values.flatten()[self.start :]
 
   def op_norm_sq(self) -> float:
     return 1.0
@@ -199,6 +202,7 @@ class MarginalLossFn:
   def __post_init__(self):
     object.__setattr__(self, "cliques", tuple(self.cliques))
 
+  @jax_enable_x64
   def __call__(self, marginals: CliqueVector) -> ArrayLike:
     return self.loss_fn(marginals, self.data)
 
@@ -237,7 +241,7 @@ def _normalized_l2_loss(
 ) -> ArrayLike:
   """Normalized L2 loss over linear measurements."""
   loss = _l2_loss(marginals, measurements)
-  total = marginals.project(()).datavector(flatten=False)
+  total = marginals.project(()).values
   return jnp.sqrt(loss / len(measurements) / total)
 
 
@@ -247,10 +251,11 @@ def _normalized_l1_loss(
 ) -> ArrayLike:
   """Normalized L1 loss over linear measurements."""
   loss = _l1_loss(marginals, measurements)
-  total = marginals.project(()).datavector(flatten=False)
+  total = marginals.project(()).values
   return loss / len(measurements) / total
 
 
+@jax_enable_x64
 def calculate_l2_lipschitz(
     domain: Domain,
     cliques: Sequence[Clique],
@@ -335,6 +340,7 @@ def calculate_l2_lipschitz_from_metadata(
   return max(max_block, max_attr)
 
 
+@jax_enable_x64
 def from_linear_measurements(
     measurements: Sequence[LinearMeasurement],
     domain: Domain,
@@ -380,6 +386,7 @@ def from_linear_measurements(
   return loss
 
 
+@jax_enable_x64
 def primal_feasibility(mu: CliqueVector) -> ArrayLike:
   """Calculates the average L1 distance between overlapping marginals in `mu` (consistency)."""
   ans = 0
@@ -390,8 +397,8 @@ def primal_feasibility(mu: CliqueVector) -> ArrayLike:
         break
       d = tuple(set(r) & set(s))
       if len(d) > 0:
-        x = mu[r].project(d).datavector()
-        y = mu[s].project(d).datavector()
+        x = mu[r].project(d).values.flatten()
+        y = mu[s].project(d).values.flatten()
         denom = 0.5 * x.sum() + 0.5 * y.sum()
         err = jnp.linalg.norm(x - y, 1) / denom
         ans += err
@@ -407,13 +414,10 @@ def _mle_loss(mu: CliqueVector, target: CliqueVector) -> ArrayLike:
   return 0.5 * diff.dot(diff)
 
 
+@jax_enable_x64
 def mle_loss_fn(marginals: CliqueVector) -> "MarginalLossFn":
   """Target-marginal loss with primal gradient ``mu - marginals``."""
-  total = (
-      float(marginals.project(()).datavector(flatten=False))
-      if marginals.cliques
-      else 1.0
-  )
+  total = float(marginals.project(()).values) if marginals.cliques else 1.0
   return MarginalLossFn(
       cliques=marginals.cliques,
       loss_fn=_mle_loss,

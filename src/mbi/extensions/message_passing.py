@@ -27,6 +27,7 @@ import jax.numpy as jnp
 import networkx as nx
 
 from .. import junction_tree, marginal_oracles
+from .._api import jax_enable_x64
 from ..clique_utils import clique_mapping
 from ..clique_vector import CliqueVector
 from ..constraint import Constraint
@@ -329,6 +330,7 @@ def _fold_non_deterministic(potentials, constraints):
   return CliqueVector(domain, cliques, arrays)
 
 
+@jax_enable_x64
 @jax.jit(static_argnames=['jtree'])
 def shafer_shenoy(
     potentials: CliqueVector,
@@ -490,6 +492,7 @@ def shafer_shenoy(
 # ---------------------------------------------------------------------------
 
 
+@jax_enable_x64
 @jax.jit(static_argnames=['jtree', 'contraction'])
 def implicit(
     potentials: CliqueVector,

@@ -14,6 +14,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from . import junction_tree, marginal_oracles
+from ._api import jax_enable_x64
 from .clique_utils import Clique
 from .clique_vector import CliqueVector
 from .constraint import Constraint
@@ -50,6 +51,7 @@ class MarkovRandomField:
   total: ArrayLike = 1
   constraints: tuple[Constraint, ...] = ()
 
+  @jax_enable_x64
   def project(self, attrs: Attribute | Sequence[Attribute]) -> Factor:
     if isinstance(attrs, (str, int)):
       attrs = (attrs,)
@@ -63,6 +65,7 @@ class MarkovRandomField:
   def supports(self, attrs: Attribute | Sequence[Attribute]) -> bool:
     return self.marginals.domain.supports(attrs)
 
+  @jax_enable_x64
   def synthetic_data(
       self, rows: int | None = None, method: str = "round"
   ) -> Dataset:

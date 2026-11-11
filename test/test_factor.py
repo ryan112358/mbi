@@ -140,6 +140,24 @@ class TestFactor(unittest.TestCase):
     self.assertEqual(sliced_factor.domain, expected_domain)
     self.assertTrue(jnp.array_equal(sliced_factor.values, expected_values))
 
+  def test_datavector_returns_numpy_and_preserves_64bit(self):
+    domain = Domain(["a"], [2])
+    int_vals = np.array([20_000_001, 20_000_003], dtype=np.int64)
+    f_int = Factor(domain, int_vals)
+    self.assertEqual(f_int.values.dtype, jnp.int64)
+    dv_int = f_int.datavector()
+    self.assertIsInstance(dv_int, np.ndarray)
+    self.assertEqual(dv_int.dtype, np.int64)
+    np.testing.assert_array_equal(dv_int, int_vals)
+
+    float_vals = np.array([20_000_001.0, 20_000_003.0], dtype=np.float64)
+    f_float = Factor(domain, float_vals)
+    self.assertEqual(f_float.values.dtype, jnp.float64)
+    dv_float = f_float.datavector()
+    self.assertIsInstance(dv_float, np.ndarray)
+    self.assertEqual(dv_float.dtype, np.float64)
+    np.testing.assert_array_equal(dv_float, float_vals)
+
 
 if __name__ == "__main__":
   unittest.main()

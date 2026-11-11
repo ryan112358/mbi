@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ._api import jax_enable_x64
 from .domain import Attribute
 from .domain import Domain
 from .factor import Factor
@@ -88,6 +89,7 @@ class Constraint:
     return self.mapping is not None
 
   @property
+  @jax_enable_x64
   def potential(self) -> Factor:
     """Return a log-space potential: 0 for allowed, -inf for forbidden."""
     if self.mapping is not None:

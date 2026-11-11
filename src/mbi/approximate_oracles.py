@@ -28,6 +28,7 @@ from scipy.cluster.hierarchy import DisjointSet
 
 
 from . import estimation, marginal_loss
+from ._api import jax_enable_x64
 from ._future import RobustFuture
 from .clique_utils import Clique
 from .clique_vector import CliqueVector
@@ -155,7 +156,8 @@ def build_graph(domain: Domain, cliques: Sequence[Clique]) -> tuple[
 _State = dict[tuple[Clique, Clique], Factor]
 
 
-@functools.partial(jax.jit, static_argnames=["mesh", "iters"])
+@jax_enable_x64
+@jax.jit(static_argnames=["mesh", "iters"])
 def convex_generalized_belief_propagation(
     potentials: CliqueVector,
     total: float = 1,
@@ -329,6 +331,7 @@ class ApproxMirrorDescent:
     potentials = state.potentials - self.stepsize * dL
     return ApproxMirrorDescentState(potentials, mu, messages)
 
+  @jax_enable_x64
   def estimate(
       self,
       domain: Domain,
@@ -372,6 +375,7 @@ class ApproxMirrorDescent:
     )
     return mu
 
+  @jax_enable_x64
   def precompile(
       self,
       domain: Domain,
@@ -389,7 +393,7 @@ class ApproxMirrorDescent:
     all_measurements = list(measurements or [])
     for cl in extra_cliques or []:
       shape = (domain.project(cl).size(),)
-      abstract_values = jax.ShapeDtypeStruct(shape, jnp.float32)
+      abstract_values = jax.ShapeDtypeStruct(shape, jnp.result_type(float))
       # ``abstract_values`` is a ShapeDtypeStruct used only for JIT shape
       # inference via jax.eval_shape below; no concrete array is needed.
       all_measurements.append(LinearMeasurement(abstract_values, cl))  # pyrefly: ignore[bad-argument-type]

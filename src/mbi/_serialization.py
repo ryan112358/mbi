@@ -15,6 +15,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ._api import jax_enable_x64
+
 
 def save(obj: Any, file: str | os.PathLike | io.IOBase) -> None:
   """Save a JAX pytree to ``.npz`` format.
@@ -52,6 +54,7 @@ def save(obj: Any, file: str | os.PathLike | io.IOBase) -> None:
     file.write(data)
 
 
+@jax_enable_x64
 def load(file: str | os.PathLike | io.IOBase) -> Any:
   """Load a JAX pytree from ``.npz`` format.
 
