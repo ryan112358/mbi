@@ -68,34 +68,18 @@ def _extract_potentials(
   return w_pot.expand(cliques)
 
 
-@jax.jit(
-    static_argnames=["oracle", "steps"],
-    donate_argnames=["theta", "marginals"],
-)
-def _gis_multi_step(theta, marginals, target_p, weight, tau, oracle, steps):
-  """Runs steps of Darroch-Ratcliff GIS to fit theta to target_p."""
-
-  def safe_log(x):
-    return jax.tree.map(lambda v: jnp.log(jnp.maximum(v, tau)), x)
-
-  log_target = safe_log(target_p)
-
-  def body(carry, _):
-    # Barrier prevents XLA from unrolling cross-step fusion on large trees.
-    th, p = jax.lax.optimization_barrier(carry)
-    th = th + weight * (log_target - safe_log(p))
-    raw = oracle(th, 1.0)
-    p = CliqueVector(th.domain, th.cliques, {cl: raw[cl] for cl in th.cliques})
-    return (th, p), None
-
-  (theta, marginals), _ = jax.lax.scan(
-      body, (theta, marginals), None, length=steps
+@jax.jit(static_argnames=["oracle"], donate_argnames=["theta", "marginals"])
+def _gis_step(theta, marginals, log_target, target_p, weight, tau, oracle):
+  """Runs one GIS step (https://doi.org/10.1214/aoms/1177692379, Theorem 1)."""
+  log_p = jax.tree.map(lambda v: jnp.log(jnp.maximum(v, tau)), marginals)
+  theta = theta + weight * (log_target - log_p)
+  raw = oracle(theta, 1.0)
+  marginals = CliqueVector(
+      theta.domain, theta.cliques, {cl: raw[cl] for cl in theta.cliques}
   )
-  kl_sum = jnp.asarray(target_p.dot(log_target - safe_log(marginals)))
-  kl_mean = kl_sum / len(target_p.cliques)
   diff = marginals - target_p
   tvds = [0.5 * jnp.sum(jnp.abs(f.values)) for f in diff.tables.values()]
-  return theta, marginals, kl_mean, jnp.max(jnp.stack(tvds))
+  return theta, marginals, jnp.max(jnp.stack(tvds))
 
 
 def mrf_from_marginals(
@@ -110,7 +94,7 @@ def mrf_from_marginals(
   """Recovers a maximum-entropy MarkovRandomField matching target marginals.
 
   Args:
-      marginals: Non-negative target clique marginals to match.
+      marginals: Consistent non-negative target clique marginals to match.
       total: Total count for the returned model, or None to infer from marginals.
       constraints: Structural zero constraints enforced on the model.
       marginal_oracle: Marginal inference callable, or None for default_oracle.
@@ -123,10 +107,11 @@ def mrf_from_marginals(
   constraints = tuple(constraints)
   cliques = marginals.cliques
   domain = marginals.domain
-  base_oracle = marginal_oracle or marginal_oracles.default_oracle(
-      cliques, domain, has_constraints=bool(constraints)
-  )
-  oracle = functools.partial(base_oracle, constraints=constraints)
+  if marginal_oracle is None:
+    marginal_oracle = marginal_oracles.default_oracle(
+        cliques, domain, has_constraints=bool(constraints)
+    )
+  oracle = functools.partial(marginal_oracle, constraints=constraints)
 
   def eval_oracle(th, tot=1.0):
     raw = oracle(th, tot)
@@ -156,26 +141,21 @@ def mrf_from_marginals(
     tables[cl] = Factor(domain.project(cl), p_vals)
   target_p = CliqueVector(domain, cliques, tables)
 
-  # Uniform 1/|C| weights satisfy Darroch-Ratcliff's sum_C w_C <= 1 condition,
-  # guaranteeing monotone descent when each clique marginal sums to 1.
+  # Theorem 1 of Darroch & Ratcliff (https://doi.org/10.1214/aoms/1177692379):
+  # indicator features over |C| cliques sum to |C|, giving 1/|C| step weights.
   weight = jnp.asarray(1.0 / len(cliques))
   eps = float(jnp.finfo(jnp.result_type(float)).eps)
   max_size = max(domain.size(cl) for cl in cliques)
   tau = jnp.asarray(eps / max(max_size, 1))
+  log_target = jax.tree.map(lambda v: jnp.log(jnp.maximum(v, tau)), target_p)
   p_cur = jax.tree.map(jnp.copy, eval_oracle(theta, 1.0))
   theta = jax.tree.map(jnp.zeros_like, p_cur)
-  step_size = min(CALLBACK_EVERY, iters)
-  prev_kl, prev_err = np.inf, np.inf
-  for _ in range(math.ceil(iters / step_size)):
-    theta, p_cur, kl_div, max_tvd = _gis_multi_step(
-        theta, p_cur, target_p, weight, tau, oracle, step_size
+  for _ in range(iters):
+    theta, p_cur, max_tvd = _gis_step(
+        theta, p_cur, log_target, target_p, weight, tau, oracle
     )
-    if tol is not None:
-      kl, err = max(float(kl_div), 0.0), float(max_tvd)
-      stalled = kl >= prev_kl * (1.0 - 1e-4) and err >= prev_err * (1.0 - 1e-4)
-      if err <= tol or stalled:
-        break
-      prev_kl, prev_err = kl, err
+    if tol is not None and float(max_tvd) <= tol:
+      break
 
   fitted = p_cur * resolved_total
   return MarkovRandomField(
