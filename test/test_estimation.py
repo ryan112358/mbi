@@ -1,10 +1,12 @@
-import mbi
 import itertools
 import math
 import unittest
 
+import jax
 import numpy as np
 from parameterized import parameterized
+
+import mbi
 
 from mbi import Domain, estimation, marginal_loss
 from mbi.clique_vector import CliqueVector
@@ -534,15 +536,13 @@ class TestEstimation(unittest.TestCase):
       expected = P.project(cl).datavector()
       np.testing.assert_allclose(actual, expected, atol=500.0)
 
-  def test_mle_forward_only_no_backprop(self):
-    """LBFGS on mle_loss_fn recovers potentials without differentiating oracle."""
-    import jax
-
+  def test_mrf_from_marginals_forward_only_no_backprop(self):
+    """mrf_from_marginals recovers potentials without differentiating oracle."""
     cliques = [("a", "b"), ("b", "c"), ("c", "d")]
     rng = np.random.default_rng(0)
     P = Factor(_DOMAIN, rng.random(_DOMAIN.shape)) * 100.0
     total = float(P.sum())
-    mu = CliqueVector(_DOMAIN, cliques, {cl: P.project(cl) for cl in cliques})
+    mu = CliqueVector.from_projectable(P, cliques)
 
     def forward_only_oracle(potentials, tot=1.0, **kwargs):
       @jax.custom_vjp
@@ -557,11 +557,119 @@ class TestEstimation(unittest.TestCase):
       _call.defvjp(lambda p: (_call(p), None), _bwd)
       return _call(potentials)
 
-    loss = marginal_loss.mle_loss_fn(mu)
-    model = estimation.LBFGS(marginal_oracle=forward_only_oracle).estimate(
-        _DOMAIN, loss, known_total=total, iters=25000, tol=1e-4
-    )
+    model = mbi.mrf_from_marginals(mu, marginal_oracle=forward_only_oracle)
     for cl in cliques:
       actual = model.project(cl).datavector()
       expected = mu.project(cl).datavector()
       np.testing.assert_allclose(actual, expected, atol=1e-3 * total)
+
+  @parameterized.expand(itertools.product(_CLIQUE_SETS, [1.0, 1e6]))
+  def test_mrf_from_marginals_recovers_max_entropy_model(self, cliques, scale):
+    rng = np.random.default_rng(hash((tuple(cliques), scale)) & 0xFFFFFFFF)
+    p_joint = Factor(_DOMAIN, rng.uniform(0.05, 1.0, size=_DOMAIN.shape))
+    p_joint = p_joint * (scale / float(p_joint.sum()))
+    mu = CliqueVector.from_projectable(p_joint, cliques)
+
+    model = mbi.mrf_from_marginals(mu, tol=1e-5)
+    expected_total = scale if cliques else 1.0
+    np.testing.assert_allclose(float(model.total), expected_total, rtol=1e-5)
+
+    for cl in cliques:
+      actual = model.project(cl).datavector()
+      expected = mu.project(cl).datavector()
+      np.testing.assert_allclose(actual, expected, atol=1e-3 * scale)
+      self.assertTrue(np.all(np.isfinite(model.potentials[cl].datavector())))
+
+    if cliques:
+      # Potentials must reproduce the fitted marginals and maximize entropy
+      # among all joint distributions matching those marginals.
+      joint_log = sum(model.potentials.tables.values(), Factor.zeros(_DOMAIN))
+      q_vals = np.asarray(joint_log.normalize(1.0, log=True).exp().datavector())
+      p_vals = np.asarray((p_joint / scale).datavector())
+      entropy_q = -float(np.sum(q_vals * np.log(np.maximum(q_vals, 1e-30))))
+      entropy_p = -float(np.sum(p_vals * np.log(np.maximum(p_vals, 1e-30))))
+      self.assertGreaterEqual(entropy_q, entropy_p - 1e-4)
+
+  def test_mrf_from_marginals_monotone_dual_and_early_stop(self):
+    cliques = [("a", "b"), ("b", "c"), ("a", "c"), ("c", "d")]
+    rng = np.random.default_rng(7)
+    p_joint = Factor(_DOMAIN, rng.uniform(0.05, 1.0, size=_DOMAIN.shape))
+    p_joint = p_joint / float(p_joint.sum())
+    mu = CliqueVector.from_projectable(p_joint, cliques)
+
+    prev_dual = np.inf
+    for iters in [10, 50, 150, 400]:
+      model = mbi.mrf_from_marginals(mu, iters=iters, tol=None)
+      log_b = mbi.marginal_oracles.brute_force_marginals(model.potentials, None)
+      log_z = float(log_b.project((), log=True).datavector(flatten=False))
+      dual = log_z - float(model.potentials.dot(mu))
+      self.assertLessEqual(dual, prev_dual + 1e-6)
+      prev_dual = dual
+
+    calls = []
+
+    def counting_oracle(potentials, total=1.0, **kwargs):
+      calls.append(1)
+      return mbi.marginal_oracles.message_passing_shafer_shenoy(
+          potentials, total, **kwargs
+      )
+
+    model = mbi.mrf_from_marginals(
+        mu, total=50.0, marginal_oracle=counting_oracle, iters=5000, tol=1e-3
+    )
+    np.testing.assert_allclose(float(model.total), 50.0)
+    self.assertLess(len(calls), 500)
+    for cl in cliques:
+      self.assertTrue(np.all(np.isfinite(model.potentials[cl].datavector())))
+      clique_sum = model.project(cl).datavector().sum()
+      np.testing.assert_allclose(clique_sum, 50.0, atol=1e-3)
+
+  @parameterized.expand([
+      mbi.marginal_oracles.message_passing_shafer_shenoy,
+      mbi.extensions.message_passing.shafer_shenoy,
+  ])
+  def test_mrf_from_marginals_constraints_and_oracles(self, oracle):
+    domain = Domain(["a", "b", "c"], [3, 4, 2])
+    c_inv = mbi.Constraint(
+        domain=domain.project(("a", "b")), invalid=np.array([[0, 1], [2, 3]])
+    )
+    c_map = mbi.Constraint(
+        domain=domain.project(("b", "c")), mapping=np.array([0, 0, 1, 1])
+    )
+    cliques = [("a", "b"), ("b", "c")]
+    rng = np.random.default_rng(11)
+    base = Factor(domain, rng.uniform(0.1, 1.0, size=domain.shape))
+    p = base * c_inv.potential.exp() * c_map.potential.exp()
+    p = p * (250.0 / float(p.sum()))
+    mu = CliqueVector.from_projectable(p, cliques)
+
+    model = mbi.mrf_from_marginals(
+        mu, constraints=[c_inv, c_map], marginal_oracle=oracle
+    )
+    self.assertEqual(tuple(model.cliques), tuple(cliques))
+    for cl in cliques:
+      self.assertTrue(np.all(np.isfinite(model.potentials[cl].datavector())))
+      actual = model.project(cl).datavector()
+      expected = mu[cl].datavector()
+      np.testing.assert_allclose(actual, expected, atol=2.5)
+    ab = model.project(("a", "b")).datavector().reshape(3, 4)
+    np.testing.assert_allclose(ab[0, 1] + ab[2, 3], 0.0, atol=1e-6)
+
+  def test_mrf_from_marginals_edge_cases(self):
+    zeros = CliqueVector.zeros(_DOMAIN, [("a", "b"), ("b", "c")])
+    model_zero = mbi.mrf_from_marginals(zeros, total=10.0)
+    np.testing.assert_allclose(float(model_zero.total), 10.0)
+    actual_a = model_zero.project(("a",)).datavector()
+    np.testing.assert_allclose(actual_a, [5.0, 5.0], atol=1e-5)
+
+    # Transposed factor axes and iters=0.
+    p = Factor.random(_DOMAIN)
+    total = float(p.sum())
+    tables = {("a", "b"): p.project(("b", "a"))}
+    transposed = CliqueVector(_DOMAIN, [("a", "b")], tables)
+    model_trans = mbi.mrf_from_marginals(transposed)
+    actual_ab = model_trans.project(("a", "b")).datavector()
+    expected_ab = p.project(("a", "b")).datavector()
+    np.testing.assert_allclose(actual_ab, expected_ab, atol=1e-3 * total)
+    model_no_iter = mbi.mrf_from_marginals(transposed, iters=0)
+    np.testing.assert_allclose(float(model_no_iter.total), total, rtol=1e-5)

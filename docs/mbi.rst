@@ -29,6 +29,7 @@ Top-Level Functions
 
    save
    load
+   mrf_from_marginals
    summarize
    set_log_fn
 
