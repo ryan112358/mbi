@@ -68,6 +68,124 @@ def _extract_potentials(
   return w_pot.expand(cliques)
 
 
+@jax.jit(
+    static_argnames=["oracle", "steps"],
+    donate_argnames=["theta", "marginals"],
+)
+def _gis_multi_step(theta, marginals, target_p, weight, tau, oracle, steps):
+  """Runs steps of Darroch-Ratcliff GIS to fit theta to target_p."""
+
+  def safe_log(x):
+    return jax.tree.map(lambda v: jnp.log(jnp.maximum(v, tau)), x)
+
+  log_target = safe_log(target_p)
+
+  def body(carry, _):
+    # Barrier prevents XLA from unrolling cross-step fusion on large trees.
+    th, p = jax.lax.optimization_barrier(carry)
+    th = th + weight * (log_target - safe_log(p))
+    raw = oracle(th, 1.0)
+    p = CliqueVector(th.domain, th.cliques, {cl: raw[cl] for cl in th.cliques})
+    return (th, p), None
+
+  (theta, marginals), _ = jax.lax.scan(
+      body, (theta, marginals), None, length=steps
+  )
+  kl_sum = jnp.asarray(target_p.dot(log_target - safe_log(marginals)))
+  kl_mean = kl_sum / len(target_p.cliques)
+  diff = marginals - target_p
+  tvds = [0.5 * jnp.sum(jnp.abs(f.values)) for f in diff.tables.values()]
+  return theta, marginals, kl_mean, jnp.max(jnp.stack(tvds))
+
+
+def mrf_from_marginals(
+    marginals: CliqueVector,
+    *,
+    total: float | None = None,
+    constraints: Sequence[Constraint] = (),
+    marginal_oracle: marginal_oracles.MarginalOracle | None = None,
+    iters: int = 2500,
+    tol: float | None = 1e-4,
+) -> MarkovRandomField:
+  """Recovers a maximum-entropy MarkovRandomField matching target marginals.
+
+  Args:
+      marginals: Non-negative target clique marginals to match.
+      total: Total count for the returned model, or None to infer from marginals.
+      constraints: Structural zero constraints enforced on the model.
+      marginal_oracle: Marginal inference callable, or None for default_oracle.
+      iters: Maximum optimization iterations.
+      tol: Early-stopping max clique TVD threshold, or None to run all iters.
+
+  Returns:
+      A MarkovRandomField whose potentials reproduce the target marginals.
+  """
+  constraints = tuple(constraints)
+  cliques = marginals.cliques
+  domain = marginals.domain
+  base_oracle = marginal_oracle or marginal_oracles.default_oracle(
+      cliques, domain, has_constraints=bool(constraints)
+  )
+  oracle = functools.partial(base_oracle, constraints=constraints)
+
+  def eval_oracle(th, tot=1.0):
+    raw = oracle(th, tot)
+    return CliqueVector(domain, cliques, {cl: raw[cl] for cl in cliques})
+
+  clamped = jax.tree.map(lambda v: jnp.maximum(v, 0.0), marginals)
+  sums = [float(clamped[cl].sum()) for cl in cliques]
+  resolved_total = float(np.mean(sums)) if sums else 1.0
+  if total is not None:
+    resolved_total = float(total)
+  resolved_total = max(resolved_total, 0.0)
+
+  theta = CliqueVector.zeros(domain, cliques)
+  if not cliques or max(sums) <= 0.0 or resolved_total == 0.0 or iters <= 0:
+    fitted = eval_oracle(theta, resolved_total)
+    return MarkovRandomField(
+        potentials=theta,
+        marginals=fitted,
+        total=resolved_total,
+        constraints=constraints,
+    )
+
+  tables = {}
+  for cl, s in zip(cliques, sums):
+    vals = clamped[cl].transpose(cl).values
+    p_vals = vals / s if s > 0 else jnp.full_like(vals, 1.0 / max(vals.size, 1))
+    tables[cl] = Factor(domain.project(cl), p_vals)
+  target_p = CliqueVector(domain, cliques, tables)
+
+  # Uniform 1/|C| weights satisfy Darroch-Ratcliff's sum_C w_C <= 1 condition,
+  # guaranteeing monotone descent when each clique marginal sums to 1.
+  weight = jnp.asarray(1.0 / len(cliques))
+  eps = float(jnp.finfo(jnp.result_type(float)).eps)
+  max_size = max(domain.size(cl) for cl in cliques)
+  tau = jnp.asarray(eps / max(max_size, 1))
+  p_cur = jax.tree.map(jnp.copy, eval_oracle(theta, 1.0))
+  theta = jax.tree.map(jnp.zeros_like, p_cur)
+  step_size = min(CALLBACK_EVERY, iters)
+  prev_kl, prev_err = np.inf, np.inf
+  for _ in range(math.ceil(iters / step_size)):
+    theta, p_cur, kl_div, max_tvd = _gis_multi_step(
+        theta, p_cur, target_p, weight, tau, oracle, step_size
+    )
+    if tol is not None:
+      kl, err = max(float(kl_div), 0.0), float(max_tvd)
+      stalled = kl >= prev_kl * (1.0 - 1e-4) and err >= prev_err * (1.0 - 1e-4)
+      if err <= tol or stalled:
+        break
+      prev_kl, prev_err = kl, err
+
+  fitted = p_cur * resolved_total
+  return MarkovRandomField(
+      potentials=theta,
+      marginals=fitted,
+      total=resolved_total,
+      constraints=constraints,
+  )
+
+
 @jax.jit(static_argnames=["marginal_oracle", "normalize"])
 def primal_dual_gap(
     loss_fn: MarginalLossFn,
@@ -156,10 +274,11 @@ class Estimator(ABC):
   def _finalize(self, state: Any, known_total: float, constraints=()) -> Model:
     """Convert the final optimization state into a Model."""
     mu = self._callback_value(state, known_total, constraints)
-    loss = marginal_loss.mle_loss_fn(mu)
-    est = LBFGS(marginal_oracle=self.marginal_oracle)
-    return est.estimate(
-        mu.domain, loss, known_total, constraints, iters=25000, tol=1e-4
+    return mrf_from_marginals(
+        mu,
+        total=known_total,
+        constraints=constraints,
+        marginal_oracle=self.marginal_oracle,
     )
 
   def _callback_value(self, state: Any, known_total: float, constraints=()) -> Any:  # pylint: disable=unused-argument
@@ -688,26 +807,8 @@ class LBFGS(Estimator):
         linesearch=optax.scale_by_zoom_linesearch(128, max_learning_rate=1),
     )
 
-    if loss_fn.loss_fn is marginal_loss._mle_loss:  # pylint: disable=protected-access
-      target_p = loss_fn.data / known_total
-
-      @jax.custom_vjp
-      def theta_loss(theta):
-        log_beliefs = marginal_oracle(theta, None)
-        log_z = log_beliefs.project((), log=True).datavector(flatten=False)
-        return log_z - theta.dot(target_p)
-
-      def _fwd(theta):
-        log_beliefs = marginal_oracle(theta, None)
-        log_z = log_beliefs.project((), log=True).datavector(flatten=False)
-        p = log_beliefs.normalize(1.0, log=True).exp()
-        return log_z - theta.dot(target_p), p - target_p
-
-      theta_loss.defvjp(_fwd, lambda res, g: (res * g,))
-    else:
-
-      def theta_loss(theta):
-        return loss_fn(marginal_oracle(theta, known_total))
+    def theta_loss(theta):
+      return loss_fn(marginal_oracle(theta, known_total))
 
     loss, grad = jax.value_and_grad(theta_loss)(state.potentials)
     updates, opt_state = optimizer.update(

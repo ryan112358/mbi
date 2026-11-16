@@ -33,7 +33,7 @@ from . import callbacks, estimation, extensions, junction_tree, marginal_oracles
 from .callbacks import set_log_fn
 from ._model_summary import ModelSummary, summarize
 from ._api import Model, Projectable
-from .estimation import Estimator
+from .estimation import Estimator, mrf_from_marginals
 from .extensions import message_passing
 from .clique_utils import Clique
 from .clique_vector import CliqueVector
@@ -62,6 +62,7 @@ __all__ = [
     "Model",
     "MarginalOracle",
     "Estimator",
+    "mrf_from_marginals",
     "ModelSummary",
     "summarize",
     "set_log_fn",
