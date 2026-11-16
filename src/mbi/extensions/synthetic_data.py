@@ -99,7 +99,7 @@ def precompile(
     for i, j in message_order:
       sep = domain.project([a for a in i if a in j])
       sharding = msg_shardings[(i, j)].values
-      if not isinstance(sharding, jax.sharding.Sharding):
+      if not isinstance(sharding, jax.sharding.NamedSharding):
         sharding = None
       msg_map[j].append(Factor.abstract(sep, sharding=sharding))
 
