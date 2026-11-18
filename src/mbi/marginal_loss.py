@@ -31,7 +31,7 @@ def _weighted_datavector(weights: np.ndarray, x: Factor) -> jax.Array:
   .. deprecated::
       Use :class:`WeightedQuery` instead for serialization support.
   """
-  return x.datavector() * weights
+  return jnp.asarray(x.datavector() * weights)
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ class DatavectorQuery:
   use_for_total_estimation: bool = True
 
   def __call__(self, f: Factor) -> jax.Array:
-    return f.datavector()
+    return jnp.asarray(f.datavector())
 
   def op_norm_sq(self) -> float:
     return 1.0
@@ -67,7 +67,7 @@ class WeightedQuery:
   weights: np.ndarray
 
   def __call__(self, f: Factor) -> jax.Array:
-    return f.datavector() * self.weights
+    return jnp.asarray(f.datavector() * self.weights)
 
   def op_norm_sq(self) -> float:
     return float(np.max(np.asarray(self.weights) ** 2))
@@ -87,7 +87,7 @@ class SlicedQuery:
   start: int = 1
 
   def __call__(self, f: Factor) -> jax.Array:
-    return f.datavector()[self.start :]
+    return jnp.asarray(f.datavector()[self.start :])
 
   def op_norm_sq(self) -> float:
     return 1.0
@@ -111,7 +111,7 @@ class LinearMeasurement:
   # Dynamic (traced) leaf, not static aux-data: a static value gets baked into
   # the treedef, changing the jit cache key and defeating precompile() reuse.
   stddev: float = 1.0
-  query: Callable[[Factor], jax.Array] = jax.tree.static(
+  query: Callable[[Factor], ArrayLike] = jax.tree.static(
       default=DatavectorQuery()
   )
 
@@ -284,7 +284,7 @@ def calculate_l2_lipschitz(
   return float(estimate)
 
 
-def _query_op_norm_sq(query: Callable[[Factor], jax.Array]) -> float | None:
+def _query_op_norm_sq(query: Callable[[Factor], ArrayLike]) -> float | None:
   """Squared operator norm ||Q||_2^2 of a linear query, or None if unknown."""
   fn = getattr(query, "op_norm_sq", None)
   return float(cast(SupportsFloat, fn())) if callable(fn) else None

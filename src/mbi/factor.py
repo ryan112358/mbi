@@ -13,7 +13,11 @@ import numpy as np
 from .domain import Attribute, Domain
 
 
-def _safe_logsumexp(a: jax.Array, axis: tuple[int, ...]) -> jax.Array:
+def _sum(x, axis=None):
+  return x.sum(axis=axis)
+
+
+def _safe_logsumexp(a: ArrayLike, axis: tuple[int, ...]) -> jax.Array:
   # Double-where keeps the backward softmax finite (0 instead of exp(-inf - -inf))
   # when a constraint forces an entire slice along `axis` to -inf.
   all_neg_inf = jnp.isneginf(jnp.max(a, axis=axis, keepdims=True))
@@ -33,8 +37,8 @@ class Factor:
 
   Attributes:
       domain (Domain): The discrete domain over which the factor is defined.
-      values (jax.Array): A JAX array containing the factor's values. The shape
-          of this array matches the shape specified by the `domain`.
+      values (jax.Array | np.ndarray): Array containing the factor's values,
+          with shape matching `domain`.
 
   Supported Operations:
       - Creation: `zeros`, `ones`, `random` for creating factors.
@@ -52,7 +56,11 @@ class Factor:
   """
 
   domain: Domain = jax.tree.static()
-  values: jax.Array
+  values: jax.Array | np.ndarray
+
+  def __post_init__(self):
+    if isinstance(self.values, np.generic):
+      object.__setattr__(self, "values", np.asarray(self.values))
 
   # Constructors
   @classmethod
@@ -92,9 +100,8 @@ class Factor:
     if set(attrs) != set(self.domain.attributes):
       raise ValueError("attrs must be same as domain attributes")
     newdom = self.domain.project(attrs)
-    ax = newdom.axes(self.domain.attributes)
-    values = jnp.moveaxis(self.values, range(len(ax)), ax)
-    return Factor(newdom, values)
+    ax = self.domain.axes(newdom.attributes)
+    return Factor(newdom, self.values.transpose(ax))
 
   def expand(self, domain: Domain) -> Factor:
     """Expands the factor's domain to include new attributes."""
@@ -128,7 +135,7 @@ class Factor:
 
   def sum(self, attrs: Sequence[Attribute] | None = None) -> Factor:
     """Computes the sum along specified attribute axes."""
-    return self.aggregate(jnp.sum, attrs)
+    return self.aggregate(_sum, attrs)
 
   def logsumexp(self, attrs: Sequence[Attribute] | None = None) -> Factor:
     """Computes the log-sum-exp along specified attribute axes."""
@@ -144,7 +151,7 @@ class Factor:
     if isinstance(attrs, (str, int)):
       attrs = (attrs,)
     if reduction_fn is None:
-      reduction_fn = _safe_logsumexp if log else jnp.sum
+      reduction_fn = _safe_logsumexp if log else _sum
     marginalized = self.domain.marginalize(attrs).attributes
     return self.aggregate(reduction_fn, marginalized).transpose(attrs)
 
@@ -259,7 +266,7 @@ class Factor:
         where=(self.values != 0) & (other.values != 0),
     )
 
-  def datavector(self, flatten: bool = True) -> jax.Array:
+  def datavector(self, flatten: bool = True) -> jax.Array | np.ndarray:
     """Returns the factor's values as a flattened vector or original array."""
     return self.values.flatten() if flatten else self.values
 

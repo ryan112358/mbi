@@ -140,6 +140,52 @@ class TestFactor(unittest.TestCase):
     self.assertEqual(sliced_factor.domain, expected_domain)
     self.assertTrue(jnp.array_equal(sliced_factor.values, expected_values))
 
+  def test_numpy_projectable_equivalence_seeded(self):
+    rng = np.random.default_rng(42)
+    for trial in range(10):
+      ndim = int(rng.integers(1, 5))
+      attrs = [f"x{i}" for i in range(ndim)]
+      shape = [int(rng.integers(2, 5)) for _ in range(ndim)]
+      dom = Domain(attrs, shape)
+      raw = rng.uniform(0.1, 2.0, size=shape)
+      f_np = Factor(dom, raw.copy())
+      f_jax = Factor(dom, jnp.asarray(raw))
+
+      perm = list(rng.permutation(attrs))
+      for op in [
+          lambda f: f.transpose(perm),
+          lambda f: f.sum(attrs[:1]),
+          lambda f: f.sum(),
+          lambda f: f.project(perm[: max(1, ndim - 1)]),
+          lambda f: f.project(()),
+          lambda f: f.slice({attrs[0]: 0}),
+          lambda f: f.slice({a: 0 for a in attrs}),
+      ]:
+        r_np = op(f_np)
+        r_jax = op(f_jax)
+        self.assertIsInstance(r_np.values, np.ndarray, msg=f"trial={trial}")
+        self.assertIsInstance(r_jax.values, jax.Array, msg=f"trial={trial}")
+        self.assertEqual(r_np.domain, r_jax.domain)
+        np.testing.assert_allclose(
+            r_np.values, r_jax.values, rtol=1e-5, atol=1e-5
+        )
+        np.testing.assert_allclose(
+            r_np.datavector(), r_jax.datavector(), rtol=1e-5, atol=1e-5
+        )
+
+  def test_numpy_preserves_64bit_precision(self):
+    dom = Domain(["a", "b"], [2, 2])
+    f1 = Factor(
+        dom, np.array([[2**26 + 4.0, 0.0], [1000.0, 0.0]], dtype=np.float64)
+    )
+    f2 = Factor(
+        dom, np.array([[2**26 + 5.0, 0.0], [1000.0, 0.0]], dtype=np.float64)
+    )
+    diff = f2.project("a").datavector() - f1.project("a").datavector()
+    self.assertIsInstance(diff, np.ndarray)
+    self.assertEqual(diff.dtype, np.float64)
+    self.assertEqual(float(diff[0]), 1.0)
+
 
 if __name__ == "__main__":
   unittest.main()

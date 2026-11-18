@@ -182,7 +182,7 @@ def primal_dual_gap(
   When ``normalize=True`` (default), the gap is divided by the characteristic
   scale ``total * sqrt(loss_fn.lipschitz * marginals.size())``.
   """
-  total = marginals.project(()).datavector(flatten=False)
+  total = jnp.asarray(marginals.project(()).datavector(flatten=False))
   oracle = marginal_oracle or marginal_oracles.default_oracle(
       marginals.cliques, marginals.domain, has_constraints=bool(constraints)
   )
