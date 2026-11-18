@@ -12,7 +12,6 @@ import pickle
 from typing import Any
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 
@@ -55,8 +54,7 @@ def save(obj: Any, file: str | os.PathLike | io.IOBase) -> None:
 def load(file: str | os.PathLike | io.IOBase) -> Any:
   """Load a JAX pytree from ``.npz`` format.
 
-  Leaf values are returned as ``jax.Array`` so that JIT-compiled
-  functions see consistent types.
+  Leaf values are returned as ``np.ndarray``.
 
   Args:
       file: Path string or readable binary file-like object.
@@ -73,5 +71,5 @@ def load(file: str | os.PathLike | io.IOBase) -> Any:
     raw = file.read()
   npz = np.load(io.BytesIO(raw), allow_pickle=True)
   treedef = pickle.loads(npz["_treedef"].tobytes())
-  leaves = [jnp.asarray(npz[f"leaf_{i}"]) for i in range(treedef.num_leaves)]
+  leaves = [npz[f"leaf_{i}"] for i in range(treedef.num_leaves)]
   return jax.tree.unflatten(treedef, leaves)

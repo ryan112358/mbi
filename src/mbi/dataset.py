@@ -144,10 +144,10 @@ class Dataset:
     domain = self.domain.project(cols)
     if not domain.attributes:
       total = self.records if self.weights is None else np.sum(self.weights)
-      return Factor(domain, jnp.asarray(total))
+      return Factor(domain, np.asarray(total))
     data = {col: self.data[col] for col in domain.attributes}
     sub = Dataset(data, domain, self.weights)
-    return Factor(sub.domain, jnp.asarray(sub.datavector(flatten=False)))
+    return Factor(sub.domain, sub.datavector(flatten=False))
 
   def supports(self, cols: Attribute | Sequence[Attribute]) -> bool:
     return self.domain.supports(cols)

@@ -57,14 +57,29 @@ class TestDatasetDeterministic(unittest.TestCase):
     self.assertIsNone(self.dataset.weights)
     expected_A = np.array([3, 1])
     proj_A = self.dataset.project('A')
+    self.assertIsInstance(proj_A.values, np.ndarray)
     np.testing.assert_array_equal(proj_A.datavector(), expected_A)
     self.assertEqual(proj_A.domain.attributes, ('A',))
-    self.assertTrue(jnp.issubdtype(proj_A.values.dtype, jnp.integer))
+    self.assertTrue(np.issubdtype(proj_A.values.dtype, np.integer))
 
     expected_B = np.array([2, 1, 1])
     proj_B = self.dataset.project('B')
     np.testing.assert_array_equal(proj_B.datavector(), expected_B)
     self.assertEqual(proj_B.domain.attributes, ('B',))
+
+    proj_empty = self.dataset.project(())
+    self.assertIsInstance(proj_empty.values, np.ndarray)
+    self.assertEqual(int(proj_empty.values), 4)
+
+  def test_project_preserves_64bit_counts(self):
+    w1 = np.array([2**26 + 4.0, 0.0, 1000.0, 0.0], dtype=np.float64)
+    w2 = np.array([2**26 + 5.0, 0.0, 1000.0, 0.0], dtype=np.float64)
+    d1 = Dataset(self.data_dict, self.domain, weights=w1)
+    d2 = Dataset(self.data_dict, self.domain, weights=w2)
+    diff = d2.project('A').datavector() - d1.project('A').datavector()
+    self.assertIsInstance(diff, np.ndarray)
+    self.assertEqual(diff.dtype, np.float64)
+    np.testing.assert_array_equal(diff, np.array([1.0, 0.0]))
 
   def test_datavector_weighted(self):
     expected = np.array([2.0, 2.0, 0, 0, 0, 0.5])

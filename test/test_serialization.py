@@ -50,11 +50,30 @@ class TestCliqueVector:
     assert loaded.domain == cv.domain
     assert loaded.cliques == cv.cliques
     for cl in cv.cliques:
+      assert isinstance(loaded[cl].values, np.ndarray)
       np.testing.assert_allclose(
-          np.asarray(loaded[cl].values),
+          loaded[cl].values,
           np.asarray(cv[cl].values),
           atol=1e-6,
       )
+
+  def test_roundtrip_numpy_preserves_64bit(self, domain):
+    f_int = Factor(
+        domain.project(("A",)), np.array([2**33 + 1, 2, 3], dtype=np.int64)
+    )
+    f_flt = Factor(
+        domain.project(("B",)),
+        np.array([2**26 + 5.0, 1.0, 2.0, 3.0], dtype=np.float64),
+    )
+    cv = CliqueVector(domain, [("A",), ("B",)], {("A",): f_int, ("B",): f_flt})
+    loaded = _roundtrip(cv)
+
+    assert isinstance(loaded[("A",)].values, np.ndarray)
+    assert isinstance(loaded[("B",)].values, np.ndarray)
+    assert loaded[("A",)].values.dtype == np.int64
+    assert loaded[("B",)].values.dtype == np.float64
+    np.testing.assert_array_equal(loaded[("A",)].values, f_int.values)
+    np.testing.assert_array_equal(loaded[("B",)].values, f_flt.values)
 
 
 class TestMarkovRandomField:
