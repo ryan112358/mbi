@@ -252,6 +252,11 @@ def _shard_mesh(merged: Domain, dom: Domain) -> jax.sharding.Mesh:
   return jax.sharding.Mesh(devices, tuple(axes))
 
 
+def _replicated_sharding() -> jax.sharding.NamedSharding:
+  mesh = jax.sharding.Mesh(jax.devices(), ("_dev",))
+  return jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+
+
 def einsum_sharded(
     log_factors: list[Factor],
     dom: Domain,
@@ -276,15 +281,44 @@ def einsum_sharded(
   Returns:
       A Factor over *dom* in log space.
   """
-  merged = functools.reduce(lambda a, b: a.merge(b.domain), log_factors, dom)
-  if jax.device_count() <= 1 or len(merged) == 0:
-    return contraction(log_factors, dom, reduction_fn=reduction_fn)
+  return _einsum_sharded_many(
+      log_factors, [dom], reduction_fn, contraction=contraction
+  )[0]
 
-  mesh = _shard_mesh(merged, dom)
+
+def _einsum_sharded_many(
+    log_factors: list[Factor],
+    doms: Sequence[Domain],
+    reduction_fn: Callable = jax.scipy.special.logsumexp,
+    *,
+    contraction: Callable = einsum_materialized,
+) -> list[Factor]:
+  """Project combined log_factors onto multiple target domains in one pass."""
+  if not doms:
+    return []
+
+  def _contract(
+      factors: list[Factor], targets: Sequence[Domain]
+  ) -> list[Factor]:
+    if contraction is einsum_materialized:
+      combined = functools.reduce(lambda a, b: a + b, factors)
+      return [
+          combined.project(d.attributes, reduction_fn=reduction_fn)
+          for d in targets
+      ]
+    return [contraction(factors, d, reduction_fn=reduction_fn) for d in targets]
+
+  merged = functools.reduce(
+      lambda a, b: a.merge(b.domain), log_factors, doms[0]
+  )
+  for d in doms[1:]:
+    merged = merged.merge(d)
+  if jax.device_count() <= 1 or len(merged) == 0:
+    return _contract(log_factors, doms)
+
+  mesh = _shard_mesh(merged, doms[0] if len(doms) == 1 else Domain([], []))
   chunks = {a: math.ceil(merged[a] / d) for a, d in mesh.shape.items()}
   local_dom = Domain.fromdict({**merged.config, **chunks})
-  elim = tuple(a for a in mesh.axis_names if a not in dom)
-  kept = [a for a in mesh.axis_names if a in dom]
 
   def _slice(f: Factor) -> Factor:
     if not any(a in mesh.shape for a in f.domain.attributes):
@@ -304,24 +338,33 @@ def einsum_sharded(
       out_specs=jax.sharding.PartitionSpec(),
       check_vma=False,
   )
-  def _kernel(factors: list[Factor]) -> Factor:
+  def _kernel(factors: list[Factor]) -> list[Factor]:
     local = [_slice(f) for f in factors]
-    out_dom = local_dom.project(dom.attributes)
-    val = contraction(local, out_dom, reduction_fn=reduction_fn).values
-    if elim:
-      if reduction_fn is jnp.max:
-        val = jax.lax.pmax(val, elim)
-      else:
-        m = jax.lax.pmax(jax.lax.stop_gradient(val), elim)
-        shift = jnp.where(jnp.isneginf(m), 0.0, m)
-        val = m + jnp.log(jax.lax.psum(jnp.exp(val - shift), elim))
-    for a in kept:
-      axis = dom.attributes.index(a)
-      val = jax.lax.all_gather(val, a, axis=axis, tiled=True)
-      val = jax.lax.slice_in_dim(val, 0, dom[a], axis=axis)
-    return Factor(dom, val)
+    local_targets = [local_dom.project(d.attributes) for d in doms]
+    results = []
+    for dom, out in zip(doms, _contract(local, local_targets)):
+      val = out.values
+      elim = tuple(a for a in mesh.axis_names if a not in dom)
+      kept = [a for a in mesh.axis_names if a in dom]
+      if elim:
+        if reduction_fn is jnp.max:
+          val = jax.lax.pmax(val, elim)
+        else:
+          m = jax.lax.pmax(jax.lax.stop_gradient(val), elim)
+          shift = jnp.where(jnp.isneginf(m), 0.0, m)
+          val = m + jnp.log(jax.lax.psum(jnp.exp(val - shift), elim))
+      for a in kept:
+        axis = dom.attributes.index(a)
+        val = jax.lax.all_gather(val, a, axis=axis, tiled=True)
+        val = jax.lax.slice_in_dim(val, 0, dom[a], axis=axis)
+      results.append(Factor(dom, val))
+    return results
 
-  return _kernel(log_factors)
+  rep = _replicated_sharding()
+  return [
+      Factor(f.domain, jax.lax.with_sharding_constraint(f.values, rep))
+      for f in _kernel(log_factors)
+  ]
 
 
 def _fold_constraints(
@@ -563,6 +606,7 @@ def message_passing_implicit(
       if msg[0] == msg2[1] and msg[1] != msg2[0]:
         incoming_messages[msg].append(msg2)
 
+  raw_contraction = contraction
   if reduction_fn is not jax.scipy.special.logsumexp:
     contraction = functools.partial(contraction, reduction_fn=reduction_fn)
 
@@ -584,16 +628,27 @@ def message_passing_implicit(
 
   beliefs = {}
   for cl in maximal_cliques:
+    targets = [c for c in inverse_mapping[cl] if c in input_cliques]
+    if not targets:
+      continue
     input_potentials = potential_mapping[cl]
     input_messages = [val for key, val in messages.items() if key[1] == cl]
     inputs = input_potentials + input_messages
-    for cl2 in inverse_mapping[cl]:
-      if cl2 in input_cliques:
-        beliefs[cl2] = contraction(inputs, domain.project(cl2))
+    doms = [domain.project(c) for c in targets]
+    if raw_contraction is einsum_sharded:
+      outs = _einsum_sharded_many(inputs, doms, reduction_fn)
+    elif raw_contraction is einsum_materialized:
+      combined = functools.reduce(lambda a, b: a + b, inputs)
+      outs = [combined.project(c, reduction_fn=reduction_fn) for c in targets]
+    else:
+      outs = [contraction(inputs, d) for d in doms]
+    for c, out in zip(targets, outs):
+      beliefs[c] = out
 
   beliefs = CliqueVector(potentials.domain, input_cliques, beliefs)
   if total is None and reduction_fn is jax.scipy.special.logsumexp:
-    beliefs = beliefs + math.log(potentials.domain.size() // domain.size())
+    unused = potentials.domain.invert(domain.attributes)
+    beliefs = beliefs + sum(math.log(potentials.domain[a]) for a in unused)
   marginals = _finalize_beliefs(beliefs, input_cliques, total, reduction_fn)
   return (marginals, messages) if return_messages else marginals
 
@@ -603,6 +658,9 @@ message_passing_fast = functools.partial(
     message_passing_implicit, contraction=einsum_semistable
 )
 message_passing_stable = message_passing_hugin
+_message_passing_sharded = functools.partial(
+    message_passing_implicit, contraction=einsum_sharded
+)
 
 
 def default_oracle(
@@ -616,11 +674,11 @@ def default_oracle(
   Chooses based on hardware backend, clique structure, and whether the
   potentials may contain ``-inf`` entries:
 
-  - **CPU**: ``message_passing_shafer_shenoy`` (has_constraints=True) or
-    ``message_passing_hugin`` (has_constraints=False). Implicit is not used on
-    CPU because the XLA compiler is less effective there.
-  - **GPU/TPU, memory-limited**: ``message_passing_implicit`` when the total
-    beliefs memory would exceed ~40% of estimated device HBM.  Implicit
+  - **Multiple devices (``jax.device_count() > 1``)**:
+    ``message_passing_implicit`` with ``contraction=einsum_sharded`` across
+    all backends.
+  - **Large junction trees (>= 100M cells / 400 MB)**:
+    ``message_passing_implicit`` across all backends.  Implicit
     keeps factors in their original low-dimensional form and only
     materializes one super-clique at a time, using orders of magnitude
     less memory than Hugin/SS which materialize all super-clique arrays
@@ -664,41 +722,28 @@ def default_oracle(
       oracle = default_oracle(cliques=model.cliques, domain=model.domain)
       marginals = oracle(potentials)
   """
+  if jax.device_count() > 1:
+    return _message_passing_sharded
+
   if backend is None:
     backend = jax.default_backend()
 
-  # CPU: SS or Hugin always (XLA compiler less effective on CPU).
-  if backend == "cpu":
-    if has_constraints:
-      return message_passing_shafer_shenoy
-    return message_passing_hugin
-
-  # GPU/TPU: consider memory pressure and per-message data movement.
   if cliques is not None and domain is not None:
     jtree = junction_tree.make_junction_tree(domain, cliques)[0]
     max_cliques = junction_tree.maximal_cliques(jtree)
     sc_sizes = [domain.project(cl).size() for cl in max_cliques]
-    max_size = max(sc_sizes)
+    max_size = max(sc_sizes, default=0)
     num_nodes = len(max_cliques)
 
     # Estimate total beliefs memory for Hugin/SS (4 bytes per float32).
-    total_beliefs_bytes = sum(sc_sizes) * 4
-
-    # Memory-limited: use implicit to avoid OOM.  The 40% threshold
-    # leaves room for messages, temporaries, and JAX runtime overhead.
-    # Estimate 80 GB for A100; could be refined per device.
-    estimated_hbm = 80e9
-    if total_beliefs_bytes > estimated_hbm * 0.4:
+    if sum(sc_sizes) * 4 >= 400e6:
       return message_passing_implicit
 
     # Few large super-cliques: implicit wins on data movement.
-    # With <30 SC nodes there are few messages, so kernel launch overhead
-    # is negligible, and implicit contracts small input factors instead
-    # of operating on huge belief arrays.
-    if max_size >= 50_000_000 and num_nodes < 30:
+    if backend != "cpu" and max_size >= 50_000_000 and num_nodes < 30:
       return message_passing_implicit
 
-  # GPU/TPU with moderate cliques: SS for constraints, Hugin otherwise.
+  # Moderate or unknown cliques: SS for constraints, Hugin otherwise.
   if has_constraints:
     return message_passing_shafer_shenoy
   return message_passing_hugin
