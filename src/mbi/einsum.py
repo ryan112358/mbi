@@ -2,17 +2,19 @@
 
 Provides the ``Semiring`` dataclass with built-in ``STANDARD``,
 ``LOG_SUM_EXP``, and ``MAX_PLUS`` instances, along with ``dot_general``,
-``einsum``, and sequential ``scan_einsum`` contractions.
+``einsum``, ``direct_einsum``, ``scan_einsum``, and ``plan_sequential_axes``.
 """
 
 from collections.abc import Callable, Sequence
 import dataclasses
 import functools
+import math
 from typing import Any
 
 import jax
 from jax._src.core import Literal
 import jax.numpy as jnp
+import numpy as np
 
 
 @dataclasses.dataclass(frozen=True)
@@ -312,3 +314,137 @@ def scan_einsum(
   return jax.lax.scan(
       lambda carry, i: (semiring.add(carry, small_einsum(i)), ()), init, loop
   )[0]
+
+
+def direct_einsum(
+    subscripts: str,
+    *operands: jax.typing.ArrayLike,
+    semiring: Semiring = STANDARD,
+) -> jax.Array:
+  """Computes an einsum by materializing the joint tensor and reducing once.
+
+  Args:
+    subscripts: Explicit einsum formula of the form ``"in1,in2->out"``.
+    *operands: Arrays to contract.
+    semiring: Semiring specifying the combine and reduce operations.
+
+  Returns:
+    Result of the contraction.
+  """
+  if "->" not in subscripts:
+    raise ValueError(f"Explicit '->' required in subscripts: {subscripts!r}.")
+  if not operands:
+    raise ValueError("direct_einsum requires at least one operand.")
+
+  in_str, out_str = subscripts.replace(" ", "").split("->")
+  in_terms = in_str.split(",")
+  arrs = [jnp.asarray(x) for x in operands]
+  if len(in_terms) != len(arrs):
+    raise ValueError(
+        f"Expected {len(in_terms)} operands for {subscripts!r}, got"
+        f" {len(arrs)}."
+    )
+
+  sizes: dict[str, int] = {}
+  for term, arr in zip(in_terms, arrs):
+    if len(set(term)) != len(term):
+      raise ValueError(
+          f"Repeated axis in operand term {term!r} is unsupported."
+      )
+    for ch, dim in zip(term, arr.shape):
+      sizes[ch] = dim
+
+  # Place output axes first so trailing eliminated axes reduce without a transpose.
+  all_axes = list(out_str) + [ch for ch in sorted(sizes) if ch not in out_str]
+  pos = {ch: i for i, ch in enumerate(all_axes)}
+
+  def _expand(term: str, arr: jax.Array) -> jax.Array:
+    if not term:
+      return jnp.reshape(arr, (1,) * len(all_axes))
+    order = sorted(range(len(term)), key=lambda i: pos[term[i]])
+    aligned = jnp.transpose(arr, order)
+    bcast = tuple(sizes[ch] if ch in term else 1 for ch in all_axes)
+    return jnp.reshape(aligned, bcast)
+
+  combined = functools.reduce(
+      semiring.combine, (_expand(t, a) for t, a in zip(in_terms, arrs))
+  )
+  elim = tuple(range(len(out_str), len(all_axes)))
+  return semiring.reduce(combined, elim) if elim else combined
+
+
+def plan_sequential_axes(
+    formula: str,
+    shapes: Sequence[tuple[int, ...]],
+    max_intermediate_elements: int,
+    *,
+    optimize: str | bool = "auto",
+) -> str:
+  """Plans sequential axes to keep the largest einsum intermediate within budget.
+
+  Greedily peels the smallest axis belonging to the largest tensor in the
+  ``jnp.einsum_path`` contraction tree until the peak intermediate has at most
+  ``max_intermediate_elements`` entries.
+
+  Args:
+    formula: Explicit einsum formula of the form ``"in1,in2->out"``.
+    shapes: Shape tuple for each input operand in ``formula``.
+    max_intermediate_elements: Maximum allowed elements in any intermediate.
+    optimize: Contraction order strategy passed to ``jnp.einsum_path``.
+
+  Returns:
+    String of axis labels to execute sequentially in ``scan_einsum``.
+  """
+  if max_intermediate_elements <= 0:
+    raise ValueError(
+        "max_intermediate_elements must be positive, got"
+        f" {max_intermediate_elements}."
+    )
+
+  cur_formula = formula.replace(" ", "")
+  cur_shapes = list(shapes)
+  peeled: list[str] = []
+
+  while True:
+    in_str, out_str = cur_formula.split("->")
+    in_terms = in_str.split(",")
+    dim_sizes = {
+        ch: dim
+        for term, sh in zip(in_terms, cur_shapes)
+        for ch, dim in zip(term, sh)
+    }
+
+    tensors = [(t, math.prod(sh)) for t, sh in zip(in_terms, cur_shapes) if t]
+    if out_str:
+      tensors.append((out_str, math.prod(dim_sizes[c] for c in out_str)))
+
+    non_empty = [(t, sh) for t, sh in zip(in_terms, cur_shapes) if t]
+    if len(non_empty) >= 2:
+      clean_formula = ",".join(t for t, _ in non_empty) + "->" + out_str
+      # Zero-stride views avoid allocation while matching ArrayLike for einsum_path.
+      views = [np.broadcast_to(np.float32(0), sh) for _, sh in non_empty]
+      _, info = jnp.einsum_path(clean_formula, *views, optimize=optimize)
+      for _, _, step_str, _, _ in info.contraction_list:
+        step_out = step_str.split("->")[1]
+        step_size = math.prod(dim_sizes[c] for c in step_out) if step_out else 1
+        tensors.append((step_out, step_size))
+
+    if not tensors:
+      break
+    peak_axes, peak_size = max(tensors, key=lambda item: item[1])
+    if peak_size <= max_intermediate_elements:
+      break
+
+    candidates = [c for c in set(peak_axes) if dim_sizes[c] > 1]
+    if not candidates:
+      break
+    # Peel the smallest axis so the scan loop stays short and inner ops stay wide.
+    ax = min(candidates, key=lambda c: (dim_sizes[c], c))
+    peeled.append(ax)
+    cur_shapes = [
+        tuple(d for c, d in zip(term, sh) if c != ax)
+        for term, sh in zip(in_terms, cur_shapes)
+    ]
+    cur_formula = cur_formula.replace(ax, "")
+
+  return "".join(peeled)
