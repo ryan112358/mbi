@@ -1,102 +1,206 @@
-"""Prototype implementation of scan-based einsum implementation."""
+"""Semiring-generalized einsum primitives for JAX arrays.
+
+Provides the ``Semiring`` dataclass with built-in ``STANDARD``,
+``LOG_SUM_EXP``, and ``MAX_PLUS`` instances, along with ``dot_general``,
+``einsum``, and sequential ``scan_einsum`` contractions.
+"""
 
 from collections.abc import Callable, Sequence
+import dataclasses
 import functools
-from jax._src.core import Literal
+from typing import Any
 
 import jax
+from jax._src.core import Literal
 import jax.numpy as jnp
 
 
-def custom_dot_general(
-    lhs: jax.Array,
-    rhs: jax.Array,
-    dimension_numbers,
-    precision=None,
-    preferred_element_type=None,
-    *,
-    combine_fn: Callable[[jax.Array, jax.Array], jax.Array] = jnp.multiply,
-    reduce_fn: Callable[[jax.Array, int | Sequence[int]], jax.Array] = jnp.sum,
-) -> jax.Array:
-  """Computes a generalized dot product of two arrays.
+@dataclasses.dataclass(frozen=True)
+class Semiring:
+  """Algebraic semiring for generalized tensor contractions.
 
-  This function extends the concept of `jax.numpy.dot_general` by allowing
-  custom functions for combining elements and reducing along contracting
-  dimensions. Specifically, this function works by making lhs and rhs
-  broadcast-compatible, calling combine_fn on them to merge them into a single
-  Array, then calling reduce_fn, to marginalize over the contracting dimensions.
-
-  Without JIT compilation, this implementation requires materializing the
-  potentially large intermediate obtained after calling combine_fn, but before
-  calling reduce_fn.  Under JIT, especially with XLA:GPU or XLA:TPU compilers,
-  these operations will often be fused to save memory.
-
-  Examples:
-  - combine_fn=jnp.add, reduce_fn=jax.scipy.special.logsumexp gives a
-    numerically stable implementations of dot_general that works in logspace.
-  - combine_fn=jnp.add, reduce_fn=jnp.max gives a method for finding the maximum
-    element along contracting dimensions in a broadcasted sum.
-
-  Args:
-    lhs: The left-hand side array-like input.
-    rhs: The right-hand side array-like input.
-    dimension_numbers: See jax.lax.dot_general for details.
-    precision: Currently unused by this implementation.
-    preferred_element_type: Optional. This argument is from the JAX API. If
-      provided, `lhs` and `rhs` inputs are cast to this `jax.numpy.dtype`.
-    combine_fn: A callable (default: `jnp.multiply`) that takes two arrays (the
-      broadcast-compatible expanded `lhs` and `rhs`) and returns an array.
-      This function is applied element-wise before reduction.
-      Example: `jnp.add` for log-space style combination.
-    reduce_fn: A callable (default: `jnp.sum`) that takes an array and an `axis`
-      argument. It may optionally accept `keepdims`. It's used to reduce results
-      along the contracting dimensions. `keepdims=False` behavior is expected.
-      Example: `jax.scipy.special.logsumexp` for log-space style reduction.
-    out_sharding: Ignored.
-
-  Returns:
-    An array containing the result of the generalized dot product.
+  Attributes:
+    combine: Binary elementwise product (e.g., ``jnp.multiply`` or ``jnp.add``).
+    reduce: Axis reduction (e.g., ``jnp.sum``, ``logsumexp``, or ``jnp.max``).
+    add: Binary accumulator matching ``reduce`` for sequential scans.
+    zero: Additive identity scalar for ``add``.
   """
 
+  combine: Callable[[jax.Array, jax.Array], jax.Array]
+  reduce: Callable[[jax.Array, int | Sequence[int]], jax.Array]
+  add: Callable[[jax.Array, jax.Array], jax.Array]
+  zero: float
+
+
+STANDARD = Semiring(combine=jnp.multiply, reduce=jnp.sum, add=jnp.add, zero=0.0)
+LOG_SUM_EXP = Semiring(
+    combine=jnp.add,
+    reduce=jax.scipy.special.logsumexp,
+    add=jnp.logaddexp,
+    zero=-jnp.inf,
+)
+MAX_PLUS = Semiring(
+    combine=jnp.add, reduce=jnp.max, add=jnp.maximum, zero=-jnp.inf
+)
+
+
+def _semiring_dot_general(
+    lhs: jax.Array,
+    rhs: jax.Array,
+    dimension_numbers: jax.lax.DotDimensionNumbers,
+    precision: jax.lax.PrecisionLike = None,
+    preferred_element_type: jax.typing.DTypeLike | None = None,
+    *,
+    combine_fn: Callable[[jax.Array, jax.Array], jax.Array],
+    reduce_fn: Callable[[jax.Array, int | Sequence[int]], jax.Array],
+) -> jax.Array:
+  """Broadcasts lhs and rhs, applies combine_fn, and reduces contracted dims."""
   del precision, preferred_element_type  # unused
 
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
 
-  lhs_used_dims = set(list(lhs_contract) + list(lhs_batch))
-  lhs_other_dims = sorted(
-      [i for i in range(lhs.ndim) if i not in lhs_used_dims]
-  )
+  lhs_used = set(lhs_contract) | set(lhs_batch)
+  lhs_other = [i for i in range(lhs.ndim) if i not in lhs_used]
 
-  rhs_used_dims = set(list(rhs_contract) + list(rhs_batch))
-  rhs_other_dims = sorted(
-      [i for i in range(rhs.ndim) if i not in rhs_used_dims]
-  )
+  rhs_used = set(rhs_contract) | set(rhs_batch)
+  rhs_other = [i for i in range(rhs.ndim) if i not in rhs_used]
 
-  lhs_permutation = list(lhs_batch) + list(lhs_other_dims) + list(lhs_contract)
-  rhs_permutation = list(rhs_batch) + list(rhs_other_dims) + list(rhs_contract)
+  lhs_perm = list(lhs_batch) + lhs_other + list(lhs_contract)
+  rhs_perm = list(rhs_batch) + rhs_other + list(rhs_contract)
 
-  lhs_permuted = jnp.transpose(lhs, axes=lhs_permutation)
-  rhs_permuted = jnp.transpose(rhs, axes=rhs_permutation)
+  lhs_permuted = jnp.transpose(lhs, axes=lhs_perm)
+  rhs_permuted = jnp.transpose(rhs, axes=rhs_perm)
 
-  batch_dims = len(lhs_batch)
-  lhs_other_dims = len(lhs_other_dims)
-  rhs_other_dims = len(rhs_other_dims)
-  contract_dims = len(lhs_contract)
+  n_batch = len(lhs_batch)
+  n_lhs_other = len(lhs_other)
+  n_rhs_other = len(rhs_other)
+  n_contract = len(lhs_contract)
 
-  # Make broadcast compatible
-  new_axes = tuple(
-      batch_dims + lhs_other_dims + i for i in range(rhs_other_dims)
-  )
-  lhs_expanded = jnp.expand_dims(lhs_permuted, axis=new_axes)
-
-  rhs_axes = tuple(batch_dims + i for i in range(lhs_other_dims))
-  rhs_expanded = jnp.expand_dims(rhs_permuted, axis=rhs_axes)
+  lhs_new_axes = tuple(n_batch + n_lhs_other + i for i in range(n_rhs_other))
+  rhs_new_axes = tuple(n_batch + i for i in range(n_lhs_other))
+  lhs_expanded = jnp.expand_dims(lhs_permuted, axis=lhs_new_axes)
+  rhs_expanded = jnp.expand_dims(rhs_permuted, axis=rhs_new_axes)
 
   combined = combine_fn(lhs_expanded, rhs_expanded)
-  if not contract_dims:
+  if not n_contract:
     return combined
-  contract_axes = tuple(range(combined.ndim - contract_dims, combined.ndim))
+  contract_axes = tuple(range(combined.ndim - n_contract, combined.ndim))
   return reduce_fn(combined, contract_axes)
+
+
+def dot_general(
+    lhs: jax.typing.ArrayLike,
+    rhs: jax.typing.ArrayLike,
+    dimension_numbers: jax.lax.DotDimensionNumbers,
+    precision: jax.lax.PrecisionLike = None,
+    preferred_element_type: jax.typing.DTypeLike | None = None,
+    *,
+    semiring: Semiring = STANDARD,
+) -> jax.Array:
+  """Computes a generalized dot product of two arrays over a semiring.
+
+  Args:
+    lhs: Left-hand side array-like input.
+    rhs: Right-hand side array-like input.
+    dimension_numbers: Contraction and batch dimension numbers.
+    precision: Optional precision forwarded on the ``STANDARD`` fast path.
+    preferred_element_type: Optional output dtype on the ``STANDARD`` fast path.
+    semiring: Semiring specifying the combine and reduce operations.
+
+  Returns:
+    Result of the generalized dot product.
+  """
+  dtype = jnp.result_type(lhs, rhs)
+  lhs_arr = jnp.asarray(lhs, dtype=dtype)
+  rhs_arr = jnp.asarray(rhs, dtype=dtype)
+  if semiring == STANDARD:
+    return jax.lax.dot_general(
+        lhs_arr,
+        rhs_arr,
+        dimension_numbers,
+        precision=precision,
+        preferred_element_type=preferred_element_type,
+    )
+  return _semiring_dot_general(
+      lhs_arr,
+      rhs_arr,
+      dimension_numbers,
+      precision=precision,
+      preferred_element_type=preferred_element_type,
+      combine_fn=semiring.combine,
+      reduce_fn=semiring.reduce,
+  )
+
+
+def _rewrite_reduce_sum(
+    fn: Callable[..., jax.Array],
+    operands: Sequence[jax.typing.ArrayLike],
+    reduce_fn: Callable[[jax.Array, int | Sequence[int]], jax.Array],
+) -> jax.Array:
+  """Traces fn and replaces every reduce_sum primitive with reduce_fn."""
+  closed_jaxpr = jax.make_jaxpr(fn)(*operands)
+  env: dict[Any, Any] = dict(zip(closed_jaxpr.jaxpr.invars, operands))
+  env.update(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+
+  for eqn in closed_jaxpr.jaxpr.eqns:
+    invals = [
+        var.val if isinstance(var, Literal) else env[var] for var in eqn.invars
+    ]
+    if eqn.primitive.name == "reduce_sum":
+      outvals = [reduce_fn(invals[0], eqn.params["axes"])]
+    else:
+      try:
+        bind_params = eqn.primitive.get_bind_params(eqn.params)
+        if isinstance(bind_params, tuple) and len(bind_params) == 2:
+          subfuns, bind_params = bind_params
+        else:
+          subfuns = []
+      except AttributeError:
+        subfuns = []
+        bind_params = eqn.params
+      ans = eqn.primitive.bind(*subfuns, *invals, **bind_params)
+      outvals = ans if eqn.primitive.multiple_results else [ans]
+    for outvar, outval in zip(eqn.outvars, outvals):
+      env[outvar] = outval
+
+  outvar = closed_jaxpr.jaxpr.outvars[0]
+  return outvar.val if isinstance(outvar, Literal) else env[outvar]
+
+
+def einsum(
+    subscripts: str,
+    *operands: jax.typing.ArrayLike,
+    semiring: Semiring = STANDARD,
+    optimize: str | bool | list[tuple[int, ...]] = "auto",
+    precision: jax.lax.PrecisionLike = None,
+) -> jax.Array:
+  """Computes a generalized einsum over the given semiring.
+
+  Args:
+    subscripts: Einsum subscripts string.
+    *operands: Arrays to contract.
+    semiring: Semiring specifying the combine and reduce operations.
+    optimize: Contraction order strategy passed to ``jnp.einsum``.
+    precision: Optional precision forwarded on the ``STANDARD`` fast path.
+
+  Returns:
+    Result of the einsum contraction.
+  """
+  if semiring == STANDARD:
+    return jnp.einsum(
+        subscripts, *operands, optimize=optimize, precision=precision
+    )
+
+  # Trace with jnp.sum so reduce_sum inside semiring.reduce (e.g. logsumexp)
+  # is not rewritten recursively.
+  dot_fn = functools.partial(
+      _semiring_dot_general, combine_fn=semiring.combine, reduce_fn=jnp.sum
+  )
+
+  def f(*args):
+    return jnp.einsum(subscripts, *args, optimize=optimize, _dot_general=dot_fn)
+
+  return _rewrite_reduce_sum(f, operands, semiring.reduce)
 
 
 def _axis_name_to_dim(axis_names: str, axis_name: str) -> int | None:
@@ -107,7 +211,7 @@ def _axis_name_to_dim(axis_names: str, axis_name: str) -> int | None:
 
 
 def _get_subarrays(
-    arrays: tuple[jax.Array, ...], ax_dims: list[int | None], index: int
+    arrays: Sequence[jax.Array], ax_dims: list[int | None], index: Any
 ) -> tuple[jax.Array, ...]:
   """Return a slice of each array along the given axis at the given index.
 
@@ -120,13 +224,12 @@ def _get_subarrays(
     Array(True, dtype=bool)
 
   Args:
-    arrays: A list of arrays.
-    ax_dims: A list of axis dimensions to slice along, or None if no slicing is
-      needed.
-    index: The index to slice at.
+    arrays: Sequence of arrays.
+    ax_dims: Axis index to slice for each array, or None to keep unchanged.
+    index: Index to slice at.
 
   Returns:
-    A list of arrays, each of which is a slice of the corresponding input array.
+    Tuple of sliced arrays.
   """
   ans = []
   for array, dim in zip(arrays, ax_dims):
@@ -139,158 +242,73 @@ def _get_subarrays(
 
 
 def _infer_shapes(
-    input_axes_names: list[str], arrays: tuple[jax.Array, ...]
+    input_axes_names: list[str], arrays: Sequence[jax.Array]
 ) -> dict[str, int]:
-  """Infer the shapes of the arrays given the input axes names."""
+  """Infer axis sizes from input axis labels and array shapes."""
   ans = {}
   for axis_names, arr in zip(input_axes_names, arrays):
-    ans.update(**dict(zip(axis_names, arr.shape)))
+    ans.update(zip(axis_names, arr.shape))
   return ans
 
 
 def scan_einsum(
     formula: str,
-    *arrays: jax.Array,
+    *arrays: jax.typing.ArrayLike,
     sequential: str = "",
-    einsum_fn: Callable = jnp.einsum,
+    semiring: Semiring = STANDARD,
+    einsum_fn: Callable[..., jax.Array] | None = None,
     **kwargs,
 ) -> jax.Array:
-  """Einsum implementation that allows sequential execution across any axes.
-
-  Can be more time and memory efficient than jnp.einsum when there are more
-  than 2 operands, and even run in settings where jnp.einsum would not.
+  """Executes an einsum sequentially across specified axes to bound memory.
 
   Args:
-    formula: The einsum formula.
-    *arrays: The arrays to einsum.
-    sequential: A string of axes to sequentially einsum across.
-    When sequential is empty, jnp.einsum is used.  When sequential is a single
-      axis name, the smaller einsums are executed sequentially along that axis,
-      and the results are accumulated.  When sequential is a string with
-      multiple axis names, sequential einsums are executed along all axis
-      names given.
-    einsum_fn: The underlying einsum function to use (defaults to jnp.einsum).
-    **kwargs: Keyword arguments to pass to the underlying einsum function.
+    formula: Explicit einsum formula of the form ``"in1,in2->out"``.
+    *arrays: Input arrays to contract.
+    sequential: Axis labels to loop over sequentially via ``lax.map`` /
+      ``lax.scan``.
+    semiring: Semiring used for accumulation and the default inner einsum.
+    einsum_fn: Inner contraction callable (defaults to ``einsum`` with
+      ``semiring``).
+    **kwargs: Extra keyword arguments forwarded to ``einsum_fn``.
 
   Returns:
-    The einsum result.
+    The contracted array.
   """
+  inner_fn = einsum_fn or functools.partial(einsum, semiring=semiring)
+  arrs = tuple(jnp.asarray(a) for a in arrays)
   if not sequential:
-    return einsum_fn(formula, *arrays, **kwargs)
+    return inner_fn(formula, *arrs, **kwargs)
 
   ax = sequential[0]
   if ax not in formula:
     raise ValueError(f"Sequential axis '{ax}' not found.")
 
-  input_axes, output_axes = formula.split("->")
-  input_axes = input_axes.split(",")
-  shapes = _infer_shapes(input_axes, arrays)
-
+  input_str, output_axes = formula.split("->")
+  input_axes = input_str.split(",")
+  shapes = _infer_shapes(input_axes, arrs)
   ax_dims = [_axis_name_to_dim(names, ax) for names in input_axes]
 
-  # We compute smaller einsums sequentially by looping over the ax dimension.
   loop = jnp.arange(shapes[ax])
   new_formula = formula.replace(ax, "")
 
   def small_einsum(i):
-    new_arrays = _get_subarrays(arrays, ax_dims, i)
+    new_arrays = _get_subarrays(arrs, ax_dims, i)
     return scan_einsum(
         new_formula,
         *new_arrays,
         sequential=sequential[1:],
-        einsum_fn=einsum_fn,
+        semiring=semiring,
+        einsum_fn=inner_fn,
         **kwargs,
     )
 
   if ax in output_axes:
-    # Each smaller einsum is independent.
-    return jax.lax.map(small_einsum, loop).swapaxes(0, output_axes.index(ax))
+    mapped = jax.lax.map(small_einsum, loop)
+    return jnp.moveaxis(mapped, 0, output_axes.index(ax))
 
-  # Each smaller einsum contributes to the global einsum.
-  init = jnp.zeros(tuple(shapes[i] for i in output_axes))
+  dtype = jnp.result_type(*arrs)
+  out_shape = tuple(shapes[i] for i in output_axes)
+  init = jnp.full(out_shape, semiring.zero, dtype=dtype)
   return jax.lax.scan(
-      lambda carry, i: (carry + small_einsum(i), ()), init, loop
+      lambda carry, i: (semiring.add(carry, small_einsum(i)), ()), init, loop
   )[0]
-
-
-def custom_einsum(
-    subscripts: str,
-    *operands: jax.typing.ArrayLike,
-    combine_fn: Callable[[jax.Array, jax.Array], jax.Array] = jnp.multiply,
-    reduce_fn: Callable[[jax.Array, int | Sequence[int]], jax.Array] = jnp.sum,
-    optimize: str | bool | list[tuple[int, ...]] = "auto",
-) -> jax.Array:
-  """Custom einsum function that uses the given combine and reduce functions.
-
-  This function acts like jnp.einsum, but intercepts the reduction operations and
-  replaces them with the provided `reduce_fn`. The `combine_fn` replaces the
-  standard multiplication. This allows for einsum operations over arbitrary
-  semirings like (+, max), (+, logsumexp), etc.
-
-  Args:
-      subscripts: The einsum subscripts string.
-      *operands: The arrays to compute the einsum over.
-      combine_fn: A callable that combines two arrays.
-      reduce_fn: A callable that reduces an array along a given axis.
-      optimize: Contraction order strategy passed to ``jnp.einsum``.
-
-  Returns:
-      The result of the custom einsum operation.
-  """
-
-  def f(*args):
-    return jnp.einsum(
-        subscripts,
-        *args,
-        optimize=optimize,
-        _dot_general=functools.partial(
-            custom_dot_general,
-            combine_fn=combine_fn,
-            # We must use jnp.sum here instead of reduce_fn because if reduce_fn contains
-            # a reduce_sum internally (like logsumexp), it would cause problems.
-            reduce_fn=jnp.sum,
-        ),
-    )
-
-  closed_jaxpr = jax.make_jaxpr(f)(*operands)
-
-  def eval_rewritten(*args):
-    env = {}
-    for invar, arg in zip(closed_jaxpr.jaxpr.invars, args):
-      env[invar] = arg
-    for constvar, const in zip(
-        closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts
-    ):
-      env[constvar] = const
-
-    for eqn in closed_jaxpr.jaxpr.eqns:
-      invals = [
-          var.val if isinstance(var, Literal) else env[var]
-          for var in eqn.invars
-      ]
-      if eqn.primitive.name == "reduce_sum":
-        axes = eqn.params["axes"]
-        outvals = [reduce_fn(invals[0], axes)]
-      else:
-        # Many JAX primitives do not implement get_bind_params
-        try:
-          bind_params = eqn.primitive.get_bind_params(eqn.params)
-          if isinstance(bind_params, tuple) and len(bind_params) == 2:
-            subfuns, bind_params = bind_params
-          else:
-            subfuns = []
-        except AttributeError:
-          subfuns = []
-          bind_params = eqn.params
-        ans = eqn.primitive.bind(*subfuns, *invals, **bind_params)
-        if eqn.primitive.multiple_results:
-          outvals = ans
-        else:
-          outvals = [ans]
-      for outvar, outval in zip(eqn.outvars, outvals):
-        env[outvar] = outval
-
-    outvar = closed_jaxpr.jaxpr.outvars[0]
-    return outvar.val if isinstance(outvar, Literal) else env[outvar]
-
-  return eval_rewritten(*operands)

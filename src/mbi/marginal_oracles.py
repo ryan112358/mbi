@@ -31,13 +31,12 @@ import jax.numpy as jnp
 import networkx as nx
 import numpy as np
 
-from . import junction_tree
+from . import einsum, junction_tree
 from ._future import RobustFuture
 from .clique_utils import Clique, clique_mapping
 from .clique_vector import CliqueVector
 from .constraint import Constraint
 from .domain import Attribute, Domain
-from .einsum import custom_einsum
 from .factor import Factor
 
 _EINSUM_LETTERS = list(string.ascii_lowercase) + list(string.ascii_uppercase)
@@ -174,17 +173,31 @@ def einsum_materialized(
   return combined.project(dom.attributes, reduction_fn=reduction_fn)
 
 
+def _log_semiring(reduction_fn: Callable) -> einsum.Semiring:
+  """Maps a log-space reduction callable to its corresponding Semiring."""
+  if reduction_fn is jax.scipy.special.logsumexp:
+    return einsum.LOG_SUM_EXP
+  if reduction_fn is jnp.max:
+    return einsum.MAX_PLUS
+  return einsum.Semiring(
+      combine=jnp.add,
+      reduce=reduction_fn,
+      add=lambda a, b: reduction_fn(jnp.stack([a, b]), axis=0),
+      zero=-jnp.inf,
+  )
+
+
 def einsum_fused(
     log_factors: list[Factor],
     dom: Domain,
     reduction_fn: Callable = jax.scipy.special.logsumexp,
 ) -> Factor:
-  """Compute the log-space sum-product using ``custom_dot_general``.
+  """Compute the log-space sum-product using ``einsum.einsum``.
 
-  Delegates to ``custom_einsum`` with add/logsumexp operations,
-  allowing the XLA compiler to fuse the combine and reduce steps.
-  This avoids both the exp/log round-trip of ``einsum_semistable``
-  and the super-factor materialization of ``einsum_materialized``.
+  Delegates to ``einsum.einsum`` over the log-space semiring, allowing the
+  XLA compiler to fuse the combine and reduce steps. This avoids both the
+  exp/log round-trip of ``einsum_semistable`` and the super-factor
+  materialization of ``einsum_materialized``.
 
   On GPU, XLA often fuses the operations resulting in both good
   stability and good performance.
@@ -197,18 +210,10 @@ def einsum_fused(
   Returns:
       A Factor over *dom* in log space.
   """
-
-  def _custom_einsum(formula, *arrays, optimize="auto", **kwargs):
-    del kwargs  # precision is unused by custom_einsum
-    return custom_einsum(
-        formula,
-        *arrays,
-        combine_fn=jnp.add,
-        reduce_fn=reduction_fn,
-        optimize=optimize,
-    )
-
-  return sum_product(log_factors, dom, einsum_fn=_custom_einsum)
+  einsum_fn = functools.partial(
+      einsum.einsum, semiring=_log_semiring(reduction_fn)
+  )
+  return sum_product(log_factors, dom, einsum_fn=einsum_fn)
 
 
 def _shard_mesh(merged: Domain, dom: Domain) -> jax.sharding.Mesh:
