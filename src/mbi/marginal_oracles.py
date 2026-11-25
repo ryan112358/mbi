@@ -67,7 +67,7 @@ class MarginalOracle(Protocol):
       total: jax.Array | float | None = 1.0,
       *,
       constraints: Sequence[Constraint] = (),
-      reduction_fn: Callable = jax.scipy.special.logsumexp,
+      semiring: einsum.Semiring = einsum.LOG_SUM_EXP,
   ) -> CliqueVector:
     """Compute marginals from potentials.
 
@@ -78,8 +78,8 @@ class MarginalOracle(Protocol):
         constraints: Structural constraints. Oracles that support
             constraints fold them into the potentials or handle
             them natively; unsupported oracles raise ValueError.
-        reduction_fn: Reduction callable, either ``jax.scipy.special.logsumexp``
-            (default) for standard marginal inference or ``jnp.max`` for
+        semiring: Log-space semiring, either ``einsum.LOG_SUM_EXP`` (default)
+            for standard marginal inference or ``einsum.MAX_PLUS`` for
             max-marginals in log space (scaled by ``total``).
 
     Returns:
@@ -124,6 +124,8 @@ def einsum_semistable(
     log_factors: list[Factor],
     dom: Domain,
     einsum_fn: Callable = jnp.einsum,
+    *,
+    semiring: einsum.Semiring = einsum.LOG_SUM_EXP,
 ) -> Factor:
   """Compute the log-space sum-product via the exp-normalize trick.
 
@@ -136,10 +138,13 @@ def einsum_semistable(
       log_factors: Factors in log space.
       dom: Target domain for the output.
       einsum_fn: Einsum implementation to use (default: ``jnp.einsum``).
+      semiring: Must be ``einsum.LOG_SUM_EXP``.
 
   Returns:
       A Factor over *dom* containing the result in log space.
   """
+  if semiring != einsum.LOG_SUM_EXP:
+    raise ValueError("einsum_semistable only supports LOG_SUM_EXP.")
   maxes = [
       f.max(f.domain.marginalize(dom.attributes).attributes)
       for f in log_factors
@@ -151,50 +156,36 @@ def einsum_semistable(
 def einsum_materialized(
     log_factors: list[Factor],
     dom: Domain,
-    reduction_fn: Callable = jax.scipy.special.logsumexp,
+    semiring: einsum.Semiring = einsum.LOG_SUM_EXP,
 ) -> Factor:
   """Compute the log-space sum-product by materializing the combined factor.
 
   Combines all log-factors into a single super-factor (via addition in
-  log-space), then reduces over the non-target dimensions with ``reduction_fn``.
-  Numerically stable because no exp/log round-trip is needed, but may
-  require O(product of all domain sizes) memory for the intermediate
-  super-factor.
+  log-space), then reduces over the non-target dimensions with
+  ``semiring.reduce``. Numerically stable because no exp/log round-trip is
+  needed, but may require O(product of all domain sizes) memory for the
+  intermediate super-factor.
 
   Args:
       log_factors: Factors in log space.
       dom: Target domain for the output.
-      reduction_fn: Reduction callable (default: ``jax.scipy.special.logsumexp``).
+      semiring: Log-space semiring (default: ``einsum.LOG_SUM_EXP``).
 
   Returns:
       A Factor over *dom* in log space.
   """
   combined = functools.reduce(lambda a, b: a + b, log_factors)
-  return combined.project(dom.attributes, reduction_fn=reduction_fn)
-
-
-def _log_semiring(reduction_fn: Callable) -> einsum.Semiring:
-  """Maps a log-space reduction callable to its corresponding Semiring."""
-  if reduction_fn is jax.scipy.special.logsumexp:
-    return einsum.LOG_SUM_EXP
-  if reduction_fn is jnp.max:
-    return einsum.MAX_PLUS
-  return einsum.Semiring(
-      combine=jnp.add,
-      reduce=reduction_fn,
-      add=lambda a, b: reduction_fn(jnp.stack([a, b]), axis=0),
-      zero=-jnp.inf,
-  )
+  return combined.project(dom.attributes, reduction_fn=semiring.reduce)
 
 
 def einsum_fused(
     log_factors: list[Factor],
     dom: Domain,
-    reduction_fn: Callable = jax.scipy.special.logsumexp,
+    semiring: einsum.Semiring = einsum.LOG_SUM_EXP,
 ) -> Factor:
   """Compute the log-space sum-product using ``einsum.einsum``.
 
-  Delegates to ``einsum.einsum`` over the log-space semiring, allowing the
+  Delegates to ``einsum.einsum`` over the given semiring, allowing the
   XLA compiler to fuse the combine and reduce steps. This avoids both the
   exp/log round-trip of ``einsum_semistable`` and the super-factor
   materialization of ``einsum_materialized``.
@@ -205,14 +196,12 @@ def einsum_fused(
   Args:
       log_factors: Factors in log space.
       dom: Target domain for the output.
-      reduction_fn: Reduction callable (default: ``jax.scipy.special.logsumexp``).
+      semiring: Log-space semiring (default: ``einsum.LOG_SUM_EXP``).
 
   Returns:
       A Factor over *dom* in log space.
   """
-  einsum_fn = functools.partial(
-      einsum.einsum, semiring=_log_semiring(reduction_fn)
-  )
+  einsum_fn = functools.partial(einsum.einsum, semiring=semiring)
   return sum_product(log_factors, dom, einsum_fn=einsum_fn)
 
 
@@ -260,7 +249,7 @@ def _shard_mesh(merged: Domain, dom: Domain) -> jax.sharding.Mesh:
 def einsum_sharded(
     log_factors: list[Factor],
     dom: Domain,
-    reduction_fn: Callable = jax.scipy.special.logsumexp,
+    semiring: einsum.Semiring = einsum.LOG_SUM_EXP,
     *,
     contraction: Callable = einsum_materialized,
 ) -> Factor:
@@ -273,8 +262,7 @@ def einsum_sharded(
   Args:
       log_factors: Factors in log space.
       dom: Target domain for the output.
-      reduction_fn: Reduction callable (default:
-        ``jax.scipy.special.logsumexp``).
+      semiring: Log-space semiring (default: ``einsum.LOG_SUM_EXP``).
       contraction: Per-device contraction function (default:
         ``einsum_materialized``).
 
@@ -283,7 +271,7 @@ def einsum_sharded(
   """
   merged = functools.reduce(lambda a, b: a.merge(b.domain), log_factors, dom)
   if jax.device_count() <= 1 or len(merged) == 0:
-    return contraction(log_factors, dom, reduction_fn=reduction_fn)
+    return contraction(log_factors, dom, semiring=semiring)
 
   mesh = _shard_mesh(merged, dom)
   chunks = {a: math.ceil(merged[a] / d) for a, d in mesh.shape.items()}
@@ -312,14 +300,16 @@ def einsum_sharded(
   def _kernel(factors: list[Factor]) -> Factor:
     local = [_slice(f) for f in factors]
     out_dom = local_dom.project(dom.attributes)
-    val = contraction(local, out_dom, reduction_fn=reduction_fn).values
+    val = contraction(local, out_dom, semiring=semiring).values
     if elim:
-      if reduction_fn is jnp.max:
+      if semiring == einsum.MAX_PLUS:
         val = jax.lax.pmax(val, elim)
-      else:
+      elif semiring == einsum.LOG_SUM_EXP:
         m = jax.lax.pmax(jax.lax.stop_gradient(val), elim)
         shift = jnp.where(jnp.isneginf(m), 0.0, m)
         val = m + jnp.log(jax.lax.psum(jnp.exp(val - shift), elim))
+      else:
+        raise ValueError(f"einsum_sharded does not support {semiring}.")
     for a in kept:
       axis = dom.attributes.index(a)
       val = jax.lax.all_gather(val, a, axis=axis, tiled=True)
@@ -360,20 +350,24 @@ def _finalize_beliefs(
     beliefs: CliqueVector | Factor,
     cliques: Sequence[Clique],
     total: jax.Array | float | None,
-    fn: Callable = jax.scipy.special.logsumexp,
+    semiring: einsum.Semiring = einsum.LOG_SUM_EXP,
 ) -> CliqueVector:
   # Project maximal-clique beliefs onto the target cliques and convert from
   # log space to the requested marginal or max-marginal scale.
-  tables = {cl: beliefs.project(cl, reduction_fn=fn) for cl in cliques}
+  tables = {
+      cl: beliefs.project(cl, reduction_fn=semiring.reduce) for cl in cliques
+  }
   beliefs = CliqueVector(beliefs.domain, cliques, tables)
   if total is None:
     return beliefs
-  if fn is jnp.max:
+  if semiring == einsum.MAX_PLUS:
     return beliefs * total
-  return beliefs.normalize(total, log=True).exp()
+  if semiring == einsum.LOG_SUM_EXP:
+    return beliefs.normalize(total, log=True).exp()
+  raise ValueError(f"Unsupported semiring for normalized beliefs: {semiring}.")
 
 
-@jax.jit(static_argnames=["jtree", "return_messages", "reduction_fn"])
+@jax.jit(static_argnames=["jtree", "return_messages", "semiring"])
 def message_passing_hugin(
     potentials: CliqueVector,
     total: jax.Array | float | None = 1.0,
@@ -381,7 +375,7 @@ def message_passing_hugin(
     *,
     constraints: Sequence[Constraint] = (),
     return_messages: bool = False,
-    reduction_fn: Callable = jax.scipy.special.logsumexp,
+    semiring: einsum.Semiring = einsum.LOG_SUM_EXP,
 ) -> CliqueVector | tuple[CliqueVector, dict]:
   """HUGIN message passing with belief subtraction.
 
@@ -397,7 +391,7 @@ def message_passing_hugin(
       return_messages: If True, return ``(marginals, messages)`` where
           *messages* is a dict mapping ``(clique_i, clique_j)`` to the
           log-space message Factor sent from *i* to *j*.
-      reduction_fn: Either ``jax.scipy.special.logsumexp`` (default) or ``jnp.max``.
+      semiring: Either ``einsum.LOG_SUM_EXP`` (default) or ``einsum.MAX_PLUS``.
   """
   if constraints:
     warnings.warn(
@@ -428,14 +422,14 @@ def message_passing_hugin(
       tau = beliefs[i] - messages[(j, i)]
     else:
       tau = beliefs[i]
-    messages[(i, j)] = tau.aggregate(reduction_fn, sep)
+    messages[(i, j)] = tau.aggregate(semiring.reduce, sep)
     beliefs[j] = beliefs[j] + messages[(i, j)]
 
-  marginals = _finalize_beliefs(beliefs, input_cliques, total, reduction_fn)
+  marginals = _finalize_beliefs(beliefs, input_cliques, total, semiring)
   return (marginals, messages) if return_messages else marginals
 
 
-@jax.jit(static_argnames=["jtree", "return_messages", "reduction_fn"])
+@jax.jit(static_argnames=["jtree", "return_messages", "semiring"])
 def message_passing_shafer_shenoy(
     potentials: CliqueVector,
     total: jax.Array | float | None = 1.0,
@@ -443,7 +437,7 @@ def message_passing_shafer_shenoy(
     *,
     constraints: Sequence[Constraint] = (),
     return_messages: bool = False,
-    reduction_fn: Callable = jax.scipy.special.logsumexp,
+    semiring: einsum.Semiring = einsum.LOG_SUM_EXP,
 ) -> CliqueVector | tuple[CliqueVector, dict]:
   """Shafer-Shenoy message passing with neighbor collection.
 
@@ -460,7 +454,7 @@ def message_passing_shafer_shenoy(
       return_messages: If True, return ``(marginals, messages)`` where
           *messages* is a dict mapping ``(clique_i, clique_j)`` to the
           log-space message Factor sent from *i* to *j*.
-      reduction_fn: Either ``jax.scipy.special.logsumexp`` (default) or ``jnp.max``.
+      semiring: Either ``einsum.LOG_SUM_EXP`` (default) or ``einsum.MAX_PLUS``.
   """
   potentials, input_cliques = _fold_constraints(potentials, constraints)
   if len(potentials.cliques) == 0:
@@ -487,7 +481,7 @@ def message_passing_shafer_shenoy(
       tau = tau + messages[(k, i)]
 
     sep = tau.domain.invert(tuple(set(i) & set(j)))
-    messages[(i, j)] = tau.aggregate(reduction_fn, sep)
+    messages[(i, j)] = tau.aggregate(semiring.reduce, sep)
 
   beliefs = {}
   for cl in maximal_cliques:
@@ -497,12 +491,12 @@ def message_passing_shafer_shenoy(
     beliefs[cl] = b
 
   beliefs = CliqueVector(potentials.domain, maximal_cliques, beliefs)
-  marginals = _finalize_beliefs(beliefs, input_cliques, total, reduction_fn)
+  marginals = _finalize_beliefs(beliefs, input_cliques, total, semiring)
   return (marginals, messages) if return_messages else marginals
 
 
 @jax.jit(
-    static_argnames=["jtree", "contraction", "return_messages", "reduction_fn"]
+    static_argnames=["jtree", "contraction", "return_messages", "semiring"]
 )
 def message_passing_implicit(
     potentials: CliqueVector,
@@ -512,7 +506,7 @@ def message_passing_implicit(
     constraints: Sequence[Constraint] = (),
     contraction: Callable = einsum_materialized,
     return_messages: bool = False,
-    reduction_fn: Callable = jax.scipy.special.logsumexp,
+    semiring: einsum.Semiring = einsum.LOG_SUM_EXP,
 ) -> CliqueVector | tuple[CliqueVector, dict]:
   """Implicit-factor message passing using a contraction function.
 
@@ -533,7 +527,7 @@ def message_passing_implicit(
       return_messages: If True, return ``(marginals, messages)`` where
           *messages* is a dict mapping ``(clique_i, clique_j)`` to the
           log-space message Factor sent from *i* to *j*.
-      reduction_fn: Either ``jax.scipy.special.logsumexp`` (default) or ``jnp.max``.
+      semiring: Either ``einsum.LOG_SUM_EXP`` (default) or ``einsum.MAX_PLUS``.
   """
   if constraints and contraction is einsum_semistable:
     raise ValueError(
@@ -568,8 +562,8 @@ def message_passing_implicit(
       if msg[0] == msg2[1] and msg[1] != msg2[0]:
         incoming_messages[msg].append(msg2)
 
-  if reduction_fn is not jax.scipy.special.logsumexp:
-    contraction = functools.partial(contraction, reduction_fn=reduction_fn)
+  if semiring != einsum.LOG_SUM_EXP:
+    contraction = functools.partial(contraction, semiring=semiring)
 
   messages = {}
   for i, j in message_order:
@@ -597,9 +591,9 @@ def message_passing_implicit(
         beliefs[cl2] = contraction(inputs, domain.project(cl2))
 
   beliefs = CliqueVector(potentials.domain, input_cliques, beliefs)
-  if total is None and reduction_fn is jax.scipy.special.logsumexp:
+  if total is None and semiring == einsum.LOG_SUM_EXP:
     beliefs = beliefs + math.log(potentials.domain.size() // domain.size())
-  marginals = _finalize_beliefs(beliefs, input_cliques, total, reduction_fn)
+  marginals = _finalize_beliefs(beliefs, input_cliques, total, semiring)
   return (marginals, messages) if return_messages else marginals
 
 
@@ -714,7 +708,7 @@ def brute_force_marginals(
     total: jax.Array | float | None = 1,
     *,
     constraints: Sequence[Constraint] = (),
-    reduction_fn: Callable = jax.scipy.special.logsumexp,
+    semiring: einsum.Semiring = einsum.LOG_SUM_EXP,
 ) -> CliqueVector:
   """Compute marginals from (log-space) potentials by materializing the full joint distribution.
 
@@ -723,14 +717,14 @@ def brute_force_marginals(
       total: Normalization constant.
       constraints: Structural constraints folded into potentials as
           ``-inf``/``0`` factors before inference.
-      reduction_fn: Either ``jax.scipy.special.logsumexp`` (default) or ``jnp.max``.
+      semiring: Either ``einsum.LOG_SUM_EXP`` (default) or ``einsum.MAX_PLUS``.
   """
   potentials, input_cliques = _fold_constraints(potentials, constraints)
   if len(potentials.cliques) == 0:
     return CliqueVector(potentials.domain, [], {})
 
   joint = sum(potentials.tables.values(), Factor.zeros(potentials.domain))
-  return _finalize_beliefs(joint, input_cliques, total, reduction_fn)
+  return _finalize_beliefs(joint, input_cliques, total, semiring)
 
 
 def einsum_marginals(
