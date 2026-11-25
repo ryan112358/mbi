@@ -29,7 +29,7 @@ import numpy as np
 import optax
 from jax.typing import ArrayLike
 
-from . import marginal_loss, marginal_oracles
+from . import einsum, marginal_loss, marginal_oracles
 
 # pylint: disable=unused-import
 from ._api import (
@@ -188,7 +188,7 @@ def primal_dual_gap(
   )
   grad = jax.grad(loss_fn)(marginals)
   max_marginals = oracle(
-      -grad, total, constraints=constraints, reduction_fn=jnp.max
+      -grad, total, constraints=constraints, semiring=einsum.MAX_PLUS
   )
   gap = jnp.asarray(grad.dot(marginals)) + max_marginals.max()
   scale = total * jnp.sqrt(loss_fn.lipschitz * marginals.size())

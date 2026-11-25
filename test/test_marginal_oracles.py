@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 from parameterized import parameterized
 
-from mbi import marginal_oracles
+from mbi import einsum, marginal_oracles
 from mbi.clique_vector import CliqueVector
 from mbi.constraint import Constraint
 from mbi.domain import Domain
@@ -280,9 +280,9 @@ class TestMarginalOracles(unittest.TestCase):
   def test_max_reduction_matches_brute_force(self, oracle, cliques, total=10.0):
     """Max-marginal reduction matches brute-force max-marginals across cliques."""
     theta = CliqueVector.random(_DOMAIN, cliques)
-    mu1 = oracle(theta, total, reduction_fn=jnp.max)
+    mu1 = oracle(theta, total, semiring=einsum.MAX_PLUS)
     mu2 = marginal_oracles.brute_force_marginals(
-        theta, total, reduction_fn=jnp.max
+        theta, total, semiring=einsum.MAX_PLUS
     )
     self.assertEqual(mu1.domain, _DOMAIN)
     self.assertEqual(mu1.cliques, tuple(cliques))
@@ -290,6 +290,13 @@ class TestMarginalOracles(unittest.TestCase):
     for cl in cliques:
       np.testing.assert_allclose(
           mu1[cl].datavector(), mu2[cl].datavector(), atol=1e-5
+      )
+
+  def test_einsum_semistable_rejects_non_logsumexp_semiring(self):
+    theta = CliqueVector.random(_DOMAIN, [("a", "b"), ("b", "c")])
+    with self.assertRaises(ValueError):
+      message_passing_implicit(
+          theta, contraction=einsum_semistable, semiring=einsum.MAX_PLUS
       )
 
   @parameterized.expand(
@@ -547,7 +554,7 @@ class TestConstrainedOracles(unittest.TestCase):
     cliques = [("A", "B"), ("Ap", "C")]
     constraints = _CONSTRAINT_CONFIGS[0]
     theta = CliqueVector.random(_CDOMAIN, cliques)
-    mu = oracle(theta, 5.0, constraints=constraints, reduction_fn=jnp.max)
+    mu = oracle(theta, 5.0, constraints=constraints, semiring=einsum.MAX_PLUS)
     folded_cliques = list(theta.cliques)
     arrays = dict(theta.tables)
     for c in constraints:
@@ -558,7 +565,7 @@ class TestConstrainedOracles(unittest.TestCase):
         folded_cliques.append(cl)
     folded = CliqueVector(theta.domain, folded_cliques, arrays)
     baseline = marginal_oracles.brute_force_marginals(
-        folded, 5.0, reduction_fn=jnp.max
+        folded, 5.0, semiring=einsum.MAX_PLUS
     )
     for cl in cliques:
       np.testing.assert_allclose(
