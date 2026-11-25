@@ -93,6 +93,8 @@ def custom_dot_general(
   rhs_expanded = jnp.expand_dims(rhs_permuted, axis=rhs_axes)
 
   combined = combine_fn(lhs_expanded, rhs_expanded)
+  if not contract_dims:
+    return combined
   contract_axes = tuple(range(combined.ndim - contract_dims, combined.ndim))
   return reduce_fn(combined, contract_axes)
 
@@ -212,8 +214,12 @@ def scan_einsum(
 
 
 def custom_einsum(
-    subscripts, *operands, combine_fn=jnp.multiply, reduce_fn=jnp.sum
-):
+    subscripts: str,
+    *operands: jax.typing.ArrayLike,
+    combine_fn: Callable[[jax.Array, jax.Array], jax.Array] = jnp.multiply,
+    reduce_fn: Callable[[jax.Array, int | Sequence[int]], jax.Array] = jnp.sum,
+    optimize: str | bool | list[tuple[int, ...]] = "auto",
+) -> jax.Array:
   """Custom einsum function that uses the given combine and reduce functions.
 
   This function acts like jnp.einsum, but intercepts the reduction operations and
@@ -226,6 +232,7 @@ def custom_einsum(
       *operands: The arrays to compute the einsum over.
       combine_fn: A callable that combines two arrays.
       reduce_fn: A callable that reduces an array along a given axis.
+      optimize: Contraction order strategy passed to ``jnp.einsum``.
 
   Returns:
       The result of the custom einsum operation.
@@ -235,6 +242,7 @@ def custom_einsum(
     return jnp.einsum(
         subscripts,
         *args,
+        optimize=optimize,
         _dot_general=functools.partial(
             custom_dot_general,
             combine_fn=combine_fn,
@@ -262,7 +270,7 @@ def custom_einsum(
       ]
       if eqn.primitive.name == "reduce_sum":
         axes = eqn.params["axes"]
-        outvals = [reduce_fn(invals[0], axis=axes)]
+        outvals = [reduce_fn(invals[0], axes)]
       else:
         # Many JAX primitives do not implement get_bind_params
         try:
@@ -282,10 +290,7 @@ def custom_einsum(
       for outvar, outval in zip(eqn.outvars, outvals):
         env[outvar] = outval
 
-    ans = [
-        var.val if isinstance(var, Literal) else env[var]
-        for var in closed_jaxpr.jaxpr.outvars
-    ]
-    return ans[0] if len(ans) == 1 else tuple(ans)
+    outvar = closed_jaxpr.jaxpr.outvars[0]
+    return outvar.val if isinstance(outvar, Literal) else env[outvar]
 
   return eval_rewritten(*operands)

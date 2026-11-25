@@ -99,6 +99,7 @@ _STABLE_ORACLES = [
     marginal_oracles.message_passing_shafer_shenoy,
     message_passing_shafer_shenoy,
     ext_shafer_shenoy,
+    _implicit_fused,
     _implicit_sharded,
 ]
 

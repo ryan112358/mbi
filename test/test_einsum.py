@@ -1,8 +1,9 @@
 import unittest
 import jax
 import jax.numpy as jnp
-from mbi.einsum import scan_einsum, custom_dot_general
+from mbi.einsum import custom_dot_general, custom_einsum, scan_einsum
 import numpy as np
+from parameterized import parameterized
 
 np.random.seed(0)
 
@@ -514,6 +515,123 @@ class TestScanEinsum(unittest.TestCase):
     self.assertArraysAllClose(
         expected, actual, msg="custom_einsum vmap and jit"
     )
+
+
+def _direct_semiring(subscripts, *operands, reduce_fn):
+  """Reference broadcast-add and reduce over the joint domain."""
+  in_str, out_str = subscripts.split("->")
+  in_terms = in_str.split(",")
+  sizes = {}
+  for term, arr in zip(in_terms, operands):
+    for ch, dim in zip(term, arr.shape):
+      sizes[ch] = dim
+  all_axes = sorted(set().union(*(set(t) for t in in_terms), set(out_str)))
+  pos = {ch: i for i, ch in enumerate(all_axes)}
+
+  combined = None
+  for term, arr in zip(in_terms, operands):
+    if term:
+      order = sorted(range(len(term)), key=lambda i: pos[term[i]])
+      aligned = jnp.transpose(arr, order)
+      bcast = tuple(sizes[ch] if ch in term else 1 for ch in all_axes)
+      expanded = jnp.reshape(aligned, bcast)
+    else:
+      expanded = jnp.reshape(arr, (1,) * len(all_axes))
+    combined = expanded if combined is None else (combined + expanded)
+
+  elim = tuple(i for i, ch in enumerate(all_axes) if ch not in out_str)
+  reduced = reduce_fn(combined, axis=elim) if elim else combined
+  kept = [ch for ch in all_axes if ch in out_str]
+  return jnp.transpose(reduced, [kept.index(ch) for ch in out_str])
+
+
+_SEMIRINGS = [
+    ("logsumexp", jax.scipy.special.logsumexp),
+    ("max", jnp.max),
+]
+
+_TOPOLOGY_CASES = [
+    ("chain5", "ab,bc,cd,de->ae", {"a": 3, "b": 4, "c": 5, "d": 3, "e": 4}),
+    ("cycle4", "ab,bc,cd,ad->bd", {"a": 3, "b": 4, "c": 5, "d": 3}),
+    ("k4", "ab,ac,ad,bc,bd,cd->ab", {"a": 3, "b": 4, "c": 3, "d": 5}),
+    ("outer_reduce", "ab,c->ac", {"a": 3, "b": 4, "c": 5}),
+    ("broadcast_mul", "ab,b->ab", {"a": 3, "b": 4}),
+    ("scalar_mix", ",ab,bc->ac", {"a": 3, "b": 4, "c": 5}),
+    ("single_reduce", "abc->a", {"a": 3, "b": 4, "c": 5}),
+]
+
+
+class TestCustomEinsum(unittest.TestCase):
+
+  @parameterized.expand([
+      (f"{t_name}_{s_name}", sub, sizes, rfn)
+      for t_name, sub, sizes in _TOPOLOGY_CASES
+      for s_name, rfn in _SEMIRINGS
+  ])
+  def test_matches_direct_reference(self, _name, subscripts, sizes, reduce_fn):
+    rng = np.random.default_rng(0)
+    in_terms = subscripts.split("->")[0].split(",")
+    operands = [
+        jnp.asarray(rng.normal(size=tuple(sizes[c] for c in t)))
+        for t in in_terms
+    ]
+    actual = custom_einsum(
+        subscripts, *operands, combine_fn=jnp.add, reduce_fn=reduce_fn
+    )
+    expected = _direct_semiring(subscripts, *operands, reduce_fn=reduce_fn)
+    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+
+  @parameterized.expand(["auto", "greedy", "optimal"])
+  def test_optimize_strategies_match(self, optimize):
+    rng = np.random.default_rng(1)
+    operands = [
+        jnp.asarray(rng.normal(size=s))
+        for s in [(3, 4), (4, 5), (5, 3), (3, 4)]
+    ]
+    actual = custom_einsum(
+        "ab,bc,cd,de->ae",
+        *operands,
+        combine_fn=jnp.add,
+        reduce_fn=jax.scipy.special.logsumexp,
+        optimize=optimize,
+    )
+    expected = _direct_semiring(
+        "ab,bc,cd,de->ae", *operands, reduce_fn=jax.scipy.special.logsumexp
+    )
+    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+
+  @parameterized.expand(_SEMIRINGS)
+  def test_neg_inf_constraints_match_direct(self, _name, reduce_fn):
+    a = jnp.array([[0.0, -jnp.inf, 1.0], [-jnp.inf, -jnp.inf, -jnp.inf]])
+    b = jnp.array([[-jnp.inf, 2.0], [3.0, -jnp.inf], [-jnp.inf, 4.0]])
+    c = jnp.array([0.5, -jnp.inf])
+    actual = custom_einsum(
+        "ij,jk,k->ik", a, b, c, combine_fn=jnp.add, reduce_fn=reduce_fn
+    )
+    expected = _direct_semiring("ij,jk,k->ik", a, b, c, reduce_fn=reduce_fn)
+    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+
+  def test_empty_contraction_skips_reduction_and_preserves_neg_inf_grad(self):
+    def loss(u):
+      out = custom_einsum(
+          "a,b->ab",
+          u,
+          jnp.array([1.0, 2.0]),
+          combine_fn=jnp.add,
+          reduce_fn=jax.scipy.special.logsumexp,
+      )
+      return jnp.sum(jnp.where(jnp.isfinite(out), out, 0.0))
+
+    grad = jax.grad(loss)(jnp.array([0.0, -jnp.inf]))
+    np.testing.assert_allclose(grad, jnp.array([2.0, 0.0]))
+
+    jaxpr = jax.make_jaxpr(
+        lambda x, y: custom_dot_general(
+            x, y, (([], []), ([], [])), combine_fn=jnp.add, reduce_fn=jnp.sum
+        )
+    )(jnp.ones((2,)), jnp.ones((3,)))
+    prims = [eqn.primitive.name for eqn in jaxpr.jaxpr.eqns]
+    self.assertNotIn("reduce_sum", prims)
 
 
 if __name__ == "__main__":
