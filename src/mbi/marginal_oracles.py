@@ -198,14 +198,14 @@ def einsum_fused(
       A Factor over *dom* in log space.
   """
 
-  def _custom_einsum(formula, *arrays, **kwargs):
-    kwargs.pop("optimize", None)
-    kwargs.pop("precision", None)
+  def _custom_einsum(formula, *arrays, optimize="auto", **kwargs):
+    del kwargs  # precision is unused by custom_einsum
     return custom_einsum(
         formula,
         *arrays,
         combine_fn=jnp.add,
         reduce_fn=reduction_fn,
+        optimize=optimize,
     )
 
   return sum_product(log_factors, dom, einsum_fn=_custom_einsum)
