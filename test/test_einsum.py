@@ -1,3 +1,4 @@
+import functools
 import unittest
 
 import jax
@@ -7,8 +8,10 @@ from mbi.einsum import (
     MAX_PLUS,
     STANDARD,
     Semiring,
+    direct_einsum,
     dot_general,
     einsum,
+    plan_sequential_axes,
     scan_einsum,
 )
 import numpy as np
@@ -269,37 +272,6 @@ class TestScanEinsum(unittest.TestCase):
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
 
 
-def _direct_semiring(subscripts, *operands, semiring):
-  """Reference broadcast-combine and reduce over the joint domain."""
-  in_str, out_str = subscripts.split("->")
-  in_terms = in_str.split(",")
-  sizes = {
-      ch: dim
-      for term, arr in zip(in_terms, operands)
-      for ch, dim in zip(term, arr.shape)
-  }
-  all_axes = sorted(set().union(*(set(t) for t in in_terms), set(out_str)))
-  pos = {ch: i for i, ch in enumerate(all_axes)}
-
-  combined = None
-  for term, arr in zip(in_terms, operands):
-    if term:
-      order = sorted(range(len(term)), key=lambda i: pos[term[i]])
-      aligned = jnp.transpose(arr, order)
-      bcast = tuple(sizes[ch] if ch in term else 1 for ch in all_axes)
-      expanded = jnp.reshape(aligned, bcast)
-    else:
-      expanded = jnp.reshape(arr, (1,) * len(all_axes))
-    combined = (
-        expanded if combined is None else semiring.combine(combined, expanded)
-    )
-
-  elim = tuple(i for i, ch in enumerate(all_axes) if ch not in out_str)
-  reduced = semiring.reduce(combined, elim) if elim else combined
-  kept = [ch for ch in all_axes if ch in out_str]
-  return jnp.transpose(reduced, [kept.index(ch) for ch in out_str])
-
-
 _SEMIRINGS = [
     ("standard", STANDARD),
     ("logsumexp", LOG_SUM_EXP),
@@ -355,7 +327,7 @@ class TestSemiringEinsum(unittest.TestCase):
       # Max-product is only distributive over non-negative values.
       operands = [jnp.abs(x) for x in operands]
     actual = einsum(subscripts, *operands, semiring=semiring)
-    expected = _direct_semiring(subscripts, *operands, semiring=semiring)
+    expected = direct_einsum(subscripts, *operands, semiring=semiring)
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
 
   @parameterized.expand(["auto", "greedy", "optimal"])
@@ -368,9 +340,7 @@ class TestSemiringEinsum(unittest.TestCase):
     actual = einsum(
         "ab,bc,cd,de->ae", *operands, semiring=LOG_SUM_EXP, optimize=optimize
     )
-    expected = _direct_semiring(
-        "ab,bc,cd,de->ae", *operands, semiring=LOG_SUM_EXP
-    )
+    expected = direct_einsum("ab,bc,cd,de->ae", *operands, semiring=LOG_SUM_EXP)
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
 
   @parameterized.expand(_LOG_SEMIRINGS)
@@ -379,7 +349,7 @@ class TestSemiringEinsum(unittest.TestCase):
     b = jnp.array([[-jnp.inf, 2.0], [3.0, -jnp.inf], [-jnp.inf, 4.0]])
     c = jnp.array([0.5, -jnp.inf])
     actual = einsum("ij,jk,k->ik", a, b, c, semiring=semiring)
-    expected = _direct_semiring("ij,jk,k->ik", a, b, c, semiring=semiring)
+    expected = direct_einsum("ij,jk,k->ik", a, b, c, semiring=semiring)
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
 
   def test_empty_contraction_skips_reduction_and_preserves_neg_inf_grad(self):
@@ -418,7 +388,7 @@ class TestSemiringEinsum(unittest.TestCase):
     actual = scan_einsum(
         "ab,bc,cd->acd", *operands, sequential=sequential, semiring=semiring
     )
-    expected = _direct_semiring("ab,bc,cd->acd", *operands, semiring=semiring)
+    expected = direct_einsum("ab,bc,cd->acd", *operands, semiring=semiring)
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
 
   @parameterized.expand(_LOG_SEMIRINGS)
@@ -426,8 +396,86 @@ class TestSemiringEinsum(unittest.TestCase):
     a = jnp.array([[0.0, -jnp.inf, 1.0], [-jnp.inf, -jnp.inf, -jnp.inf]])
     b = jnp.array([[-jnp.inf, 2.0], [3.0, -jnp.inf], [-jnp.inf, 4.0]])
     actual = scan_einsum("ij,jk->ik", a, b, sequential="j", semiring=semiring)
-    expected = _direct_semiring("ij,jk->ik", a, b, semiring=semiring)
+    expected = direct_einsum("ij,jk->ik", a, b, semiring=semiring)
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+
+  def test_direct_einsum_matches_jnp_einsum_and_exp_log(self):
+    rng = np.random.default_rng(7)
+    a = jnp.asarray(rng.normal(size=(3, 4)))
+    b = jnp.asarray(rng.normal(size=(4, 5)))
+    c = jnp.asarray(rng.normal(size=(5, 2)))
+    np.testing.assert_allclose(
+        direct_einsum("ab,bc,cd->da", a, b, c),
+        jnp.einsum("ab,bc,cd->da", a, b, c),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+    np.testing.assert_allclose(
+        direct_einsum("ab,bc,cd->da", a, b, c, semiring=LOG_SUM_EXP),
+        jnp.log(jnp.einsum("ab,bc,cd->da", jnp.exp(a), jnp.exp(b), jnp.exp(c))),
+        rtol=1e-5,
+        atol=1e-5,
+    )
+    np.testing.assert_allclose(
+        direct_einsum(
+            ",->", jnp.array(2.0), jnp.array(3.0), semiring=LOG_SUM_EXP
+        ),
+        jnp.array(5.0),
+    )
+
+  def test_direct_einsum_validation(self):
+    x = jnp.ones((2, 2))
+    with self.assertRaises(ValueError):
+      direct_einsum("ab,bc", x, x)
+    with self.assertRaises(ValueError):
+      direct_einsum("aa->a", x)
+    with self.assertRaises(ValueError):
+      direct_einsum("ab,bc->ac", x)
+    with self.assertRaises(ValueError):
+      direct_einsum("->")
+
+  def test_plan_sequential_axes_peels_smallest_first(self):
+    # On K4 with sizes [2, 4, 8, 16] and target cd (128), peak tensor is cd;
+    # under budget 100, the planner peels smaller axis 'c' (8) over 'd' (16).
+    k4_formula = "ab,ac,ad,bc,bd,cd->cd"
+    k4_shapes = [(2, 4), (2, 8), (2, 16), (4, 8), (4, 16), (8, 16)]
+    self.assertEqual(plan_sequential_axes(k4_formula, k4_shapes, 200), "")
+    self.assertEqual(plan_sequential_axes(k4_formula, k4_shapes, 100), "c")
+
+    # On dense K5 with sizes [2, 4, 6, 8, 10], a tight budget peels multiple
+    # small axes and scan_einsum matches direct_einsum for both inner engines.
+    sizes = {"a": 2, "b": 4, "c": 6, "d": 8, "e": 10}
+    k5_terms = ["ab", "ac", "ad", "ae", "bc", "bd", "be", "cd", "ce", "de"]
+    k5_formula = ",".join(k5_terms) + "->de"
+    k5_shapes = [tuple(sizes[ch] for ch in t) for t in k5_terms]
+    peeled = plan_sequential_axes(k5_formula, k5_shapes, 64)
+    self.assertNotEqual(peeled, "")
+
+    rng = np.random.default_rng(3)
+    operands = [jnp.asarray(rng.normal(size=s)) for s in k5_shapes]
+    expected = direct_einsum(k5_formula, *operands, semiring=LOG_SUM_EXP)
+    for inner_fn in (
+        None,
+        functools.partial(direct_einsum, semiring=LOG_SUM_EXP),
+    ):
+      actual = scan_einsum(
+          k5_formula,
+          *operands,
+          sequential=peeled,
+          semiring=LOG_SUM_EXP,
+          einsum_fn=inner_fn,
+      )
+      np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+
+  def test_plan_sequential_axes_large_shapes_zero_alloc(self):
+    # Huge virtual tensors plan without allocating operand memory.
+    shapes = [(1000, 1000, 1000)] * 4
+    peeled = plan_sequential_axes("abc,bcd,cde,ade->ae", shapes, 10**6)
+    self.assertEqual(peeled, "abc")
+
+  def test_plan_sequential_axes_invalid_budget_raises(self):
+    with self.assertRaises(ValueError):
+      plan_sequential_axes("ab,bc->ac", [(2, 3), (3, 4)], 0)
 
 
 if __name__ == "__main__":
