@@ -117,6 +117,8 @@ class LinearMeasurement:
 
   def __post_init__(self):
     object.__setattr__(self, "clique", tuple(self.clique))
+    if isinstance(self.stddev, (int, np.number)):
+      object.__setattr__(self, "stddev", float(self.stddev))
 
   def compress(
       self, mapping: Mapping[Any, np.ndarray], domain: Domain
